@@ -24,12 +24,6 @@ type CIA struct {
 
 var cia1, cia2 CIA
 
-// DisableCIAInterrupts, when true, prevents CIA1/CIA2 from ever asserting
-// the CPU's IRQ/NMI lines - for isolating whether a bug is in the CIA/
-// interrupt delivery path versus elsewhere. A real C64 boots fine with the
-// CIAs entirely disabled; only the jiffy clock and cursor blink stop.
-var DisableCIAInterrupts bool
-
 // CIA1 returns the singleton CIA1 (keyboard/joystick; drives the CPU's IRQ
 // line).
 func CIA1() *CIA { return &cia1 }
@@ -37,16 +31,6 @@ func CIA1() *CIA { return &cia1 }
 // CIA2 returns the singleton CIA2 (serial bus/user port/VIC bank; drives
 // the CPU's NMI line).
 func CIA2() *CIA { return &cia2 }
-
-// IMR returns the raw interrupt mask register, for debugging/tracing tools.
-func (c *CIA) IMR() uint8 { return c.imr }
-
-// ICR returns the raw latched interrupt flags (without clearing them, unlike
-// Load(0xD)), for debugging/tracing tools.
-func (c *CIA) ICR() uint8 { return c.icr }
-
-// LatchA returns Timer A's reload value, for debugging/tracing tools.
-func (c *CIA) LatchA() uint16 { return c.latchA }
 
 // effective returns the electrical state of a CIA port: output-configured
 // bits (ddr=1) reflect the written value, input-configured bits float high

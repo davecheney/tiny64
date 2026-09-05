@@ -178,12 +178,12 @@ func (c *CPU) TickPhi2() {
 		c.irqLine = cia1.IRQ
 
 		switch {
-		case c.nmiLatch && !DisableCIAInterrupts && c.Clock >= c.nmiLatchClock+2:
+		case c.nmiLatch && c.Clock >= c.nmiLatchClock+2:
 			// NMI delivery is unverified: panic immediately rather than
 			// silently running unvalidated behavior, so any observed bug
 			// can be confidently attributed to BRK/IRQ instead.
 			panic(fmt.Sprintf("NMI taken at PC=%04X, Clock=%d - NMI support is unverified", c.PC, c.Clock))
-		case cia1.IRQ && !DisableCIAInterrupts && c.effectiveI == 0 && c.Clock >= c.irqAssertClock+2:
+		case cia1.IRQ && c.effectiveI == 0 && c.Clock >= c.irqAssertClock+2:
 			c.Interrupt = 1
 			c.Opcode = 0x00
 			c.TState = 1

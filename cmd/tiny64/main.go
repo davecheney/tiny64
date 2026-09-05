@@ -13,6 +13,7 @@ const (
 	// Full PAL VIC-II screen dimension including borders
 	ScreenWidth  = tiny64.DotsPerLine
 	ScreenHeight = tiny64.RasterLinesPerFrame
+	SCALE        = 2
 )
 
 // C64 PAL color palette (RGBA format)
@@ -101,10 +102,9 @@ func main() {
 		ram[i] = byte(rand.Uint())
 	}
 
-	// tiny64.DisableCIAInterrupts = true
 	tiny64.Reset()
 
-	ebiten.SetWindowSize(ScreenWidth*2, ScreenHeight*2) // Open window scaled 2x
+	ebiten.SetWindowSize(ScreenWidth*SCALE, ScreenHeight*SCALE)
 	ebiten.SetWindowTitle("tiny64")
 
 	if err := ebiten.RunGame(emu); err != nil {
