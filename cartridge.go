@@ -17,7 +17,7 @@ var cartridge Cartridge
 // the way the DiSTestMAX build instructions describe: /GAME low, /EXROM
 // high or floating. This overrides the CPU's LORAM/HIRAM/CHAREN banking
 // entirely on real hardware, but for now tiny64 only special-cases the
-// $E000-$FFFF KERNAL area (see PLA.Load).
+// $E000-$FFFF KERNAL area (see plaLoad).
 func (c *Cartridge) ultimax() bool {
 	return c.Game && !c.Exrom
 }

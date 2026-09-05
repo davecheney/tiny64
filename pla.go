@@ -2,18 +2,22 @@ package tiny64
 
 import "github.com/davecheney/tiny64/rom"
 
-// PLA emulates the C64's memory-decode logic. Real hardware wires it as a
-// function of chip-enable lines; here it works directly in terms of
+// The PLA emulates the C64's memory-decode logic. Real hardware wires it as
+// a function of chip-enable lines; here it works directly in terms of
 // addresses, inspecting the CPU's LORAM/HIRAM/CHAREN bank-switching lines
 // (and, eventually, the CIAs) to decide whether an address is backed by
 // RAM, BASIC/KERNAL/character ROM, or I/O.
-type PLA struct{}
+//
+// The CPU and VIC-II have entirely separate views of memory - not just
+// different banking rules, but different address decoders wired to
+// different chip-select lines. They already reach the PLA via separate
+// call paths (cpu.load/store vs the VIC's direct plaVICLoad calls), so
+// that separation is modeled here as separate functions rather than a
+// single AEC-gated access path.
 
-var pla PLA
-
-// Load reads addr through the memory map currently selected by the CPU's
-// bank-switching lines.
-func (PLA) Load(addr uint16) uint8 {
+// plaLoad reads addr through the memory map currently selected by the
+// CPU's bank-switching lines.
+func plaLoad(addr uint16) uint8 {
 	loram, hiram, charen := cpu.bankBits()
 
 	switch {
@@ -35,11 +39,11 @@ func (PLA) Load(addr uint16) uint8 {
 	}
 }
 
-// Store writes addr through the memory map currently selected by the CPU's
-// bank-switching lines. RAM is always writable underneath BASIC/KERNAL ROM;
-// character ROM is read-only (RAM is disabled behind it), and I/O is
-// dispatched to whichever chip is selected.
-func (PLA) Store(addr uint16, val uint8) {
+// plaStore writes addr through the memory map currently selected by the
+// CPU's bank-switching lines. RAM is always writable underneath BASIC/
+// KERNAL ROM; character ROM is read-only (RAM is disabled behind it), and
+// I/O is dispatched to whichever chip is selected.
+func plaStore(addr uint16, val uint8) {
 	loram, hiram, charen := cpu.bankBits()
 
 	switch {
@@ -53,8 +57,8 @@ func (PLA) Store(addr uint16, val uint8) {
 	}
 }
 
-// VICLoad reads addr through the VIC-II's own view of memory (used for its
-// c-access/g-access fetches): it ignores the CPU's LORAM/HIRAM/CHAREN
+// plaVICLoad reads addr through the VIC-II's own view of memory (used for
+// its c-access/g-access fetches): it ignores the CPU's LORAM/HIRAM/CHAREN
 // banking entirely, but the character generator ROM is still hard-wired
 // into view at $1000-$1FFF (and $9000-$9FFF in banks not selected via
 // CIA2, which isn't implemented yet, so only bank 0 is modeled). A
@@ -65,7 +69,7 @@ func (PLA) Store(addr uint16, val uint8) {
 // bitmap data baked into the cartridge ROM itself. The ROMH chip only has
 // 13 address pins, so the offset it presents is always addr&0x1FFF,
 // regardless of which window asserted its chip-select.
-func (PLA) VICLoad(addr uint16) uint8 {
+func plaVICLoad(addr uint16) uint8 {
 	if cartridge.ultimax() && cartridge.ROMH && addr&0x3000 == 0x3000 {
 		return cartridge.ROM[addr&0x1FFF]
 	}

@@ -17,7 +17,7 @@ func GetBus() *Bus {
 func (b *Bus) Load(addr uint16) uint8 {
 	b.Address = addr
 	b.RW = true
-	b.Data = pla.Load(addr)
+	b.Data = plaLoad(addr)
 	return b.Data
 }
 
@@ -27,7 +27,7 @@ func (b *Bus) Store(addr uint16, val uint8) {
 	b.Address = addr
 	b.RW = false
 	b.Data = val
-	pla.Store(addr, val)
+	plaStore(addr, val)
 }
 
 var bus Bus

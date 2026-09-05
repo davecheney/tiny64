@@ -13,3 +13,6 @@ var Kernal []byte
 
 //go:embed destest-max.rom
 var DiagCart []byte
+
+//go:embed dead_test.bin
+var DeadTest []byte

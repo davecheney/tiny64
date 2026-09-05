@@ -7,7 +7,7 @@ import (
 )
 
 // TestPLAVICLoadCharacterMemory checks, for every address the VIC-II's
-// 14-bit address bus can reach, that PLA.VICLoad permits exactly what
+// 14-bit address bus can reach, that plaVICLoad permits exactly what
 // real hardware wires up: the character generator ROM at $1000-$1FFF
 // (hard-wired into the VIC's view regardless of CPU banking), and RAM
 // everywhere else - including the ranges cartridges/software point a
@@ -20,7 +20,7 @@ func TestPLAVICLoadCharacterMemory(t *testing.T) {
 	}
 
 	for addr := 0; addr < 0x4000; addr++ {
-		got := pla.VICLoad(uint16(addr))
+		got := plaVICLoad(uint16(addr))
 		if addr >= 0x1000 && addr <= 0x1FFF {
 			want := rom.Character[addr-0x1000]
 			if got != want {
@@ -59,7 +59,7 @@ func TestPLAVICLoadUltimaxROMH(t *testing.T) {
 		for offset := 0; offset <= 0x0FFF; offset++ {
 			addr := base + uint16(offset)
 			want := cartROM[addr&0x1FFF]
-			if got := pla.VICLoad(addr); got != want {
+			if got := plaVICLoad(addr); got != want {
 				t.Fatalf("VICLoad(%#04x) = %#02x, want cartridge ROMH byte %#02x", addr, got, want)
 			}
 		}
@@ -67,10 +67,10 @@ func TestPLAVICLoadUltimaxROMH(t *testing.T) {
 
 	// Outside those windows, RAM (or the on-board character ROM) is
 	// unaffected by the cartridge.
-	if got := pla.VICLoad(0x2FFF); got != ramMarker {
+	if got := plaVICLoad(0x2FFF); got != ramMarker {
 		t.Fatalf("VICLoad(0x2fff) = %#02x, want RAM marker %#02x", got, ramMarker)
 	}
-	if got := pla.VICLoad(0x4000); got != ramMarker {
+	if got := plaVICLoad(0x4000); got != ramMarker {
 		t.Fatalf("VICLoad(0x4000) = %#02x, want RAM marker %#02x (cartridge ROMH must not leak past $3fff)", got, ramMarker)
 	}
 }

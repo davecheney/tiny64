@@ -382,7 +382,7 @@ func (v *VICII) cycleGAccess() {
 
 	cb := (uint16(v.registers[regMemPointers]) >> 1) & 0x07
 	addr := (cb << 11) + (v.videoBufferPending&0xFF)<<3 + uint16(v.RC)
-	v.gdPending = pla.VICLoad(addr)
+	v.gdPending = plaVICLoad(addr)
 
 	// "VC and VMLI are incremented after each g-access in display state"
 	// (section 3.7.2, rule 4): idle state g-accesses don't advance them.
@@ -448,7 +448,7 @@ func (v *VICII) cycleCAccess() {
 		return
 	}
 	vm := (uint16(v.registers[regMemPointers]) >> 4) & 0x0F
-	char := pla.VICLoad((vm << 10) + v.VC)
+	char := plaVICLoad((vm << 10) + v.VC)
 	color := ram[0xD800+v.VC] & 0x0F
 	v.videoMatrixColor[v.VMLI] = uint16(color)<<8 | uint16(char)
 }

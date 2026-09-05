@@ -62,6 +62,7 @@ func main() {
 	trace := flag.Bool("trace", false, "print per-cycle CPU/bus/VIC-II state to stderr")
 	cycles := flag.Int64("cycles", 0, "stop after this many CPU cycles (0 = run forever)")
 	destestmax := flag.Bool("destestmax", false, "insert the DiSTestMAX MAX-mode cartridge before reset")
+	deadtest := flag.Bool("deadtest", false, "insert the Dead Test MAX-mode cartridge before reset")
 	flag.Parse()
 
 	// WritePixelToBuffer must be set for the VIC-II to step, but there's no
@@ -76,6 +77,9 @@ func main() {
 
 	if *destestmax {
 		tiny64.GetBus().Insert(rom.DiagCart, true, false, true, false)
+	}
+	if *deadtest {
+		tiny64.GetBus().Insert(rom.DeadTest, true, false, true, false)
 	}
 
 	tiny64.Reset()
