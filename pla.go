@@ -24,6 +24,10 @@ func (PLA) Load(addr uint16) uint8 {
 			return ioLoad(addr)
 		}
 		return rom.Character[addr-0xD000]
+	case addr >= 0xE000 && cartridge.ultimax() && cartridge.ROMH:
+		// A cartridge wired for MAX mode overrides the KERNAL entirely,
+		// regardless of hiram.
+		return cartridge.ROM[addr-0xE000]
 	case addr >= 0xE000 && hiram:
 		return rom.Kernal[addr-0xE000]
 	default:
@@ -53,8 +57,18 @@ func (PLA) Store(addr uint16, val uint8) {
 // c-access/g-access fetches): it ignores the CPU's LORAM/HIRAM/CHAREN
 // banking entirely, but the character generator ROM is still hard-wired
 // into view at $1000-$1FFF (and $9000-$9FFF in banks not selected via
-// CIA2, which isn't implemented yet, so only bank 0 is modeled).
+// CIA2, which isn't implemented yet, so only bank 0 is modeled). A
+// cartridge wired for MAX mode also overrides the top 4K of every 16K
+// quadrant ($3000, $7000, $B000, $F000) with its ROMH image, via a
+// dedicated hardware path separate from the CPU's $E000-$FFFF ROMH window
+// - this is how MAX-mode carts supply the VIC with custom character/
+// bitmap data baked into the cartridge ROM itself. The ROMH chip only has
+// 13 address pins, so the offset it presents is always addr&0x1FFF,
+// regardless of which window asserted its chip-select.
 func (PLA) VICLoad(addr uint16) uint8 {
+	if cartridge.ultimax() && cartridge.ROMH && addr&0x3000 == 0x3000 {
+		return cartridge.ROM[addr&0x1FFF]
+	}
 	if addr >= 0x1000 && addr <= 0x1FFF {
 		return rom.Character[addr-0x1000]
 	}

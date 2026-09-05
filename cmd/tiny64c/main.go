@@ -9,6 +9,7 @@ import (
 	"os"
 
 	"github.com/davecheney/tiny64"
+	"github.com/davecheney/tiny64/rom"
 )
 
 // kernalFuncs maps the real (non-jump-table) entry address of each standard
@@ -60,6 +61,7 @@ var kernalFuncs = map[uint16]string{
 func main() {
 	trace := flag.Bool("trace", false, "print per-cycle CPU/bus/VIC-II state to stderr")
 	cycles := flag.Int64("cycles", 0, "stop after this many CPU cycles (0 = run forever)")
+	destestmax := flag.Bool("destestmax", false, "insert the DiSTestMAX MAX-mode cartridge before reset")
 	flag.Parse()
 
 	// WritePixelToBuffer must be set for the VIC-II to step, but there's no
@@ -70,6 +72,10 @@ func main() {
 	ram := tiny64.Ram()
 	for i := range ram {
 		ram[i] = byte(rand.Uint())
+	}
+
+	if *destestmax {
+		tiny64.GetBus().Insert(rom.DiagCart, true, false, true, false)
 	}
 
 	tiny64.Reset()
@@ -101,6 +107,35 @@ func main() {
 				fmt.Fprintf(os.Stderr, "%8d KERNAL %-7s $%04X\n", n, name, cpu.PC)
 			}
 			lastPC = cpu.PC
+		}
+
+		if !bus.RW && bus.Address >= 0xD000 && bus.Address <= 0xD3FF {
+			fmt.Fprintf(os.Stderr, "%8d VIC write $%04X = %#02x at PC=%04X\n", n, bus.Address, bus.Data, cpu.PC)
+		}
+
+		if !bus.RW && bus.Address >= 0x0400 && bus.Address <= 0x07E7 {
+			fmt.Fprintf(os.Stderr, "%8d SCREEN write $%04X = %#02x (%q) at PC=%04X\n", n, bus.Address, bus.Data, bus.Data, cpu.PC)
+		}
+
+		if !bus.RW && bus.Address >= 0x3800 && bus.Address <= 0x3FFF {
+			fmt.Fprintf(os.Stderr, "%8d RAMCHAR write $%04X = %#02x (%q) at PC=%04X\n", n, bus.Address, bus.Data, bus.Data, cpu.PC)
+		}
+
+		if !bus.RW && bus.Address >= 0xDD00 && bus.Address <= 0xDD0F {
+			fmt.Fprintf(os.Stderr, "%8d CIA2 write $%04X = %#02x at PC=%04X\n", n, bus.Address, bus.Data, cpu.PC)
+		}
+
+		if !bus.RW {
+			fmt.Fprintf(os.Stderr, "%8d WRITE $%04X = %#02x at PC=%04X\n", n, bus.Address, bus.Data, cpu.PC)
+		}
+
+		// CHAREN=0 (and LORAM or HIRAM set) makes $D000-$DFFF show the
+		// character ROM to the CPU instead of I/O - the classic "copy the
+		// character ROM into RAM" step of redefining characters.
+		if effective := (cpu.Port & cpu.PortDDR) | ^cpu.PortDDR; effective&0x04 == 0 && (effective&0x01 != 0 || effective&0x02 != 0) {
+			if bus.RW && bus.Address >= 0xD000 && bus.Address <= 0xDFFF {
+				fmt.Fprintf(os.Stderr, "%8d CHARROM read $%04X = %#02x at PC=%04X\n", n, bus.Address, bus.Data, cpu.PC)
+			}
 		}
 
 		if *trace {

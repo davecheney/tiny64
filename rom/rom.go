@@ -10,3 +10,6 @@ var Character []byte
 
 //go:embed kernal.901227-03.bin
 var Kernal []byte
+
+//go:embed destest-max.rom
+var DiagCart []byte
