@@ -38,6 +38,16 @@ func CIA1() *CIA { return &cia1 }
 // the CPU's NMI line).
 func CIA2() *CIA { return &cia2 }
 
+// IMR returns the raw interrupt mask register, for debugging/tracing tools.
+func (c *CIA) IMR() uint8 { return c.imr }
+
+// ICR returns the raw latched interrupt flags (without clearing them, unlike
+// Load(0xD)), for debugging/tracing tools.
+func (c *CIA) ICR() uint8 { return c.icr }
+
+// LatchA returns Timer A's reload value, for debugging/tracing tools.
+func (c *CIA) LatchA() uint16 { return c.latchA }
+
 // effective returns the electrical state of a CIA port: output-configured
 // bits (ddr=1) reflect the written value, input-configured bits float high
 // since no keyboard/joystick/serial device is modeled yet.

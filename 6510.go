@@ -32,10 +32,37 @@ type CPU struct {
 	nmiLine   bool // last-seen state of CIA2's IRQ line, for edge detection
 	nmiLatch  bool // latched by a 0->1 transition of nmiLine, until serviced
 
+	// Clock counts elapsed Phi2 cycles, used to time the 2-cycle delay real
+	// hardware needs to recognize an asserted IRQ/NMI line (VICE calls this
+	// INTERRUPT_DELAY).
+	Clock uint64
+
+	// irqLine is the last-seen state of CIA1's IRQ line, for edge detection;
+	// irqAssertClock/nmiLatchClock record the Clock value of the most recent
+	// rising edge, so recognition can be held off for 2 cycles after it.
+	irqLine        bool
+	irqAssertClock uint64
+	nmiLatchClock  uint64
+
+	// effectiveI is the Interrupt Disable flag's value as seen by interrupt
+	// recognition, lagging c.regP's I bit by one instruction: SEI/CLI/PLP
+	// change regP immediately, but (due to 6502 pipelining) their effect on
+	// whether an interrupt can be taken isn't visible until the instruction
+	// after next. RTI and the CPU's own interrupt entry are exceptions and
+	// update effectiveI immediately (see their microcode).
+	effectiveI uint8
+
 	// Port and PortDDR implement the 6510's on-chip I/O port at $0001/$0000,
 	// a feature the plain 6502 does not have.
 	Port    uint8
 	PortDDR uint8
+
+	// DecimalADCCount counts every ADC/SBC executed while the Decimal flag
+	// is set; LastDecimalADCPC records the PC of the most recent one. adc()
+	// only implements binary mode, so these help detect whether decimal
+	// mode is ever actually exercised (and thus computing wrong results).
+	DecimalADCCount  int
+	LastDecimalADCPC uint16
 }
 
 var cpu CPU
@@ -99,8 +126,32 @@ func (c *CPU) store(addr uint16, val uint8) {
 	}
 }
 
-// TickPhi2 executes exactly one high-clock phase of the CPU
+// push writes val to the hardware stack at $0100+SP, then decrements SP.
+func (c *CPU) push(val uint8) {
+	c.store(0x0100+uint16(c.SP), val)
+	c.SP--
+}
+
+// pop reads the byte at the current $0100+SP, then increments SP, matching
+// the 6502's "read old top of stack, then increment" pull microcode. The
+// final read of a multi-byte pull (PLA/PLP's real value, RTI/RTS's last
+// byte) doesn't increment again, so it uses a plain load instead.
+func (c *CPU) pop() uint8 {
+	val := c.load(0x0100 + uint16(c.SP))
+	c.SP++
+	return val
+}
+
+// TickPhi2 executes exactly one high-clock phase of the CPU. The CIAs are
+// clocked from here too, since on real hardware they share the system
+// Phi2 clock with the CPU (not the VIC-II's dot clock) and keep counting
+// regardless of whether the CPU itself is stalled by BA/AEC.
 func (c *CPU) TickPhi2() {
+	c.Clock++
+
+	cia1.Tick()
+	cia2.Tick()
+
 	// If VIC-II has pulled AEC low, the CPU is electronically
 	// disconnected from the bus. It stalls entirely.
 	if !vic.AEC {
@@ -110,20 +161,29 @@ func (c *CPU) TickPhi2() {
 	switch c.TState {
 	// T0: Fetch the opcode, unless a pending interrupt takes over instead.
 	// NMI is edge-triggered (CIA2, latched); IRQ is level-triggered (CIA1,
-	// masked by the I flag) - both are serviced via BRK's microcode.
+	// masked by the (delayed) I flag) - both are serviced via BRK's
+	// microcode. Real hardware needs an asserted IRQ/NMI line to be stable
+	// for 2 cycles before it's recognized (see Clock/irqAssertClock/
+	// nmiLatchClock).
 	case 0:
-		if cia2.IRQ && !c.nmiLine && !DisableCIAInterrupts {
+		if cia2.IRQ && !c.nmiLine {
 			c.nmiLatch = true
+			c.nmiLatchClock = c.Clock
 		}
 		c.nmiLine = cia2.IRQ
 
+		if cia1.IRQ && !c.irqLine {
+			c.irqAssertClock = c.Clock
+		}
+		c.irqLine = cia1.IRQ
+
 		switch {
-		case c.nmiLatch:
-			c.nmiLatch = false
-			c.Interrupt = 2
-			c.Opcode = 0x00
-			c.TState = 1
-		case cia1.IRQ && !DisableCIAInterrupts && c.regP&P_INTERRUPT == 0:
+		case c.nmiLatch && !DisableCIAInterrupts && c.Clock >= c.nmiLatchClock+2:
+			// NMI delivery is unverified: panic immediately rather than
+			// silently running unvalidated behavior, so any observed bug
+			// can be confidently attributed to BRK/IRQ instead.
+			panic(fmt.Sprintf("NMI taken at PC=%04X, Clock=%d - NMI support is unverified", c.PC, c.Clock))
+		case cia1.IRQ && !DisableCIAInterrupts && c.effectiveI == 0 && c.Clock >= c.irqAssertClock+2:
 			c.Interrupt = 1
 			c.Opcode = 0x00
 			c.TState = 1
@@ -133,6 +193,12 @@ func (c *CPU) TickPhi2() {
 			c.PC++
 			c.TState = 1
 		}
+		// SEI/CLI/PLP change regP immediately, but (6502 pipelining) their
+		// effect on interrupt recognition lags by one instruction: this
+		// syncs effectiveI to regP's current I bit only now, after it was
+		// used for the check above, so it still reflects the PC flag's
+		// value from before whichever instruction just changed it.
+		c.effectiveI = c.regP & P_INTERRUPT
 	case 1:
 		// T1: Execute the instruction based on the opcode
 		switch c.Opcode {
@@ -831,8 +897,7 @@ func (c *CPU) TickPhi2() {
 		// T2: Execute the instruction based on the opcode
 		switch c.Opcode {
 		case 0x00: // BRK: push PCH
-			c.store(0x0100+uint16(c.SP), uint8(c.PC>>8))
-			c.SP--
+			c.push(c.pch())
 			c.TState = 3
 		case 0x01: // ORA (Indirect,X): dummy read from BAL before adding X
 			c.load(uint16(c.Pointer))
@@ -845,8 +910,7 @@ func (c *CPU) TickPhi2() {
 			c.Value = c.load(c.Operand)
 			c.TState = 3
 		case 0x08: // PHP: push status, with B and unused bits set
-			c.store(0x0100+uint16(c.SP), c.regP|0x30)
-			c.SP--
+			c.push(c.regP | 0x30)
 			c.TState = 0 // Finished, next cycle is T0 for next opcode
 		case 0x0D: // ORA Absolute: fetch address high byte
 			c.Operand |= uint16(c.load(c.PC)) << 8
@@ -926,8 +990,7 @@ func (c *CPU) TickPhi2() {
 			c.Value = c.load(c.Operand)
 			c.TState = 3
 		case 0x28: // PLP: dummy read at current SP, then increment SP
-			c.load(0x0100 + uint16(c.SP))
-			c.SP++
+			c.pop()
 			c.TState = 3
 		case 0x2C: // BIT Absolute: fetch address high byte
 			c.Operand |= uint16(c.load(c.PC)) << 8
@@ -995,8 +1058,7 @@ func (c *CPU) TickPhi2() {
 			c.PC++
 			c.TState = 3
 		case 0x40: // RTI: dummy read at current SP, then increment SP
-			c.load(0x0100 + uint16(c.SP))
-			c.SP++
+			c.pop()
 			c.TState = 3
 		case 0x41: // EOR (Indirect,X): dummy read from BAL before adding X
 			c.load(uint16(c.Pointer))
@@ -1009,8 +1071,7 @@ func (c *CPU) TickPhi2() {
 			c.Value = c.load(c.Operand)
 			c.TState = 3
 		case 0x48: // PHA: push A
-			c.store(0x0100+uint16(c.SP), c.A)
-			c.SP--
+			c.push(c.A)
 			c.TState = 0 // Finished, next cycle is T0 for next opcode
 		case 0x4C: // JMP Absolute: fetch address high byte, jump
 			c.PC = uint16(c.load(c.PC))<<8 | c.Operand
@@ -1077,8 +1138,7 @@ func (c *CPU) TickPhi2() {
 			c.PC++
 			c.TState = 3
 		case 0x60: // RTS: dummy read at current SP, then increment SP
-			c.load(0x0100 + uint16(c.SP))
-			c.SP++
+			c.pop()
 			c.TState = 3
 		case 0x61: // ADC (Indirect,X): dummy read from BAL before adding X
 			c.load(uint16(c.Pointer))
@@ -1090,8 +1150,7 @@ func (c *CPU) TickPhi2() {
 			c.Value = c.load(c.Operand)
 			c.TState = 3
 		case 0x68: // PLA: dummy read at current SP, then increment SP
-			c.load(0x0100 + uint16(c.SP))
-			c.SP++
+			c.pop()
 			c.TState = 3
 		case 0x6C: // JMP Indirect: fetch pointer address high byte
 			c.Operand |= uint16(c.load(c.PC)) << 8
@@ -1482,8 +1541,7 @@ func (c *CPU) TickPhi2() {
 		// T3: Execute the instruction based on the opcode
 		switch c.Opcode {
 		case 0x00: // BRK: push PCL
-			c.store(0x0100+uint16(c.SP), uint8(c.PC))
-			c.SP--
+			c.push(c.pcl())
 			c.TState = 4
 		case 0x01: // ORA (Indirect,X): fetch effective address low byte
 			c.Operand = uint16(c.load(uint16(c.Pointer + c.X))) // zero-page wraparound
@@ -1560,8 +1618,7 @@ func (c *CPU) TickPhi2() {
 			c.load(c.Addr2)
 			c.TState = 4
 		case 0x20: // JSR: push PCH (of return address - 1)
-			c.store(0x0100+uint16(c.SP), uint8(c.PC>>8))
-			c.SP--
+			c.push(c.pch())
 			c.TState = 4
 		case 0x21: // AND (Indirect,X): fetch effective address low byte
 			c.Operand = uint16(c.load(uint16(c.Pointer + c.X))) // zero-page wraparound
@@ -1629,8 +1686,11 @@ func (c *CPU) TickPhi2() {
 			c.load(c.Addr2)
 			c.TState = 4
 		case 0x40: // RTI: pull status from incremented SP, then increment SP
-			c.regP = c.load(0x0100 + uint16(c.SP))
-			c.SP++
+			c.regP = c.pop()
+			// Unlike SEI/CLI/PLP, RTI's restored I flag takes effect
+			// immediately for the very next instruction (no pipelining
+			// delay), since the status register is restored early.
+			c.effectiveI = c.regP & P_INTERRUPT
 			c.TState = 4
 		case 0x41: // EOR (Indirect,X): fetch effective address low byte
 			c.Operand = uint16(c.load(uint16(c.Pointer + c.X))) // zero-page wraparound
@@ -1691,8 +1751,7 @@ func (c *CPU) TickPhi2() {
 			c.load(c.Addr2)
 			c.TState = 4
 		case 0x60: // RTS: pull PCL from incremented SP, then increment SP
-			c.Operand = uint16(c.load(0x0100 + uint16(c.SP))) // Stash PCL until T4
-			c.SP++
+			c.Operand = uint16(c.pop()) // Stash PCL until T4
 			c.TState = 4
 		case 0x61: // ADC (Indirect,X): fetch effective address low byte
 			c.Operand = uint16(c.load(uint16(c.Pointer + c.X))) // zero-page wraparound
@@ -1998,13 +2057,23 @@ func (c *CPU) TickPhi2() {
 		// T4: Execute the instruction based on the opcode
 		switch c.Opcode {
 		case 0x00: // BRK/IRQ/NMI: push Status. Only a real BRK sets the B flag.
-			status := c.regP | 0x20
+			//
+			// The B flag has no real physical storage in the 6502 - it only
+			// exists transiently in the byte pushed to the stack. regP must
+			// not be trusted to hold a correct B bit here: PLP/RTI copy the
+			// full pulled byte (including whatever B happened to be) back
+			// into regP, so a stale 1 can persist indefinitely. Force it to
+			// 0 first, then set it only for a genuine BRK.
+			status := (c.regP &^ 0x10) | 0x20
 			if c.Interrupt == 0 {
 				status |= 0x10
 			}
-			c.store(0x0100+uint16(c.SP), status)
-			c.SP--
+			c.push(status)
 			c.regP |= 0x04 // Set Interrupt Disable flag
+			// The CPU's own interrupt entry forces I=1 immediately (not
+			// subject to the SEI/CLI/PLP pipelining delay), so a nested
+			// interrupt can't be taken until this handler does CLI/RTI.
+			c.effectiveI = P_INTERRUPT
 			c.TState = 5
 		case 0x01: // ORA (Indirect,X): fetch effective address high byte
 			c.Operand |= uint16(c.load(uint16(c.Pointer+c.X+1))) << 8 // zero-page wraparound
@@ -2055,8 +2124,7 @@ func (c *CPU) TickPhi2() {
 			c.Value = c.load(c.Operand)
 			c.TState = 5
 		case 0x20: // JSR: push PCL (of return address - 1)
-			c.store(0x0100+uint16(c.SP), uint8(c.PC))
-			c.SP--
+			c.push(c.pcl())
 			c.TState = 5
 		case 0x21: // AND (Indirect,X): fetch effective address high byte
 			c.Operand |= uint16(c.load(uint16(c.Pointer+c.X+1))) << 8 // zero-page wraparound
@@ -2098,8 +2166,7 @@ func (c *CPU) TickPhi2() {
 			c.Value = c.load(c.Operand)
 			c.TState = 5
 		case 0x40: // RTI: pull PCL from incremented SP, then increment SP
-			c.Operand = uint16(c.load(0x0100 + uint16(c.SP))) // Stash PCL until T5
-			c.SP++
+			c.Operand = uint16(c.pop()) // Stash PCL until T5
 			c.TState = 5
 		case 0x41: // EOR (Indirect,X): fetch effective address high byte
 			c.Operand |= uint16(c.load(uint16(c.Pointer+c.X+1))) << 8 // zero-page wraparound
@@ -2475,6 +2542,16 @@ func (c *CPU) TickPhi2() {
 	}
 }
 
+// pch returns the high byte of PC
+func (c *CPU) pch() uint8 {
+	return uint8(c.PC >> 8)
+}
+
+// pcl returns the lower byte of PC
+func (c *CPU) pcl() uint8 {
+	return uint8(c.PC & 0xFF)
+}
+
 func (c *CPU) setNZ(val uint8) {
 	c.setZero(val)
 	c.setSign(val&P_SIGN != 0)
@@ -2528,6 +2605,10 @@ func (c *CPU) updateBITFlags(m uint8) {
 // adc adds value and the Carry flag to A (binary mode only; BCD/decimal mode
 // is not yet implemented), updating Carry, Overflow, Negative and Zero flags.
 func (c *CPU) adc(value uint8) {
+	if c.regP&P_DECIMAL != 0 {
+		c.DecimalADCCount++
+		c.LastDecimalADCPC = c.PC
+	}
 	carryIn := uint16(c.regP & 0x01)
 	sum := uint16(c.A) + uint16(value) + carryIn
 	result := uint8(sum)

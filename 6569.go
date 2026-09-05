@@ -430,16 +430,12 @@ func (v *VICII) cycleBorderComp() {
 }
 
 // phi0high runs on the 4th dot of every 8-dot cycle: it performs a Bad
-// Line's c-access (cycles 15-54), ticks the CIAs, and hands the bus to the
-// CPU for Phi2.
+// Line's c-access (cycles 15-54) and hands the bus to the CPU for Phi2.
 func (v *VICII) phi0high() {
 	cycle := int(v.Dot)/8 + 1
 	if cycle >= 15 && cycle <= 54 {
 		v.cycleCAccess()
 	}
-
-	cia1.Tick()
-	cia2.Tick()
 
 	// AEC mirrors BA with a delay, or is directly controlled here
 	v.AEC = v.BA
