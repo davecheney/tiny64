@@ -41,6 +41,7 @@ func runInstrTest(t *testing.T, tc instrTest) {
 	ram = [65536]byte{}
 	bus = Bus{}
 	cpu = CPU{}
+	cpu.PortDDR = 0xFF // LORAM/HIRAM/CHAREN driven low: PLA maps plain RAM everywhere
 
 	cpu.PC = tc.initial.PC
 	cpu.A = tc.initial.A
@@ -3356,6 +3357,7 @@ func TestCPUStallsWhenAECLow(t *testing.T) {
 	ram = [65536]byte{}
 	bus = Bus{}
 	cpu = CPU{}
+	cpu.PortDDR = 0xFF // LORAM/HIRAM/CHAREN driven low: PLA maps plain RAM everywhere
 
 	cpu.PC = 0x0200
 	ram[0x0200] = 0xEA

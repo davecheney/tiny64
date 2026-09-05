@@ -1,0 +1,91 @@
+package tiny64
+
+import "github.com/davecheney/tiny64/rom"
+
+// PLA emulates the C64's memory-decode logic. Real hardware wires it as a
+// function of chip-enable lines; here it works directly in terms of
+// addresses, inspecting the CPU's LORAM/HIRAM/CHAREN bank-switching lines
+// (and, eventually, the CIAs) to decide whether an address is backed by
+// RAM, BASIC/KERNAL/character ROM, or I/O.
+type PLA struct{}
+
+var pla PLA
+
+// Load reads addr through the memory map currently selected by the CPU's
+// bank-switching lines.
+func (PLA) Load(addr uint16) uint8 {
+	loram, hiram, charen := cpu.bankBits()
+
+	switch {
+	case addr >= 0xA000 && addr <= 0xBFFF && loram && hiram:
+		return rom.Basic[addr-0xA000]
+	case addr >= 0xD000 && addr <= 0xDFFF && (loram || hiram):
+		if charen {
+			return ioLoad(addr)
+		}
+		return rom.Character[addr-0xD000]
+	case addr >= 0xE000 && hiram:
+		return rom.Kernal[addr-0xE000]
+	default:
+		return ram[addr]
+	}
+}
+
+// Store writes addr through the memory map currently selected by the CPU's
+// bank-switching lines. RAM is always writable underneath BASIC/KERNAL ROM;
+// character ROM is read-only (RAM is disabled behind it), and I/O is
+// dispatched to whichever chip is selected.
+func (PLA) Store(addr uint16, val uint8) {
+	loram, hiram, charen := cpu.bankBits()
+
+	switch {
+	case addr >= 0xD000 && addr <= 0xDFFF && (loram || hiram):
+		if charen {
+			ioStore(addr, val)
+		}
+		// else: character ROM selected, read-only; RAM is disabled here.
+	default:
+		ram[addr] = val
+	}
+}
+
+// VICLoad reads addr through the VIC-II's own view of memory (used for its
+// c-access/g-access fetches): it ignores the CPU's LORAM/HIRAM/CHAREN
+// banking entirely, but the character generator ROM is still hard-wired
+// into view at $1000-$1FFF (and $9000-$9FFF in banks not selected via
+// CIA2, which isn't implemented yet, so only bank 0 is modeled).
+func (PLA) VICLoad(addr uint16) uint8 {
+	if addr >= 0x1000 && addr <= 0x1FFF {
+		return rom.Character[addr-0x1000]
+	}
+	return ram[addr]
+}
+
+// ioLoad/ioStore dispatch the $D000-$DFFF I/O region to the appropriate
+// chip. The SID and cartridge I/O are ignored for now and simply fall
+// through to RAM.
+func ioLoad(addr uint16) uint8 {
+	switch {
+	case addr <= 0xD3FF:
+		return vic.ReadRegister(addr)
+	case addr >= 0xDC00 && addr <= 0xDCFF:
+		return cia1.Load(addr)
+	case addr >= 0xDD00 && addr <= 0xDDFF:
+		return cia2.Load(addr)
+	default:
+		return ram[addr]
+	}
+}
+
+func ioStore(addr uint16, val uint8) {
+	switch {
+	case addr <= 0xD3FF:
+		vic.WriteRegister(addr, val)
+	case addr >= 0xDC00 && addr <= 0xDCFF:
+		cia1.Store(addr, val)
+	case addr >= 0xDD00 && addr <= 0xDDFF:
+		cia2.Store(addr, val)
+	default:
+		ram[addr] = val
+	}
+}

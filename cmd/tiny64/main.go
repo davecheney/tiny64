@@ -1,8 +1,8 @@
 package main
 
 import (
+	"fmt"
 	"log"
-	"math/rand/v2"
 
 	"github.com/davecheney/tiny64"
 	"github.com/hajimehoshi/ebiten/v2"
@@ -37,6 +37,8 @@ var C64Palette = [16][4]byte{
 type Emulator struct {
 	// Raw linear pixel data (4 bytes per pixel: R, G, B, A)
 	frameBuffer []byte
+
+	frames int
 }
 
 func NewEmulator() *Emulator {
@@ -45,13 +47,14 @@ func NewEmulator() *Emulator {
 	}
 }
 
-// Update is called 60 times a second by Ebitengine.
-// This is where you step your CPU and VIC-II components.
+// Update is called once per frame.
 func (e *Emulator) Update() error {
 	const dots = tiny64.DotsPerLine * tiny64.RasterLinesPerFrame // 63 cycles * 8 dots * 312 raster lines
 	for range dots {
 		tiny64.VIC().StepDot()
 	}
+	e.frames++
+
 	return nil
 }
 
@@ -84,16 +87,50 @@ func (e *Emulator) Layout(outsideWidth, outsideHeight int) (int, int) {
 
 func main() {
 	emu := NewEmulator()
-	tiny64.VIC().WritePixelToBuffer = emu.writePixelToBuffer
-	tiny64.VIC().WriteRegister(0xd020, 14)   // Set border color to light blue
-	tiny64.VIC().WriteRegister(0xd021, 6)    // Set background color to blue
-	tiny64.VIC().WriteRegister(0xd011, 0x1B) // DEN=1, RSEL=1, YSCROLL=3 (KERNAL default): without DEN the display window never opens
 
-	// fill ram with random values to simulate power on randomness
+	defer func() {
+		fmt.Println("emulated frames:", emu.frames)
+	}()
+
+	tiny64.VIC().WritePixelToBuffer = emu.writePixelToBuffer
+
+	// // fill ram with random values to simulate power on randomness
+	// ram := tiny64.Ram()
+	// for i := range ram {
+	// 	ram[i] = byte(rand.Uint())
+	// }
+
+	tiny64.DisableCIAInterrupts = true
+	tiny64.Reset()
+
+	// Diagnostic: bypass KERNAL entirely and drive the VIC-II directly, to
+	// check for pixel/column alignment bugs in isolation. Every one of the
+	// 25 screen rows is filled with the same 40-character sequence
+	// starting at PETSCII/screen-code 'A' (1), so any horizontal shift is
+	// immediately visible as an offset of the "ABCDEFGH..." pattern from
+	// the left edge of the display window.
+	vic := tiny64.VIC()
+	vic.WriteRegister(0xD020, 0x0E) // border: light blue
+	vic.WriteRegister(0xD021, 0x06) // background: blue
+	vic.WriteRegister(0xD011, 0x1B) // DEN=1, RSEL=1 (25 rows), YSCROLL=3
+	vic.WriteRegister(0xD016, 0x08) // CSEL=1 (40 cols), MCM=0, XSCROLL=0
+	vic.WriteRegister(0xD018, 0x14) // VM=1 (screen @ $0400), CB=2 (chars @ $1000)
+
 	ram := tiny64.Ram()
-	for i := range ram {
-		ram[i] = byte(rand.Uint())
+	for row := range 25 {
+		for col := range 40 {
+			ram[0x0400+row*40+col] = byte(1 + col) // screen code 1 = 'A'
+			ram[0xD800+row*40+col] = 0x01          // white foreground
+		}
 	}
+
+	// A tiny loop program at $0200 (JMP $0200) so the CPU just spins
+	// instead of running BASIC/KERNAL and disturbing the registers/memory
+	// set up above.
+	ram[0x0200] = 0x4C // JMP
+	ram[0x0201] = 0x00
+	ram[0x0202] = 0x02
+	tiny64.GetCPU().PC = 0x0200
 
 	ebiten.SetWindowSize(ScreenWidth*2, ScreenHeight*2) // Open window scaled 2x
 	ebiten.SetWindowTitle("Go-64 Emulator Surface")

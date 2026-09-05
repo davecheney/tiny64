@@ -87,6 +87,14 @@ type VICII struct {
 	allowBadLine bool
 	denLatch     bool
 
+	// idle is the video logic's idle/display state (section 3.7.1): true in
+	// idle state (only g-accesses occur, VC/VMLI don't advance), false in
+	// display state (c- and g-accesses take place, VC/VMLI advance). Starts
+	// true after a reset; transitions to false as soon as there's a Bad Line
+	// Condition, and back to true in cycle 58 if RC=7 and there's no Bad
+	// Line Condition.
+	idle bool
+
 	WritePixelToBuffer func(x, y int, colorIndex byte)
 }
 
@@ -96,11 +104,59 @@ func VIC() *VICII {
 	return &vic
 }
 
+// Reset restores the VIC-II's internal video logic state (beam position,
+// border flip-flops, VC/VCBase/VMLI/RC, and idle/display state) to their
+// power-on values. Registers ($D000-$D02E) are left untouched: real
+// hardware doesn't clear them on RESET, KERNAL's IOINIT does that.
+func (v *VICII) Reset() {
+	v.Dot = 0
+	v.RasterLine = 0
+	v.BA = true
+	v.AEC = true
+	v.mainBorder = false
+	v.verticalBorder = false
+	v.grColor = 0
+	v.gdSequencer = 0
+	v.videoBuffer = 0
+	v.videoMatrixColor = [40]uint16{}
+	v.VC = 0
+	v.VCBase = 0
+	v.VMLI = 0
+	v.RC = 0
+	v.badLine = false
+	v.allowBadLine = false
+	v.denLatch = false
+	v.idle = true
+}
+
 func (v *VICII) WriteRegister(addr uint16, value uint8) {
-	if addr < 0xD000 || addr > 0xD02E {
-		return // Invalid VIC-II register address
+	reg := addr & 0x3F
+	if int(reg) < len(v.registers) {
+		v.registers[reg] = value
 	}
-	v.registers[addr-0xD000] = value
+}
+
+// ReadRegister reads a VIC-II register, mirrored every 64 bytes across
+// $D000-$D3FF. Registers beyond $D02E don't exist and read as all 1 bits.
+// $D012 (and bit 7 of $D011) are read-only mirrors of the live raster
+// line, distinct from whatever was last written there (the raster compare
+// target for IRQ generation, not yet implemented).
+func (v *VICII) ReadRegister(addr uint16) uint8 {
+	reg := addr & 0x3F
+	switch reg {
+	case 0x12:
+		return uint8(v.RasterLine)
+	case 0x11:
+		val := v.registers[0x11] & 0x7F
+		if v.RasterLine&0x100 != 0 {
+			val |= 0x80
+		}
+		return val
+	}
+	if int(reg) < len(v.registers) {
+		return v.registers[reg]
+	}
+	return 0xFF
 }
 
 func (v *VICII) StepDot() {
@@ -113,9 +169,7 @@ func (v *VICII) StepDot() {
 		v.phi0low()
 	case 4:
 		v.phi0high()
-
-		// temporarily disable cpu to prevent it executing garbage in ram
-		// cpu.TickPhi2()
+		cpu.TickPhi2()
 	}
 }
 
@@ -237,7 +291,11 @@ func (v *VICII) phi0low() {
 	if cycle >= 12 && cycle <= 54 {
 		v.cycleIsCAccess()
 	}
-	if cycle >= 16 && cycle <= 54 {
+	// g-access reads the video matrix entry stored by the c-access one
+	// cycle earlier (c-access runs in the second phase of cycles 15-54;
+	// g-access, in the first phase, can only see data from a strictly
+	// earlier cycle), so its range is shifted one cycle later: 16-55.
+	if cycle >= 16 && cycle <= 55 {
 		v.cycleGAccess()
 	}
 }
@@ -271,6 +329,12 @@ func (v *VICII) cycleIsBadLine() {
 	yscroll := v.registers[regControl1] & 0x07
 	v.badLine = v.RasterLine >= badLineRasterStart && v.RasterLine <= badLineRasterEnd &&
 		uint8(v.RasterLine)&0x07 == yscroll && v.allowBadLine
+
+	// "The transition from idle to display state occurs as soon as there
+	// is a Bad Line Condition" (section 3.7.1).
+	if v.badLine {
+		v.idle = false
+	}
 }
 
 // cycleSetVicCounter loads VC from VCBase and resets VMLI (and RC on a Bad
@@ -299,18 +363,26 @@ func (v *VICII) cycleGAccess() {
 
 	cb := (uint16(v.registers[regMemPointers]) >> 1) & 0x07
 	addr := (cb << 11) + (v.videoBuffer&0xFF)<<3 + uint16(v.RC)
-	v.gdSequencer = ram[addr]
+	v.gdSequencer = pla.VICLoad(addr)
 
-	v.VC++
-	v.VMLI++
+	// "VC and VMLI are incremented after each g-access in display state"
+	// (section 3.7.2, rule 4): idle state g-accesses don't advance them.
+	if !v.idle {
+		v.VC++
+		v.VMLI++
+	}
 }
 
-// cycleGotoIdle advances RC, or loads VCBase from VC at the end of a
-// character row, on the first phase of cycle 58 (section 3.7.2).
+// cycleGotoIdle checks for the end of a character row, on the first phase
+// of cycle 58 (section 3.7.2, rule 5): if RC=7, the video logic goes to
+// idle state and VCBase is loaded from VC; RC is then only incremented if
+// still (or again, per section 3.7.3.9's edge case) in display state.
 func (v *VICII) cycleGotoIdle() {
 	if v.RC == 7 {
+		v.idle = true
 		v.VCBase = v.VC
-	} else {
+	}
+	if !v.idle {
 		v.RC++
 	}
 }
@@ -329,12 +401,16 @@ func (v *VICII) cycleBorderComp() {
 }
 
 // phi0high runs on the 4th dot of every 8-dot cycle: it performs a Bad
-// Line's c-access (cycles 15-54) and hands the bus to the CPU for Phi2.
+// Line's c-access (cycles 15-54), ticks the CIAs, and hands the bus to the
+// CPU for Phi2.
 func (v *VICII) phi0high() {
 	cycle := int(v.Dot)/8 + 1
 	if cycle >= 15 && cycle <= 54 {
 		v.cycleCAccess()
 	}
+
+	cia1.Tick()
+	cia2.Tick()
 
 	// AEC mirrors BA with a delay, or is directly controlled here
 	v.AEC = v.BA
@@ -347,7 +423,7 @@ func (v *VICII) cycleCAccess() {
 		return
 	}
 	vm := (uint16(v.registers[regMemPointers]) >> 4) & 0x0F
-	char := ram[(vm<<10)+v.VC]
+	char := pla.VICLoad((vm << 10) + v.VC)
 	color := ram[0xD800+v.VC] & 0x0F
 	v.videoMatrixColor[v.VMLI] = uint16(color)<<8 | uint16(char)
 }

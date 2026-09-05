@@ -26,6 +26,12 @@ type CPU struct {
 	Value   uint8  // Internal buffer for read-modify-write operations
 	Addr2   uint16 // Internal buffer for a second address (e.g. page-crossing fixups)
 
+	// Interrupt records which kind of interrupt (if any) BRK's microcode is
+	// currently servicing: 0 = a real BRK instruction, 1 = IRQ, 2 = NMI.
+	Interrupt uint8
+	nmiLine   bool // last-seen state of CIA2's IRQ line, for edge detection
+	nmiLatch  bool // latched by a 0->1 transition of nmiLine, until serviced
+
 	// Port and PortDDR implement the 6510's on-chip I/O port at $0001/$0000,
 	// a feature the plain 6502 does not have.
 	Port    uint8
@@ -33,6 +39,39 @@ type CPU struct {
 }
 
 var cpu CPU
+
+// GetCPU returns the singleton CPU instance, for debugging/tracing tools.
+func GetCPU() *CPU {
+	return &cpu
+}
+
+// Status returns the processor status register (NV-BDIZC).
+func (c *CPU) Status() uint8 {
+	return c.regP
+}
+
+// Reset loads PC from the reset vector at $FFFC/$FFFD, as the real 6510
+// does when the RESET line is asserted, and resets the VIC-II's internal
+// video logic state.
+func Reset() {
+	cpu.Reset()
+	vic.Reset()
+}
+
+func (c *CPU) Reset() {
+	lo := c.load(0xFFFC)
+	hi := c.load(0xFFFD)
+	c.PC = uint16(hi)<<8 | uint16(lo)
+}
+
+// bankBits returns the effective (DDR-masked) state of the LORAM/HIRAM/
+// CHAREN lines driven by the CPU's I/O port at $0001: pins configured as
+// inputs float high, pins configured as outputs reflect the written value.
+// These select the ROM/RAM/I-O banking performed by the PLA.
+func (c *CPU) bankBits() (loram, hiram, charen bool) {
+	effective := (c.Port & c.PortDDR) | ^c.PortDDR
+	return effective&0x01 != 0, effective&0x02 != 0, effective&0x04 != 0
+}
 
 // load performs a Phi2 bus read cycle at addr, delegating to the bus.
 // $0000/$0001 are the CPU's own I/O port, not RAM, and never touch the bus.
@@ -69,19 +108,42 @@ func (c *CPU) TickPhi2() {
 	}
 
 	switch c.TState {
-	// T0: Always fetch the opcode
+	// T0: Fetch the opcode, unless a pending interrupt takes over instead.
+	// NMI is edge-triggered (CIA2, latched); IRQ is level-triggered (CIA1,
+	// masked by the I flag) - both are serviced via BRK's microcode.
 	case 0:
-		c.Opcode = c.load(c.PC)
-		c.PC++
-		c.TState = 1
+		if cia2.IRQ && !c.nmiLine && !DisableCIAInterrupts {
+			c.nmiLatch = true
+		}
+		c.nmiLine = cia2.IRQ
+
+		switch {
+		case c.nmiLatch:
+			c.nmiLatch = false
+			c.Interrupt = 2
+			c.Opcode = 0x00
+			c.TState = 1
+		case cia1.IRQ && !DisableCIAInterrupts && c.regP&P_INTERRUPT == 0:
+			c.Interrupt = 1
+			c.Opcode = 0x00
+			c.TState = 1
+		default:
+			c.Interrupt = 0
+			c.Opcode = c.load(c.PC)
+			c.PC++
+			c.TState = 1
+		}
 	case 1:
 		// T1: Execute the instruction based on the opcode
 		switch c.Opcode {
-		case 0x00: // BRK
-			// Real 6502 reads and discards a "signature" byte here,
-			// advancing PC past it even though it isn't used.
+		case 0x00: // BRK/IRQ/NMI
+			// Real 6502 reads and discards a "signature" byte here. A real
+			// BRK instruction advances PC past it; a hardware interrupt
+			// does not, since PC must resume at the interrupted instruction.
 			c.load(c.PC)
-			c.PC++
+			if c.Interrupt == 0 {
+				c.PC++
+			}
 			c.TState = 2
 		case 0x01: // ORA (Indirect,X)
 			c.Pointer = c.load(c.PC) // Store ZP pointer base (BAL)
@@ -1935,8 +1997,12 @@ func (c *CPU) TickPhi2() {
 	case 4:
 		// T4: Execute the instruction based on the opcode
 		switch c.Opcode {
-		case 0x00: // BRK: push Status, with B and unused bits set
-			c.store(0x0100+uint16(c.SP), c.regP|0x30)
+		case 0x00: // BRK/IRQ/NMI: push Status. Only a real BRK sets the B flag.
+			status := c.regP | 0x20
+			if c.Interrupt == 0 {
+				status |= 0x10
+			}
+			c.store(0x0100+uint16(c.SP), status)
 			c.SP--
 			c.regP |= 0x04 // Set Interrupt Disable flag
 			c.TState = 5
@@ -2219,8 +2285,12 @@ func (c *CPU) TickPhi2() {
 			c.setCarry(c.Value&0x01 != 0) // Carry from old bit 0
 			c.Value = (c.Value >> 1) | (carryIn << 7)
 			c.TState = 6
-		case 0x00: // BRK: fetch new PCL from vector
-			c.Operand = uint16(c.load(0xFFFE)) // Stash new PCL until T6
+		case 0x00: // BRK/IRQ: fetch new PCL from vector ($FFFA for NMI)
+			vec := uint16(0xFFFE)
+			if c.Interrupt == 2 {
+				vec = 0xFFFA
+			}
+			c.Operand = uint16(c.load(vec)) // Stash new PCL until T6
 			c.TState = 6
 		case 0x81: // STA (Indirect,X): write A
 			c.store(c.Operand, c.A)
@@ -2366,8 +2436,12 @@ func (c *CPU) TickPhi2() {
 	case 6:
 		// T6: Execute the instruction based on the opcode
 		switch c.Opcode {
-		case 0x00: // BRK: fetch new PCH from vector, jump to handler
-			c.PC = uint16(c.load(0xFFFF))<<8 | c.Operand
+		case 0x00: // BRK/IRQ: fetch new PCH from vector ($FFFB for NMI), jump
+			vec := uint16(0xFFFF)
+			if c.Interrupt == 2 {
+				vec = 0xFFFB
+			}
+			c.PC = uint16(c.load(vec))<<8 | c.Operand
 			c.TState = 0 // Finished, next cycle is T0 for next opcode
 		case 0x1E: // ASL Absolute,X: write new value
 			c.store(c.Operand, c.Value)
