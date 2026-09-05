@@ -26,4 +26,3 @@ func (b *Bus) Store(addr uint16, val uint8) {
 }
 
 var bus Bus
-var ram [65536]byte
