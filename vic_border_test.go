@@ -73,3 +73,61 @@ func TestVICBorderPlacement(t *testing.T) {
 	}
 	_ = wantLast
 }
+
+// TestVICGAccessPixelAlignment is a regression test for a 4-pixel g-access
+// pipeline delay bug: the graphics data sequencer was reloaded at Dot%8==0
+// (the memory bus cycle boundary), but the border comparators/pixel output
+// operate on rasterX, whose %8==0 phase falls 4 dots later (since
+// firstXCoo=404 isn't a multiple of 8). This made every column's leftmost
+// ~4 pixels get shifted away before the border even opened (looking like
+// the left border "occludes" the character), and left a ~4 pixel gap of
+// stale/blank pixels before the right border resumed. This test uses a
+// solid (0xFF) character bitmap for the first and last columns, so any
+// misalignment shows up as background-colored pixels within what should
+// be a fully solid 8-pixel-wide character cell.
+func TestVICGAccessPixelAlignment(t *testing.T) {
+	v := &VICII{}
+	const w, h = DotsPerLine, RasterLinesPerFrame
+	pixels := make([]byte, w)
+	const targetRow = 52 // within the first Bad Line's row (raster $33-$3A)
+	v.WritePixelToBuffer = func(x, y int, colorIndex byte) {
+		if y == targetRow && x >= 0 && x < w {
+			pixels[x] = colorIndex
+		}
+	}
+	v.Reset()
+
+	v.WriteRegister(0xD020, 0x0E) // border: light blue (14)
+	v.WriteRegister(0xD021, 0x06) // background: blue (6)
+	v.WriteRegister(0xD011, 0x1B) // DEN=1, RSEL=1 (25 rows), YSCROLL=3
+	v.WriteRegister(0xD016, 0x08) // CSEL=1 (40 cols), MCM=0, XSCROLL=0
+	v.WriteRegister(0xD018, 0x10) // VM=1 (screen @ $0400), CB=0 (chars @ $0000, plain RAM)
+
+	// Screen codes 0 and 1 (used for the first and last column) both get a
+	// fully solid 8x8 bitmap, so their entire 8-pixel-wide cell should show
+	// foreground color with no gaps if the pipeline delay is correct.
+	for row := range 8 {
+		ram[0x0000+row] = 0xFF // char 0's bitmap
+		ram[0x0008+row] = 0xFF // char 1's bitmap
+	}
+	for col := range 40 {
+		ram[0x0400+col] = 0
+		ram[0xD800+col] = 0x01 // white foreground
+	}
+	ram[0x0400+39] = 1 // last column uses char 1 (also solid)
+
+	const dotsPerFrame = DotsPerLine * RasterLinesPerFrame
+	for range dotsPerFrame {
+		v.StepDot()
+	}
+
+	const foreground = 0x01
+	wantFirst := (24 - firstVisXCoo + DotsPerLine) % DotsPerLine // displayX 48
+	wantLast := (344-1-firstVisXCoo+DotsPerLine)%DotsPerLine - 1 // displayX 367
+	if pixels[wantFirst] != foreground {
+		t.Errorf("pixel at first column's leftmost displayX=%d is %#x, want foreground %#x (occluded by border)", wantFirst, pixels[wantFirst], foreground)
+	}
+	if pixels[wantLast] != foreground {
+		t.Errorf("pixel at last column's rightmost displayX=%d is %#x, want foreground %#x (gap before right border)", wantLast, pixels[wantLast], foreground)
+	}
+}

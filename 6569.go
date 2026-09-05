@@ -72,6 +72,10 @@ type VICII struct {
 	// videoMatrixColor buffers one text row's worth of c-access results
 	// (char code + color), indexed by VMLI.
 	videoMatrixColor [40]uint16
+	// gdPending/videoBufferPending hold a g-access's fetch result until it's
+	// committed to gdSequencer/videoBuffer 4 dots later (see cycleGAccess).
+	gdPending          uint8
+	videoBufferPending uint16
 
 	// VC/VCBase/VMLI/RC drive the video matrix and character row fetch
 	// (section 3.7.2 of the VIC Article).
@@ -118,6 +122,8 @@ func (v *VICII) Reset() {
 	v.grColor = 0
 	v.gdSequencer = 0
 	v.videoBuffer = 0
+	v.gdPending = 0
+	v.videoBufferPending = 0
 	v.videoMatrixColor = [40]uint16{}
 	v.VC = 0
 	v.VCBase = 0
@@ -200,6 +206,16 @@ func (v *VICII) dotclock() {
 	}
 
 	v.borderUnit(rasterX)
+
+	// The byte fetched by this cycle's g-access becomes visible exactly
+	// here (rasterX%8==0, i.e. Dot%8==4): committing it in phi0high would
+	// run after this same dot's pixel is painted below, one pixel late.
+	if rasterX%8 == 0 {
+		cycle := int(v.Dot)/8 + 1
+		if cycle >= 16 && cycle <= 55 {
+			v.cycleGAccessCommit()
+		}
+	}
 
 	// Remap to a contiguous display column: the visible region wraps past
 	// the X=503/X=0 boundary, but the pixel buffer expects 0..N left-to-right.
@@ -356,14 +372,17 @@ func (v *VICII) cycleIsCAccess() {
 }
 
 // cycleGAccess reads one row of character data (standard text mode only
-// for now) into the graphics data sequencer, and advances VC/VMLI
-// (section 3.7.2/3.7.3.1).
+// for now), and advances VC/VMLI (section 3.7.2/3.7.3.1). The fetched
+// byte isn't displayed immediately: it's latched in gdPending and
+// committed to gdSequencer by cycleGAccessCommit, called from dotclock
+// exactly when rasterX%8==0 (which falls 4 dots after this cycle's own
+// Dot%8==0, since firstXCoo=404 isn't a multiple of 8).
 func (v *VICII) cycleGAccess() {
-	v.videoBuffer = v.videoMatrixColor[v.VMLI]
+	v.videoBufferPending = v.videoMatrixColor[v.VMLI]
 
 	cb := (uint16(v.registers[regMemPointers]) >> 1) & 0x07
-	addr := (cb << 11) + (v.videoBuffer&0xFF)<<3 + uint16(v.RC)
-	v.gdSequencer = pla.VICLoad(addr)
+	addr := (cb << 11) + (v.videoBufferPending&0xFF)<<3 + uint16(v.RC)
+	v.gdPending = pla.VICLoad(addr)
 
 	// "VC and VMLI are incremented after each g-access in display state"
 	// (section 3.7.2, rule 4): idle state g-accesses don't advance them.
@@ -371,6 +390,16 @@ func (v *VICII) cycleGAccess() {
 		v.VC++
 		v.VMLI++
 	}
+}
+
+// cycleGAccessCommit loads gdSequencer/videoBuffer from the most recent
+// g-access's fetch. Called from dotclock (before that dot's pixel is
+// painted) rather than phi0high, since phi0high runs after dotclock's
+// paint for the same dot and would make the fresh byte visible one pixel
+// too late.
+func (v *VICII) cycleGAccessCommit() {
+	v.gdSequencer = v.gdPending
+	v.videoBuffer = v.videoBufferPending
 }
 
 // cycleGotoIdle checks for the end of a character row, on the first phase
