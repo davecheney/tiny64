@@ -1,4 +1,3 @@
-package desktop
 // Package desktop provides the shared Ebitengine-based GUI frontend used
 // by tiny64's desktop commands (cmd/tiny64, cmd/destestmax, cmd/deadtest).
 // It is deliberately isolated from the core tiny64 package: the long-term
