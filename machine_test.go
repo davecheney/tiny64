@@ -19,10 +19,12 @@ func saveMachine(t *testing.T) {
 	savedCPU, savedCIA1, savedCIA2 := cpu, cia1, cia2
 	savedKeyboard, savedVIC, savedCartridge := keyboard, vic, cartridge
 	savedRAM, savedColorRAM := ram, colorRAM
+	savedWritePixelToBuffer := WritePixelToBuffer
 	t.Cleanup(func() {
 		cpu, cia1, cia2 = savedCPU, savedCIA1, savedCIA2
 		keyboard, vic, cartridge = savedKeyboard, savedVIC, savedCartridge
 		ram, colorRAM = savedRAM, savedColorRAM
+		WritePixelToBuffer = savedWritePixelToBuffer
 	})
 }
 
@@ -58,7 +60,7 @@ func newMachine(t *testing.T) *machine {
 	colorRAM = [1024]byte{}
 	// The VIC-II will not step without somewhere to put its pixels, and
 	// there is no display here, so throw them away.
-	vic.WritePixelToBuffer = func(x, y uint16, colorIndex byte) {}
+	WritePixelToBuffer = func(x, y uint16, colorIndex byte) {}
 	Reset()
 	return &machine{t: t}
 }

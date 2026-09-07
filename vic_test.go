@@ -46,15 +46,12 @@ func TestVICStepFrameMatchesStepDot(t *testing.T) {
 		ram, colorRAM = savedRAM, savedColorRAM
 
 		pixels := make([]pixel, 0, DotsPerFrame)
-		vic.WritePixelToBuffer = func(x, y uint16, colorIndex byte) {
+		WritePixelToBuffer = func(x, y uint16, colorIndex byte) {
 			pixels = append(pixels, pixel{x, y, colorIndex})
 		}
 		step()
 
 		gotVIC, gotCPU := vic, cpu
-		// func values aren't comparable, and it's the video logic under
-		// test here, not the callback.
-		gotVIC.WritePixelToBuffer = nil
 		return gotVIC, gotCPU, pixels
 	}
 
@@ -157,7 +154,8 @@ func TestVICResetIsIdle(t *testing.T) {
 // incremented unconditionally every line regardless of state, counted up
 // to 7 and got stuck there, and VCBase/VC grew without bound).
 func TestVICStaysIdleWithoutDEN(t *testing.T) {
-	v := &VICII{WritePixelToBuffer: func(x, y uint16, colorIndex byte) {}}
+	WritePixelToBuffer = func(x, y uint16, colorIndex byte) {}
+	v := &VICII{}
 	v.Reset()
 
 	for range 3 {
@@ -176,7 +174,8 @@ func TestVICStaysIdleWithoutDEN(t *testing.T) {
 }
 
 func TestVICFinishFrameAdvancesToNextFrameBoundary(t *testing.T) {
-	v := &VICII{WritePixelToBuffer: func(x, y uint16, colorIndex byte) {}}
+	WritePixelToBuffer = func(x, y uint16, colorIndex byte) {}
+	v := &VICII{}
 	v.Reset()
 
 	v.dot = 123
@@ -200,7 +199,8 @@ func TestVICFinishFrameAdvancesToNextFrameBoundary(t *testing.T) {
 // to idle state once raster lines stop matching YSCROLL (i.e. past $F7,
 // where no further Bad Line Condition can occur).
 func TestVICBadLineEntersDisplayState(t *testing.T) {
-	v := &VICII{WritePixelToBuffer: func(x, y uint16, colorIndex byte) {}}
+	WritePixelToBuffer = func(x, y uint16, colorIndex byte) {}
+	v := &VICII{}
 	v.Reset()
 	v.registers[regControl1] = 0x13 // DEN=1, YSCROLL=3, RSEL=0
 
@@ -264,7 +264,8 @@ func TestVICBadLineEntersDisplayState(t *testing.T) {
 // early, leaving the 40th column's gdSequencer stale (displaying as blank)
 // and VC drifting out of sync with the video matrix every row.
 func TestVICGAccessCountPerRow(t *testing.T) {
-	v := &VICII{WritePixelToBuffer: func(x, y uint16, colorIndex byte) {}}
+	WritePixelToBuffer = func(x, y uint16, colorIndex byte) {}
+	v := &VICII{}
 	v.Reset()
 	v.registers[regControl1] = 0x1B // DEN=1, RSEL=1, YSCROLL=3
 
@@ -286,7 +287,8 @@ func TestVICGAccessCountPerRow(t *testing.T) {
 // and that VC stays within the 1000-entry video matrix range across a
 // full frame instead of drifting to unrelated pages of memory.
 func TestVICVideoMatrixAddress(t *testing.T) {
-	v := &VICII{WritePixelToBuffer: func(x, y uint16, colorIndex byte) {}}
+	WritePixelToBuffer = func(x, y uint16, colorIndex byte) {}
+	v := &VICII{}
 	v.Reset()
 	v.registers[regControl1] = 0x1B    // DEN=1, RSEL=1, YSCROLL=3 (KERNAL defaults)
 	v.registers[regMemPointers] = 0x14 // VM=1 (screen at $0400), CB=2 (chars at $1000)

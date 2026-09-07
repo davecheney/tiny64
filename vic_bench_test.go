@@ -34,7 +34,7 @@ func loadTestProgram() {
 // M0+ absolute timings, but the relative proportions of work should
 // carry over.
 func BenchmarkStepDot(b *testing.B) {
-	vic.WritePixelToBuffer = func(x, y uint16, colorIndex byte) {}
+	WritePixelToBuffer = func(x, y uint16, colorIndex byte) {}
 	Reset()
 	loadTestProgram()
 

@@ -67,7 +67,7 @@ func main() {
 
 	// Clear the screen to black
 	display.FillScreen(color.RGBA{0, 0, 0, 255})
-	tiny64.VIC().WritePixelToBuffer = func(x, y uint16, colorIndex byte) {
+	tiny64.WritePixelToBuffer = func(x, y uint16, colorIndex byte) {
 		x -= cropX // underflows out of range below the crop origin
 		y -= cropY
 		if x >= 320 || y >= 240 {
