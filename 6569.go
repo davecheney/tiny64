@@ -682,15 +682,14 @@ func (v *VICII) phi0low() {
 	// raster within $30-$F7, its lower 3 bits matching YSCROLL, and DEN
 	// having been set at some point during raster line $30.
 	yscroll := v.registers[regControl1] & 0x07
-	v.badLine = v.rasterLine >= badLineRasterStart && v.rasterLine <= badLineRasterEnd &&
+	badLine := v.rasterLine >= badLineRasterStart && v.rasterLine <= badLineRasterEnd &&
 		uint8(v.rasterLine)&0x07 == yscroll && v.allowBadLine
+	v.badLine = badLine
 	// "The transition from idle to display state occurs as soon as there
 	// is a Bad Line Condition" (section 3.7.1).
-	if v.badLine {
+	if badLine {
 		v.idle = false
 	}
-
-	v.BA = true // default; a Bad Line's c-access window pulls it low below
 
 	switch slot {
 	case 1, 2, 3: // article cycles 12-14
@@ -703,9 +702,7 @@ func (v *VICII) phi0low() {
 
 	// cycleIsCAccess: pulls BA low for the duration of a Bad Line's
 	// c-accesses, article cycles 12-54.
-	if slot >= 1 && slot <= 43 && v.badLine {
-		v.BA = false
-	}
+	v.BA = !(slot >= 1 && slot <= 43 && badLine)
 	// g-access reads the video matrix entry stored by the c-access one
 	// cycle earlier (c-access runs in the second phase of cycles 15-54;
 	// g-access, in the first phase, can only see data from a strictly
