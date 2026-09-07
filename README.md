@@ -30,7 +30,7 @@ Raspberry Pi Pico.
 - the repository root is the core emulator package (CPU, VIC-II, CIA,
   1541, bus/PLA)
 - `rom/` embeds the ROM images the emulator needs to boot
-- `desktop/` is the shared Ebitengine frontend used by the desktop
+- `cmd/internal/desktop/` is the shared Ebitengine frontend used by the desktop
   commands
 - `cmd/c64` is the desktop C64 emulator
 - `cmd/c64cli` runs the emulator headless, for testing and debugging
