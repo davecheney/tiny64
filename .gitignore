@@ -6,3 +6,4 @@
 !go.mod
 !go.sum
 !.github/workflows/*.yml
+!.github/dependabot.yml
