@@ -67,8 +67,9 @@ var positional = map[ebiten.Key]tiny64.Key{
 	ebiten.KeyEqual:     tiny64.KeyMinus,
 	ebiten.KeyBackspace: tiny64.KeyDelete,
 	ebiten.KeyHome:      tiny64.KeyHome,
-	ebiten.KeyEnd:       tiny64.KeyPound,
-	ebiten.KeyInsert:    tiny64.KeyPound,
+	// GBP sits between - and HOME, where a PC has no key at all, so it
+	// has no positional home and gets End by convention.
+	ebiten.KeyEnd: tiny64.KeyPound,
 
 	// Second row: the C64 has CTRL where a PC has Tab, and @ * ^ where a
 	// PC has [ ] \.
@@ -105,19 +106,27 @@ var positional = map[ebiten.Key]tiny64.Key{
 	ebiten.KeyF7: tiny64.KeyF7,
 }
 
-// shifted maps host keys that have no C64 key of their own, and are
-// instead reached on real hardware by holding SHIFT. The C64 has only two
-// cursor keys and four function keys; up, left, and the even-numbered
-// function keys are the shifted forms of them.
+// shifted maps host keys that the C64 reaches by holding SHIFT rather
+// than with a key of their own. Two different things end up here.
 //
-// This is the one place the positional map synthesizes a modifier. It is
-// worth the impurity because the alternative is having no way at all to
-// move the cursor up or left, but it does mean a program reading the
-// matrix directly sees SHIFT held during these presses, exactly as it
-// would if the user had pressed SHIFT themselves.
+// Cursor up and left, and the even-numbered function keys, have no
+// separate switch in the matrix at all: the C64 has only two cursor keys
+// and four function keys, and shift is how you get the other direction
+// and the other four. Insert is the opposite case, a key that does exist
+// on the host and whose C64 equivalent is genuinely the shifted form of
+// a switch that is already in the matrix, since INST and DEL are one
+// physical key at PA0/PB0 and shift chooses between them.
+//
+// This is the one place the positional map synthesizes a modifier. For
+// the cursor and function keys it is worth the impurity because the
+// alternative is having no way at all to move the cursor up or left. In
+// every case a program reading the matrix directly sees SHIFT held during
+// these presses, exactly as it would if the user had pressed SHIFT
+// themselves, which for Insert is precisely what the real machine does.
 var shifted = map[ebiten.Key]tiny64.Key{
 	ebiten.KeyArrowUp:   tiny64.KeyCursorDown,
 	ebiten.KeyArrowLeft: tiny64.KeyCursorRight,
+	ebiten.KeyInsert:    tiny64.KeyDelete,
 	ebiten.KeyF2:        tiny64.KeyF1,
 	ebiten.KeyF4:        tiny64.KeyF3,
 	ebiten.KeyF6:        tiny64.KeyF5,
