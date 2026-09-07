@@ -18,6 +18,14 @@ jobs:
         with:
           go-version-file: go.mod
 
+      # Ebitengine's GLFW binding is cgo and needs X11/OpenGL development
+      # headers, which ubuntu-latest doesn't carry by default. Only the
+      # desktop frontend pulls this in; the emulator core doesn't.
+      - name: Install Ebitengine build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libgl1-mesa-dev xorg-dev
+
       - name: Build
         run: go build ./...
 
