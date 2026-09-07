@@ -50,7 +50,7 @@ var fb = pixel.NewImage[pixel.RGB565BE](320, 240)
 
 func main() {
 	machine.SPI0.Configure(machine.SPIConfig{
-		Frequency: 16_000_000, // was 8000000 - display transfer was now the bottleneck
+		Frequency: 32_000_000, // keep the queued frame transfer below emulation time
 		Mode:      0,
 	})
 
