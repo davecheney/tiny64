@@ -1,4 +1,4 @@
-// Command tiny64c runs the emulator headless, with no video output, for
+// Command c64cli runs the emulator headless, with no video output, for
 // testing and debugging the CPU/VIC-II without the Ebitengine graphics.
 package main
 
