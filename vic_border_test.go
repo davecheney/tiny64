@@ -19,8 +19,8 @@ func TestVICBorderPlacement(t *testing.T) {
 			pixels[y][x] = unwritten
 		}
 	}
-	v.WritePixelToBuffer = func(x, y int, colorIndex byte) {
-		if y >= 0 && y < h && x >= 0 && x < w {
+	v.WritePixelToBuffer = func(x, y uint16, colorIndex byte) {
+		if int(y) < h && int(x) < w {
 			pixels[y][x] = colorIndex
 		}
 	}
@@ -61,11 +61,10 @@ func TestVICBorderPlacement(t *testing.T) {
 	}
 	t.Logf("row 100: first non-border pixel at displayX=%d, last at displayX=%d (row width=%d)", firstNonBorder, lastNonBorder, w)
 
-	// Expected: left border/display transition at real X=$18 (24), right
-	// at real X=$158 (344), remapped into displayX via
-	// (rasterX - firstVisXCoo + DotsPerLine) % DotsPerLine.
-	wantFirst := (24 - firstVisXCoo + DotsPerLine) % DotsPerLine
-	wantLast := (344-1-firstVisXCoo+DotsPerLine)%DotsPerLine - 1 // last border pixel is one before the right comparison value
+	// Expected: left border/display transition at leftComp (CSEL=1), right
+	// at rightComp (CSEL=1); dot is the display column directly.
+	wantFirst := int(leftComp[1])
+	wantLast := int(rightComp[1]) - 1 // last border pixel is one before the right comparison value
 	t.Logf("want first non-border displayX=%d", wantFirst)
 
 	if firstNonBorder != wantFirst {
@@ -75,23 +74,23 @@ func TestVICBorderPlacement(t *testing.T) {
 }
 
 // TestVICGAccessPixelAlignment is a regression test for a 4-pixel g-access
-// pipeline delay bug: the graphics data sequencer was reloaded at Dot%8==0
-// (the memory bus cycle boundary), but the border comparators/pixel output
-// operate on rasterX, whose %8==0 phase falls 4 dots later (since
-// firstXCoo=404 isn't a multiple of 8). This made every column's leftmost
-// ~4 pixels get shifted away before the border even opened (looking like
-// the left border "occludes" the character), and left a ~4 pixel gap of
-// stale/blank pixels before the right border resumed. This test uses a
-// solid (0xFF) character bitmap for the first and last columns, so any
-// misalignment shows up as background-colored pixels within what should
-// be a fully solid 8-pixel-wide character cell.
+// pipeline delay bug: the graphics data sequencer was reloaded on the bus
+// cycle boundary (dot&7==4) rather than on the character-cell boundary
+// (dot&7==0) that the border comparators and pixel output work in. This
+// made every column's leftmost ~4 pixels get shifted away before the
+// border even opened (looking like the left border "occludes" the
+// character), and left a ~4 pixel gap of stale/blank pixels before the
+// right border resumed. This test uses a solid (0xFF) character bitmap
+// for the first and last columns, so any misalignment shows up as
+// background-colored pixels within what should be a fully solid
+// 8-pixel-wide character cell.
 func TestVICGAccessPixelAlignment(t *testing.T) {
 	v := &VICII{}
 	const w, h = DotsPerLine, RasterLinesPerFrame
 	pixels := make([]byte, w)
 	const targetRow = 52 // within the first Bad Line's row (raster $33-$3A)
-	v.WritePixelToBuffer = func(x, y int, colorIndex byte) {
-		if y == targetRow && x >= 0 && x < w {
+	v.WritePixelToBuffer = func(x, y uint16, colorIndex byte) {
+		if int(y) == targetRow && int(x) < w {
 			pixels[x] = colorIndex
 		}
 	}
@@ -122,8 +121,8 @@ func TestVICGAccessPixelAlignment(t *testing.T) {
 	}
 
 	const foreground = 0x01
-	wantFirst := (24 - firstVisXCoo + DotsPerLine) % DotsPerLine // displayX 48
-	wantLast := (344-1-firstVisXCoo+DotsPerLine)%DotsPerLine - 1 // displayX 367
+	wantFirst := int(leftComp[1])     // displayX 48
+	wantLast := int(rightComp[1]) - 2 // displayX 366
 	if pixels[wantFirst] != foreground {
 		t.Errorf("pixel at first column's leftmost displayX=%d is %#x, want foreground %#x (occluded by border)", wantFirst, pixels[wantFirst], foreground)
 	}

@@ -67,7 +67,7 @@ func main() {
 
 	// WritePixelToBuffer must be set for the VIC-II to step, but there's no
 	// display to draw to here, so just discard every pixel.
-	tiny64.VIC().WritePixelToBuffer = func(x, y int, colorIndex byte) {}
+	tiny64.VIC().WritePixelToBuffer = func(x, y uint16, colorIndex byte) {}
 
 	// Fill RAM with random values to simulate power-on randomness.
 	ram := tiny64.Ram()
@@ -96,7 +96,7 @@ func main() {
 
 		// A CPU cycle completes once every 8 dots, right after the VIC-II's
 		// phi0high hands the bus to the CPU for its Phi2 (see 6569.go).
-		if vic.Dot%8 != 4 {
+		if vic.Dot()%8 != 4 {
 			continue
 		}
 		n++
@@ -149,7 +149,7 @@ func main() {
 			}
 			fmt.Fprintf(os.Stderr, "%8d PC=%04X OP=%02X T=%d A=%02X X=%02X Y=%02X SP=%02X P=%02X | ADDR=%04X DATA=%02X %s | DOT=%3d RASTER=%3d\n",
 				n, cpu.PC, cpu.Opcode, cpu.TState, cpu.A, cpu.X, cpu.Y, cpu.SP, cpu.Status(),
-				bus.Address, bus.Data, rw, vic.Dot, vic.RasterLine)
+				bus.Address, bus.Data, rw, vic.Dot(), vic.RasterLine())
 		}
 
 		if *cycles > 0 && n >= *cycles {
