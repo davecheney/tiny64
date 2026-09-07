@@ -89,6 +89,10 @@ func ioLoad(addr uint16) uint8 {
 	case addr >= 0xDC00 && addr <= 0xDCFF:
 		return cia1.Load(addr)
 	case addr >= 0xDD00 && addr <= 0xDDFF:
+		if addr&0xF == 0x0 {
+			// PRA has IEC-specific semantics, see iec.go.
+			return cia2ReadPRA()
+		}
 		return cia2.Load(addr)
 	default:
 		return ram[addr]
