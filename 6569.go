@@ -1,8 +1,12 @@
 package tiny64
 
 const (
-	DotsPerLine         = 63 * 8 // PAL: 63 cycles * 8 dots
-	RasterLinesPerFrame = 312    // PAL total raster lines
+	CyclesPerLine       = 63 // PAL: 63 CPU cycles per raster line
+	DotsPerCycle        = 8  // each CPU cycle (Phi1 + Phi2) spans 8 dots
+	DotsPerLine         = CyclesPerLine * DotsPerCycle
+	RasterLinesPerFrame = 312 // PAL total raster lines
+	CyclesPerFrame      = CyclesPerLine * RasterLinesPerFrame
+	DotsPerFrame        = DotsPerLine * RasterLinesPerFrame
 
 	// dot 0 is the leftmost position of a raster line (inside the left
 	// overscan, so not necessarily visible on a given TV); the beam moves
@@ -29,11 +33,9 @@ const (
 	regBorderColor = 0x20 // $D020
 	regBackground0 = 0x21 // $D021
 
-	// Bad Line Condition raster range (section 3.5 of the VIC Article) and
-	// the number of CPU cycles per raster line.
+	// Bad Line Condition raster range (section 3.5 of the VIC Article).
 	badLineRasterStart = 0x30
 	badLineRasterEnd   = 0xF7
-	maxCyclesPerLine   = 63
 )
 
 // Border unit comparison values, indexed by the RSEL/CSEL control bits.
@@ -195,6 +197,43 @@ func (v *VICII) StepDot() {
 		v.phi0high()
 		cpu.TickPhi2()
 	}
+}
+
+// StepFrame advances the VIC-II, and therefore the rest of the machine it
+// clocks, by exactly one PAL frame's worth of dots. This is a relative step:
+// if StepFrame is interleaved with StepDot, it preserves the current beam
+// phase and lands one frame later at the same dot/raster position rather than
+// synchronizing to the next frame boundary.
+func (v *VICII) StepFrame() {
+	for range DotsPerFrame {
+		v.StepDot()
+	}
+}
+
+// FinishFrame advances the VIC-II, and therefore the rest of the machine it
+// clocks, until the beam reaches the top of the next frame. Unlike StepFrame,
+// this synchronizes to dot 0, raster line 0; if already at that position, it
+// still advances one full frame.
+func (v *VICII) FinishFrame() {
+	for {
+		v.StepDot()
+		if v.dot == 0 && v.rasterLine == 0 {
+			return
+		}
+	}
+}
+
+// StepFrame advances the singleton machine by exactly one PAL frame. See
+// VICII.StepFrame for the behaviour when interleaving it with lower-level
+// StepDot calls.
+func StepFrame() {
+	vic.StepFrame()
+}
+
+// FinishFrame advances the singleton machine to dot 0, raster line 0 at the
+// top of the next frame. See VICII.FinishFrame for boundary behaviour.
+func FinishFrame() {
+	vic.FinishFrame()
 }
 
 // dotclock paints the pixel at the beam's current position.

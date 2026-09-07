@@ -109,11 +109,8 @@ func main() {
 				frame, emulateTime/50, drawTime/50)
 			emulateTime, drawTime = 0, 0
 		}
-		const dots = tiny64.DotsPerLine * tiny64.RasterLinesPerFrame // 63 cycles * 8 dots * 312 raster lines
 		start := time.Now()
-		for range dots {
-			tiny64.VIC().StepDot()
-		}
+		tiny64.StepFrame()
 		emulateTime += time.Since(start)
 
 		start = time.Now()
