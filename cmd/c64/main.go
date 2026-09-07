@@ -7,7 +7,7 @@ import (
 )
 
 func main() {
-	if err := desktop.Run("tiny64", nil); err != nil {
+	if err := desktop.Run("c64", nil); err != nil {
 		log.Fatal(err)
 	}
 }
