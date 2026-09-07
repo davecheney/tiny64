@@ -1,3 +1,7 @@
+//go:build tinygo
+
+// Command tufty64 runs the emulator on a TinyGo board with an ST7789
+// panel. It imports machine, so it only builds under TinyGo.
 package main
 
 import (
