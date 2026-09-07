@@ -105,7 +105,7 @@ func Run(title string, insertCart func()) error {
 		fmt.Println("emulated frames:", emu.frames)
 	}()
 
-	tiny64.VIC().WritePixelToBuffer = emu.writePixelToBuffer
+	tiny64.WritePixelToBuffer = emu.writePixelToBuffer
 
 	ram := tiny64.Ram()
 	for i := range ram {

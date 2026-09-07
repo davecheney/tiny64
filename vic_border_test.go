@@ -19,7 +19,7 @@ func TestVICBorderPlacement(t *testing.T) {
 			pixels[y][x] = unwritten
 		}
 	}
-	v.WritePixelToBuffer = func(x, y uint16, colorIndex byte) {
+	WritePixelToBuffer = func(x, y uint16, colorIndex byte) {
 		if int(y) < h && int(x) < w {
 			pixels[y][x] = colorIndex
 		}
@@ -89,7 +89,7 @@ func TestVICGAccessPixelAlignment(t *testing.T) {
 	const w, h = DotsPerLine, RasterLinesPerFrame
 	pixels := make([]byte, w)
 	const targetRow = 52 // within the first Bad Line's row (raster $33-$3A)
-	v.WritePixelToBuffer = func(x, y uint16, colorIndex byte) {
+	WritePixelToBuffer = func(x, y uint16, colorIndex byte) {
 		if int(y) == targetRow && int(x) < w {
 			pixels[x] = colorIndex
 		}

@@ -67,7 +67,7 @@ func main() {
 
 	// WritePixelToBuffer must be set for the VIC-II to step, but there's no
 	// display to draw to here, so just discard every pixel.
-	tiny64.VIC().WritePixelToBuffer = func(x, y uint16, colorIndex byte) {}
+	tiny64.WritePixelToBuffer = func(x, y uint16, colorIndex byte) {}
 
 	// Fill RAM with random values to simulate power-on randomness.
 	ram := tiny64.Ram()
