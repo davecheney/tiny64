@@ -8,56 +8,53 @@ const (
 	CyclesPerFrame      = CyclesPerLine * RasterLinesPerFrame
 	DotsPerFrame        = DotsPerLine * RasterLinesPerFrame
 
-	// dot 0 is the leftmost position of a raster line (inside the left
-	// overscan, so not necessarily visible on a given TV); the beam moves
-	// one dot right per dot clock. The remainder of the line is the
-	// horizontal blanking interval, during which the beam retraces to the
-	// left and the line counter advances.
+	// The rendering window - the region of the beam's travel for which
+	// writePixelToBuffer is called - is declared per build in window.go
+	// and window_tinygo.go, as FirstVisibleDot, LastVisibleDot,
+	// FirstVisibleLine and LastVisibleLine.
 	//
-	// This is a rendering window, not a timing constant. It gates nothing
-	// but calls to WritePixelToBuffer: the beam still ticks DotsPerFrame
+	// It is a rendering window, not a timing constant. It gates nothing
+	// but calls to writePixelToBuffer: the beam still ticks DotsPerFrame
 	// (157,248) times per frame regardless, and every state transition is
 	// driven by dot and rasterLine against their own comparators - the
 	// border flip-flops by leftComp/rightComp, the g-access commit by its
-	// slot range, Bad Lines by rasterLine. Widening or narrowing it cannot
-	// change emulated behaviour, only which border pixels a frontend is
-	// handed.
+	// slot range, Bad Lines by rasterLine. Narrowing it therefore cannot
+	// change what a frontend sees inside the window, only how much work
+	// is done producing pixels it was going to discard.
 	//
-	// So it is chosen for convenience. A bus cycle starts at a dot
-	// divisible by DotsPerCycle and paints the next eight, the last of
-	// them by dotclock0, which stepCycle always calls. Making this
-	// congruent to 1 modulo DotsPerCycle means the seven dots dotclock1
-	// through dotclock7 paint are always either all inside the window or
-	// all outside it, never split, which is what lets stepCycle test
-	// horizontal blanking once per cycle instead of once per dot.
-	//
-	// The VIC Article does not settle on one figure anyway: rebasing its
-	// section 3.9 table, whose X=480 is our dot 0 and whose last visible
-	// X=380 is our dot 404, suggests 405, while its own summary column
-	// says 403. 401 sits inside that range, and the dots it gives up are
-	// right border - the 40-column window ends at rightComp40 (368) and
-	// sprites are unimplemented, so only flat borderColor can appear
-	// beyond it.
-	VisibleDotsPerLine = 401
+	// Sizes, for frontends that need to allocate a buffer.
+	VisibleDotsPerLine = LastVisibleDot - FirstVisibleDot + 1
+	VisibleLines       = LastVisibleLine - FirstVisibleLine + 1
 
-	// VisibleDotsPerLine must stay congruent to 1 modulo DotsPerCycle, or
-	// a cycle's seven dots could straddle the edge of the window and
-	// stepCycle's single test would be wrong. These conversions are valid
-	// constant expressions only when the remainder is exactly 1, so
-	// changing it without fixing stepCycle fails the build.
-	_ = uint(VisibleDotsPerLine%DotsPerCycle - 1)
-	_ = uint(1 - VisibleDotsPerLine%DotsPerCycle)
+	// A bus cycle starts at a dot divisible by DotsPerCycle and paints
+	// dots dot+1 through dot+8, with the last of those painted by
+	// dotclock0, which stepCycle always calls. So dotclock1 through
+	// dotclock7 paint dot+1 through dot+7, and stepCycle skips all seven
+	// at once when none of those dots is inside the window. That is only
+	// sound if such a group is never split by an edge of the window,
+	// which these two bounds capture: the first and last cycle-start dot
+	// for which the whole group lies inside.
+	firstPaintCycleDot = FirstVisibleDot
+	lastPaintCycleDot  = (LastVisibleDot - (DotsPerCycle - 1)) / DotsPerCycle * DotsPerCycle
+
+	// ... and which hold only if the window's edges are aligned to a bus
+	// cycle. FirstVisibleDot must be a multiple of DotsPerCycle, and
+	// LastVisibleDot must be congruent to 0 or DotsPerCycle-1, otherwise
+	// some group of seven straddles an edge and stepCycle's single test
+	// is wrong. These conversions are valid constant expressions only
+	// when that holds, so a misaligned window fails the build.
+	_ = uint(-(FirstVisibleDot % DotsPerCycle))
+	_ = uint((LastVisibleDot % DotsPerCycle) * (LastVisibleDot%DotsPerCycle - (DotsPerCycle - 1)))
 
 	// PAL 6569 vertical blanking interval: raster lines 300-311 and 0-15,
-	// during which the video signal (and thus the raster) is off.
+	// during which the video signal (and thus the raster) is off. No
+	// window may extend into it, since the beam is not painting there.
 	firstVBlankLine = 300
 	lastVBlankLine  = 15
 
-	// The picture occupies raster lines 16-299, and horizontally dots
-	// 0..VisibleDotsPerLine-1; writePixelToBuffer is never called outside
-	// that window, so a display only needs a buffer that size.
-	FirstVisibleLine = lastVBlankLine + 1
-	VisibleLines     = firstVBlankLine - FirstVisibleLine
+	_ = uint(FirstVisibleLine - (lastVBlankLine + 1))
+	_ = uint(firstVBlankLine - 1 - LastVisibleLine)
+	_ = uint(LastVisibleDot - FirstVisibleDot)
 
 	regControl1    = 0x11 // $D011: RST8/ECM/BMM/DEN/RSEL/YSCROLL
 	regControl2    = 0x16 // $D016: -/-/RES/MCM/CSEL/XSCROLL
@@ -208,7 +205,22 @@ func (v *VICII) Reset() {
 // It must be called whenever rasterLine is changed by anything other than
 // dotclock0's line wrap, which updates the flag itself.
 func (v *VICII) syncLineVisible() {
-	v.lineVisible = v.rasterLine < firstVBlankLine && v.rasterLine > lastVBlankLine
+	v.lineVisible = v.rasterLine >= FirstVisibleLine && v.rasterLine <= LastVisibleLine
+}
+
+// dotInWindow reports whether the dot the next dotclock will paint - the
+// one after the current beam position - lies inside the rendering window.
+//
+// This is the caller-side half of the contract that dotclock1 through
+// dotclock7 rely on. They contain no visibility test, because stepCycle
+// can settle the question once per bus cycle for all seven of them at
+// once; anything that drives them individually has to ask this first, or
+// it will paint dots outside the window and, on a build whose window is
+// narrowed to a crop, disagree with stepCycle.
+//
+// It has a single call site in a non-test build, so it still inlines.
+func (v *VICII) dotInWindow() bool {
+	return v.lineVisible && v.dot+1 >= FirstVisibleDot && v.dot+1 <= LastVisibleDot
 }
 
 func (v *VICII) WriteRegister(addr uint16, value uint8) {
@@ -285,11 +297,11 @@ func (v *VICII) StepDot() {
 	// dotclock1 through dotclock7 carry no visibility test of their own:
 	// their caller owns it, because stepCycle can answer it once for all
 	// seven at a time. Anything driving them one at a time must therefore
-	// test it themselves. dotclock0 still tests itself, because its
+	// ask dotInWindow first. dotclock0 still tests itself, because its
 	// line wrap is what changes the answer. When the dot is outside the
 	// rendering window there is nothing to paint, so the beam just
 	// advances.
-	if (v.lineVisible && v.dot+1 < VisibleDotsPerLine) || v.dot&7 == 7 {
+	if v.dotInWindow() || v.dot&7 == 7 {
 		switch v.dot & 7 {
 		case 0:
 			v.dotclock1()
@@ -385,11 +397,11 @@ func (v *VICII) stepCycle() {
 	// Whether the line is in the rendering window is a property of the
 	// line, cached in lineVisible. Whether the dots are would normally be
 	// a per-dot question, but dot is always a multiple of DotsPerCycle and
-	// VisibleDotsPerLine is congruent to 1 modulo it (asserted where it is
+	// the window's edges are cycle-aligned (asserted where the bounds are
 	// declared), so dots dot+1 through dot+7 are either all inside the
 	// window or all outside it, never split. dotclock1 through dotclock7
 	// therefore carry no visibility check at all.
-	paint := v.lineVisible && v.dot+1 < VisibleDotsPerLine
+	paint := v.lineVisible && v.dot >= firstPaintCycleDot && v.dot <= lastPaintCycleDot
 	if paint {
 		v.dotclock1()
 		v.dotclock2()
@@ -667,13 +679,13 @@ func (v *VICII) dotclock0() {
 		}
 		// The only place rasterLine changes in the hot path, so the only
 		// place the cached vblank answer can go stale.
-		v.lineVisible = v.rasterLine < firstVBlankLine && v.rasterLine > lastVBlankLine
+		v.lineVisible = v.rasterLine >= FirstVisibleLine && v.rasterLine <= LastVisibleLine
 	}
 
 	if !v.lineVisible {
 		return
 	}
-	if v.dot >= VisibleDotsPerLine {
+	if v.dot < FirstVisibleDot || v.dot > LastVisibleDot {
 		return
 	}
 
