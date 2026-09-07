@@ -108,8 +108,9 @@ func TestKeyboardEveryKeyIsDistinct(t *testing.T) {
 	}
 }
 
-// The KERNAL detects SHIFT/CTRL/C= by scanning backwards: it drives Port B
-// and reads Port A. The matrix is just wire, so this has to work.
+// Driving Port B and reading Port A has to work too, since the matrix is
+// just wire. Software that only wants to know whether any key at all is
+// down does this to avoid walking all eight lines.
 func TestKeyboardReverseScan(t *testing.T) {
 	var k Keyboard
 	k.Press(KeyLShift) // PA1, PB7
