@@ -442,6 +442,9 @@ func (v *VICII) cycleCAccess() {
 	}
 	vm := (uint16(v.registers[regMemPointers]) >> 4) & 0x0F
 	char := plaVICLoad((vm << 10) + v.VC)
-	color := ram[0xD800+v.VC] & 0x0F
+	// Colour RAM is a dedicated 2114 chip wired directly to the VIC-II's
+	// colour bus, not part of the 64K address space the c-access above
+	// reads through, so it is read here independently of plaVICLoad.
+	color := colorRAM[v.VC]
 	v.videoMatrixColor[v.VMLI] = uint16(color)<<8 | uint16(char)
 }

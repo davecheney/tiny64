@@ -86,6 +86,11 @@ func ioLoad(addr uint16) uint8 {
 	switch {
 	case addr <= 0xD3FF:
 		return vic.ReadRegister(addr)
+	case addr >= 0xD800 && addr <= 0xDBFF:
+		// The 2114 is only 4 bits wide; its unconnected upper data lines
+		// float high, so reads report 1s there (matching VICE's model of
+		// the chip).
+		return colorRAM[addr-0xD800] | 0xF0
 	case addr >= 0xDC00 && addr <= 0xDCFF:
 		return cia1.Load(addr)
 	case addr >= 0xDD00 && addr <= 0xDDFF:
@@ -103,6 +108,8 @@ func ioStore(addr uint16, val uint8) {
 	switch {
 	case addr <= 0xD3FF:
 		vic.WriteRegister(addr, val)
+	case addr >= 0xD800 && addr <= 0xDBFF:
+		colorRAM[addr-0xD800] = val & 0x0F
 	case addr >= 0xDC00 && addr <= 0xDCFF:
 		cia1.Store(addr, val)
 	case addr >= 0xDD00 && addr <= 0xDDFF:
