@@ -34,7 +34,7 @@ func TestVICBorderPlacement(t *testing.T) {
 
 	for col := range 40 {
 		ram[0x0400+col] = byte(1 + col) // screen code 1 = 'A'
-		ram[0xD800+col] = 0x01
+		colorRAM[col] = 0x01
 	}
 
 	const dotsPerFrame = DotsPerLine * RasterLinesPerFrame
@@ -111,7 +111,7 @@ func TestVICGAccessPixelAlignment(t *testing.T) {
 	}
 	for col := range 40 {
 		ram[0x0400+col] = 0
-		ram[0xD800+col] = 0x01 // white foreground
+		colorRAM[col] = 0x01 // white foreground
 	}
 	ram[0x0400+39] = 1 // last column uses char 1 (also solid)
 
