@@ -61,6 +61,16 @@ type VICII struct {
 
 	// Keep per-dot and per-cycle scalar state before the larger buffers so
 	// TinyGo can use compact fixed-offset accesses.
+	//
+	// lineVisible caches "rasterLine is outside vblank" for the current
+	// raster line. Vertical blanking is a property of the line, not of the
+	// dot, and rasterLine is only ever written by dotclock0's line wrap, so
+	// every dot on a line gives the same answer. Caching it turns each
+	// dotclock's vblank test into a single byte load instead of reloading
+	// rasterLine and redoing the range compare - which LLVM cannot hoist
+	// for us, since the pixel sink call may alias this struct and forces a
+	// reload after every paint. Kept in sync by syncLineVisible.
+	lineVisible    bool
 	mainBorder     bool
 	verticalBorder bool
 	gdSequencer    uint8
@@ -159,6 +169,14 @@ func (v *VICII) Reset() {
 	v.allowBadLine = false
 	v.denLatch = false
 	v.idle = true
+	v.syncLineVisible()
+}
+
+// syncLineVisible recomputes the cached lineVisible flag from rasterLine.
+// It must be called whenever rasterLine is changed by anything other than
+// dotclock0's line wrap, which updates the flag itself.
+func (v *VICII) syncLineVisible() {
+	v.lineVisible = v.rasterLine < firstVBlankLine && v.rasterLine > lastVBlankLine
 }
 
 func (v *VICII) WriteRegister(addr uint16, value uint8) {
@@ -231,23 +249,33 @@ func (v *VICII) StepDot() {
 	// Compute the next pixel with the implementation for its phase. The
 	// phase is derived from the current beam position so StepDot remains
 	// correct when called from any point within a bus cycle.
-	switch v.dot & 7 {
-	case 0:
-		v.dotclock1()
-	case 1:
-		v.dotclock2()
-	case 2:
-		v.dotclock3()
-	case 3:
-		v.dotclock4()
-	case 4:
-		v.dotclock5()
-	case 5:
-		v.dotclock6()
-	case 6:
-		v.dotclock7()
-	case 7:
-		v.dotclock0()
+	//
+	// dotclock1 through dotclock7 carry no vblank test of their own: their
+	// caller owns it, because stepCycle can answer it once per cycle for
+	// all of them at a time. dotclock0 still tests itself, because its
+	// line wrap is what changes the answer. On a blanked line there is
+	// nothing to paint, so the beam just advances.
+	if v.lineVisible || v.dot&7 == 7 {
+		switch v.dot & 7 {
+		case 0:
+			v.dotclock1()
+		case 1:
+			v.dotclock2()
+		case 2:
+			v.dotclock3()
+		case 3:
+			v.dotclock4()
+		case 4:
+			v.dotclock5()
+		case 5:
+			v.dotclock6()
+		case 6:
+			v.dotclock7()
+		case 7:
+			v.dotclock0()
+		}
+	} else {
+		v.dot++
 	}
 
 	// Every 8 dots represents 1 full CPU cycle (Phi1 + Phi2). The
@@ -303,20 +331,47 @@ func (v *VICII) StepFrame() {
 //
 // Both regressions trace back to repeatedly entering the general per-dot
 // path. This version instead gives each of the 8 dots in a cycle its own
-// function - dotclock0 through dotclock7. Splitting them apart also means
-// each only contains the checks that dot's position can actually reach:
-// the border comparisons and the line/frame-wrap and g-access-commit logic
-// only ever trigger on specific dots within a cycle (see each function's
-// comment), so the six interior dots' bodies are smaller besides.
+// function - dotclock0 through dotclock7 - so that each has exactly one
+// call site. That is the whole trick: LLVM inlines an internal function
+// with a single call site near-unconditionally, because the original body
+// is deleted afterwards and net code size barely moves, whereas N call
+// sites into one shared function mean N copies and the cost threshold
+// refuses all of them. Verified in the emitted IR: with the split, no
+// dotclock survives as a function and stepCycle contains zero calls into
+// one; collapsing the identical bodies back into a single function makes
+// it reappear with a real call per dot.
+//
+// Splitting them apart also means each only contains the checks that dot's
+// position can actually reach: the border comparisons and the line/frame-wrap
+// and g-access-commit logic only ever trigger on specific dots within a
+// cycle (see each function's comment), so the six interior dots' bodies are
+// smaller besides.
 func (v *VICII) stepCycle() {
-	v.dotclock1()
-	v.dotclock2()
-	v.dotclock3()
-	v.dotclock4()
+	// One test covers the whole cycle. Vertical blanking is a property of
+	// the raster line, not of the dot, so it is the same answer for all
+	// eight dots; lineVisible caches it. dotclock1 through dotclock7
+	// therefore carry no vblank check of their own.
+	if v.lineVisible {
+		v.dotclock1()
+		v.dotclock2()
+		v.dotclock3()
+		v.dotclock4()
+	} else {
+		v.dot += 4
+	}
 	v.phi0low()
-	v.dotclock5()
-	v.dotclock6()
-	v.dotclock7()
+	if v.lineVisible {
+		v.dotclock5()
+		v.dotclock6()
+		v.dotclock7()
+	} else {
+		v.dot += 3
+	}
+	// dotclock0 always runs, on blanked lines too: it owns the line wrap,
+	// and the dot it paints is the first of the new line, which may have
+	// just become visible, so paint above cannot speak for it. Keeping it
+	// outside the branch also leaves it, phi0low, phi0high and TickPhi2
+	// with exactly one call site each.
 	v.dotclock0()
 	v.phi0high()
 	cpu.TickPhi2()
@@ -351,8 +406,8 @@ func FinishFrame() {
 
 // dotclock1 through dotclock6 paint the interior dots of a bus cycle
 // (those that immediately follow phi0low's dot but precede phi0high's -
-// see stepCycle). Every check beyond the vblank/hblank tests and the pixel
-// paint itself only ever triggers on one specific dot within a cycle:
+// see stepCycle). Every check beyond the hblank test and the pixel paint
+// itself only ever triggers on one specific dot within a cycle:
 //   - the line/frame wrap only happens advancing off dot 503 (the last
 //     dot of a line, DotsPerLine-1), which only the 8th dot of a cycle
 //     (dotclock0) can reach, since DotsPerLine is a multiple of
@@ -363,16 +418,25 @@ func FinishFrame() {
 //   - the g-access commit only runs when dot&7==0, true by definition
 //     only for the 8th dot.
 //
-// So these six functions are identical to each other: just the beam
-// advance, the vblank/hblank tests, and the pixel paint. They're written
-// out separately, rather than shared, so TinyGo can optimize the fixed
-// sequence in stepCycle independently of StepDot's phase dispatch.
+// So these six functions are byte-for-byte identical to each other: just
+// the beam advance, the hblank test, and the pixel paint. The vblank test
+// is gone; stepCycle establishes that once per cycle for all 8 dots.
+//
+// Do not deduplicate them into one function called six times. The
+// duplication is deliberate, and it is what makes them inline. LLVM
+// decides inlining per call site, and an internal function with exactly
+// one call site is inlined near-unconditionally: the original body is
+// deleted afterwards, so net code size barely moves. Six call sites into
+// one shared function lose that, and inlining would instead mean six
+// copies of this body, which exceeds the cost threshold - so LLVM declines
+// every one of them and stepCycle pays six real calls per bus cycle
+// instead of none. That is exactly the ~161.0ms/frame regression recorded
+// in stepCycle's comment. Note the trap: the shared version is *smaller*
+// in flash precisely because it failed to inline, so code size is not
+// evidence that it is faster.
 func (v *VICII) dotclock1() {
 	v.dot++
 
-	if v.rasterLine >= firstVBlankLine || v.rasterLine <= lastVBlankLine {
-		return
-	}
 	if v.dot >= VisibleDotsPerLine {
 		return
 	}
@@ -398,9 +462,6 @@ func (v *VICII) dotclock1() {
 func (v *VICII) dotclock2() {
 	v.dot++
 
-	if v.rasterLine >= firstVBlankLine || v.rasterLine <= lastVBlankLine {
-		return
-	}
 	if v.dot >= VisibleDotsPerLine {
 		return
 	}
@@ -426,9 +487,6 @@ func (v *VICII) dotclock2() {
 func (v *VICII) dotclock3() {
 	v.dot++
 
-	if v.rasterLine >= firstVBlankLine || v.rasterLine <= lastVBlankLine {
-		return
-	}
 	if v.dot >= VisibleDotsPerLine {
 		return
 	}
@@ -455,9 +513,6 @@ func (v *VICII) dotclock3() {
 func (v *VICII) dotclock4() {
 	v.dot++
 
-	if v.rasterLine >= firstVBlankLine || v.rasterLine <= lastVBlankLine {
-		return
-	}
 	if v.dot >= VisibleDotsPerLine {
 		return
 	}
@@ -483,9 +538,6 @@ func (v *VICII) dotclock4() {
 func (v *VICII) dotclock5() {
 	v.dot++
 
-	if v.rasterLine >= firstVBlankLine || v.rasterLine <= lastVBlankLine {
-		return
-	}
 	if v.dot >= VisibleDotsPerLine {
 		return
 	}
@@ -511,9 +563,6 @@ func (v *VICII) dotclock5() {
 func (v *VICII) dotclock6() {
 	v.dot++
 
-	if v.rasterLine >= firstVBlankLine || v.rasterLine <= lastVBlankLine {
-		return
-	}
 	if v.dot >= VisibleDotsPerLine {
 		return
 	}
@@ -545,9 +594,6 @@ func (v *VICII) dotclock6() {
 func (v *VICII) dotclock7() {
 	v.dot++
 
-	if v.rasterLine >= firstVBlankLine || v.rasterLine <= lastVBlankLine {
-		return
-	}
 	if v.dot >= VisibleDotsPerLine {
 		return
 	}
@@ -608,9 +654,12 @@ func (v *VICII) dotclock0() {
 		if v.rasterLine >= RasterLinesPerFrame {
 			v.rasterLine = 0
 		}
+		// The only place rasterLine changes in the hot path, so the only
+		// place the cached vblank answer can go stale.
+		v.lineVisible = v.rasterLine < firstVBlankLine && v.rasterLine > lastVBlankLine
 	}
 
-	if v.rasterLine >= firstVBlankLine || v.rasterLine <= lastVBlankLine {
+	if !v.lineVisible {
 		return
 	}
 	if v.dot >= VisibleDotsPerLine {

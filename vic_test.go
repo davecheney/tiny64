@@ -201,6 +201,9 @@ func TestVICFinishFrameAdvancesToNextFrameBoundary(t *testing.T) {
 
 	v.dot = 123
 	v.rasterLine = 45
+	// Moving the beam directly bypasses dotclock0's line wrap, which is
+	// what normally keeps the cached vblank flag in step with rasterLine.
+	v.syncLineVisible()
 	v.FinishFrame()
 	if v.dot != 0 || v.rasterLine != 0 {
 		t.Fatalf("after FinishFrame from mid-frame, dot=%d raster=%d, want top of frame", v.dot, v.rasterLine)
