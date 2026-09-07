@@ -24,7 +24,8 @@ package tiny64
 // absent on real hardware too:
 //
 //   - RESTORE is not scanned at all. It is wired through a monostable
-//     directly to the CPU's NMI line, so it is not represented here.
+//     directly to the CPU's NMI line, so it is modelled separately, by
+//     Restore rather than by Press.
 //   - SHIFT LOCK is a mechanical latch on the LEFT SHIFT contacts rather
 //     than a separate switch, so it is modelled by holding KeyLShift.
 //
@@ -141,6 +142,10 @@ const (
 type Keyboard struct {
 	// rows[pa] has bit pb set when the key at that intersection is held.
 	rows [8]uint8
+
+	// restore counts down the remaining Phi2 cycles of the RESTORE
+	// monostable's output pulse. See Restore.
+	restore uint16
 }
 
 var keyboard Keyboard
@@ -163,7 +168,51 @@ func (k *Keyboard) IsPressed(key Key) bool {
 // ReleaseAll lifts every key, as if the user let go of the keyboard. Front
 // ends should call this when the window loses focus, otherwise a key held
 // as focus is lost stays stuck down forever.
+//
+// It does not touch an in-flight RESTORE pulse: the monostable is a timer
+// that has already been triggered, and on real hardware it runs out its
+// period whether or not the key is still down.
 func (k *Keyboard) ReleaseAll() { k.rows = [8]uint8{} }
+
+// restorePulseCycles is the width of the monostable's output pulse. The
+// real timing is set by an RC network, and nothing observable depends on
+// the exact figure: it only has to comfortably outlast the CPU's 2-cycle
+// interrupt recognition window while staying far shorter than a human
+// keypress, so that one press is one pulse. About a millisecond of C64
+// time satisfies both.
+const restorePulseCycles = 1000
+
+// Restore presses the RESTORE key, which is not a matrix key: it triggers
+// one half of a 556 monostable whose output drives the CPU's NMI pin, in
+// parallel with CIA2's interrupt output. That wiring is why RESTORE still
+// works when a program has reprogrammed CIA1 and stopped the KERNAL
+// scanning the matrix at all.
+//
+// One press is one fixed-width pulse however long the key is held, which
+// is what stops a held RESTORE producing a stream of NMIs. Front ends must
+// therefore call this on the press edge only, not once per frame while the
+// host key is down. Retriggering during a pulse just extends it; the CPU
+// only ever sees the one leading edge.
+func (k *Keyboard) Restore() { k.restore = restorePulseCycles }
+
+// tick advances the RESTORE monostable by one Phi2 cycle. The matrix
+// itself has no clock, but this does.
+func (k *Keyboard) tick() {
+	if k.restore > 0 {
+		k.restore--
+	}
+}
+
+// NMI reports whether the RESTORE monostable is currently asserting the
+// CPU's NMI pin.
+func (k *Keyboard) NMI() bool { return k.restore > 0 }
+
+// nmiAsserted reports the level on the CPU's NMI pin. CIA2 and the RESTORE
+// monostable are both wired to it (open collector on real hardware, so
+// either one pulling it down asserts the interrupt), and the CPU cannot
+// tell them apart: the KERNAL's handler works out which fired by reading
+// CIA2's interrupt control register.
+func nmiAsserted() bool { return cia2.IRQ || keyboard.NMI() }
 
 // scan resolves the matrix given the electrical state CIA1 is driving onto
 // Port A and Port B, returning the levels actually present on the pins.
