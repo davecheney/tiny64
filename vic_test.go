@@ -135,7 +135,7 @@ func TestVICStepFrameMatchesStepDot(t *testing.T) {
 // state with VC/VCBase/RC/VMLI all cleared (section 3.7.1).
 func TestVICResetIsIdle(t *testing.T) {
 	v := &VICII{}
-	v.registers[regControl1] = 0xFF // DEN set, to prove Reset doesn't derive idle from registers
+	v.control1 = 0xFF // DEN set, to prove Reset doesn't derive idle from registers
 	v.RC = 5
 	v.VC = 123
 	v.Reset()
@@ -145,6 +145,34 @@ func TestVICResetIsIdle(t *testing.T) {
 	}
 	if v.RC != 0 || v.VC != 0 || v.VCBase != 0 || v.VMLI != 0 {
 		t.Errorf("RC=%d VC=%d VCBase=%d VMLI=%d, want all 0 after Reset", v.RC, v.VC, v.VCBase, v.VMLI)
+	}
+}
+
+func TestVICRegisterStorage(t *testing.T) {
+	var v VICII
+	for reg := uint16(0); reg < 0x2F; reg++ {
+		v.WriteRegister(0xD000+reg, uint8(reg+1))
+	}
+
+	for reg := uint16(0); reg < 0x2F; reg++ {
+		switch reg {
+		case 0x11:
+			if got, want := v.ReadRegister(0xD000+reg), uint8(reg+1)&0x7F; got != want {
+				t.Errorf("register $%02X = $%02X, want $%02X", reg, got, want)
+			}
+		case 0x12:
+			if got := v.ReadRegister(0xD000 + reg); got != 0 {
+				t.Errorf("live raster register = $%02X, want $00", got)
+			}
+		default:
+			if got, want := v.ReadRegister(0xD000+reg), uint8(reg+1); got != want {
+				t.Errorf("register $%02X = $%02X, want $%02X", reg, got, want)
+			}
+		}
+	}
+
+	if got := v.ReadRegister(0xD02F); got != 0xFF {
+		t.Errorf("unimplemented register $2F = $%02X, want $FF", got)
 	}
 }
 
@@ -202,7 +230,7 @@ func TestVICBadLineEntersDisplayState(t *testing.T) {
 	WritePixelToBuffer = func(x, y uint16, colorIndex byte) {}
 	v := &VICII{}
 	v.Reset()
-	v.registers[regControl1] = 0x13 // DEN=1, YSCROLL=3, RSEL=0
+	v.control1 = 0x13 // DEN=1, YSCROLL=3, RSEL=0
 
 	// Steps into the next raster line, far enough that its first phi0low
 	// (on dot 4, since bus cycles aren't phase-aligned to dot 0) has run
@@ -267,7 +295,7 @@ func TestVICGAccessCountPerRow(t *testing.T) {
 	WritePixelToBuffer = func(x, y uint16, colorIndex byte) {}
 	v := &VICII{}
 	v.Reset()
-	v.registers[regControl1] = 0x1B // DEN=1, RSEL=1, YSCROLL=3
+	v.control1 = 0x1B // DEN=1, RSEL=1, YSCROLL=3
 
 	// Run to the start of the first Bad Line's row ($33).
 	for v.rasterLine != 0x33 || v.dot != 0 {
@@ -290,8 +318,8 @@ func TestVICVideoMatrixAddress(t *testing.T) {
 	WritePixelToBuffer = func(x, y uint16, colorIndex byte) {}
 	v := &VICII{}
 	v.Reset()
-	v.registers[regControl1] = 0x1B    // DEN=1, RSEL=1, YSCROLL=3 (KERNAL defaults)
-	v.registers[regMemPointers] = 0x14 // VM=1 (screen at $0400), CB=2 (chars at $1000)
+	v.control1 = 0x1B    // DEN=1, RSEL=1, YSCROLL=3 (KERNAL defaults)
+	v.memPointers = 0x14 // VM=1 (screen at $0400), CB=2 (chars at $1000)
 
 	// Mark every page of RAM with its own page number, so any c-access
 	// landing outside the expected $0400-$07E7 video matrix range is

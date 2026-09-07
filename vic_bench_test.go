@@ -12,7 +12,7 @@ import "testing"
 func loadTestProgram() {
 	cia1 = CIA{}
 	cia2 = CIA{}
-	vic.registers = [47]uint8{} // DEN=0: no bad lines/sprite DMA, AEC stays true
+	vic.control1 = 0 // DEN=0: no bad lines/sprite DMA, AEC stays true
 	ram := Ram()
 	for i := range ram {
 		ram[i] = 0
