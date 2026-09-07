@@ -10,20 +10,52 @@ const (
 
 	// dot 0 is the leftmost position of a raster line (inside the left
 	// overscan, so not necessarily visible on a given TV); the beam moves
-	// one dot right per dot clock, and dots 0-404 carry picture. The
-	// remaining dots are the horizontal blanking interval, during which
-	// the beam retraces to the left and the line counter advances.
-	VisibleDotsPerLine = 405
+	// one dot right per dot clock. The remainder of the line is the
+	// horizontal blanking interval, during which the beam retraces to the
+	// left and the line counter advances.
+	//
+	// This is a rendering window, not a timing constant. It gates nothing
+	// but calls to WritePixelToBuffer: the beam still ticks DotsPerFrame
+	// (157,248) times per frame regardless, and every state transition is
+	// driven by dot and rasterLine against their own comparators - the
+	// border flip-flops by leftComp/rightComp, the g-access commit by its
+	// slot range, Bad Lines by rasterLine. Widening or narrowing it cannot
+	// change emulated behaviour, only which border pixels a frontend is
+	// handed.
+	//
+	// So it is chosen for convenience. A bus cycle starts at a dot
+	// divisible by DotsPerCycle and paints the next eight, the last of
+	// them by dotclock0, which stepCycle always calls. Making this
+	// congruent to 1 modulo DotsPerCycle means the seven dots dotclock1
+	// through dotclock7 paint are always either all inside the window or
+	// all outside it, never split, which is what lets stepCycle test
+	// horizontal blanking once per cycle instead of once per dot.
+	//
+	// The VIC Article does not settle on one figure anyway: rebasing its
+	// section 3.9 table, whose X=480 is our dot 0 and whose last visible
+	// X=380 is our dot 404, suggests 405, while its own summary column
+	// says 403. 401 sits inside that range, and the dots it gives up are
+	// right border - the 40-column window ends at rightComp40 (368) and
+	// sprites are unimplemented, so only flat borderColor can appear
+	// beyond it.
+	VisibleDotsPerLine = 401
+
+	// VisibleDotsPerLine must stay congruent to 1 modulo DotsPerCycle, or
+	// a cycle's seven dots could straddle the edge of the window and
+	// stepCycle's single test would be wrong. These conversions are valid
+	// constant expressions only when the remainder is exactly 1, so
+	// changing it without fixing stepCycle fails the build.
+	_ = uint(VisibleDotsPerLine%DotsPerCycle - 1)
+	_ = uint(1 - VisibleDotsPerLine%DotsPerCycle)
 
 	// PAL 6569 vertical blanking interval: raster lines 300-311 and 0-15,
 	// during which the video signal (and thus the raster) is off.
 	firstVBlankLine = 300
 	lastVBlankLine  = 15
 
-	// The picture occupies raster lines 16-299; writePixelToBuffer is
-	// never called outside FirstVisibleLine..FirstVisibleLine+VisibleLines
-	// horizontally 0..VisibleDotsPerLine, so a display only needs a buffer
-	// that size.
+	// The picture occupies raster lines 16-299, and horizontally dots
+	// 0..VisibleDotsPerLine-1; writePixelToBuffer is never called outside
+	// that window, so a display only needs a buffer that size.
 	FirstVisibleLine = lastVBlankLine + 1
 	VisibleLines     = firstVBlankLine - FirstVisibleLine
 
@@ -254,12 +286,13 @@ func (v *VICII) StepDot() {
 	// phase is derived from the current beam position so StepDot remains
 	// correct when called from any point within a bus cycle.
 	//
-	// dotclock0 through dotclock6 carry no vblank test of their own: their
-	// caller owns it, because stepCycle can answer it once per cycle for
-	// all of them at a time. dotclock7 still tests itself, because its
-	// line wrap is what changes the answer. On a blanked line there is
-	// nothing to paint, so the beam just advances.
-	if v.lineVisible || v.dot&7 == 7 {
+	// dotclock0 through dotclock6 carry no visibility test of their own:
+	// their caller owns it, because stepCycle can answer it once for all
+	// seven at a time. Anything driving them one at a time must therefore
+	// test it themselves. dotclock7 still tests itself, because its line
+	// wrap is what changes the answer. When the dot is outside the
+	// rendering window there is nothing to paint, so the beam advances.
+	if (v.lineVisible && v.dot+1 < VisibleDotsPerLine) || v.dot&7 == 7 {
 		switch v.dot & 7 {
 		case 0:
 			v.dotclock0()
@@ -351,11 +384,17 @@ func (v *VICII) StepFrame() {
 // cycle (see each function's comment), so the six interior dots' bodies are
 // smaller besides.
 func (v *VICII) stepCycle() {
-	// One test covers the whole cycle. Vertical blanking is a property of
-	// the raster line, not of the dot, so it is the same answer for all
-	// eight dots; lineVisible caches it. dotclock0 through dotclock6
-	// therefore carry no vblank check of their own.
-	if v.lineDrawable {
+	// One test covers the seven dots this cycle paints before dotclock7.
+	// Whether the line is drawable is a property of the line, cached in
+	// lineDrawable. Whether the dots are inside the horizontal window
+	// would normally be a per-dot question, but dot is always a multiple
+	// of DotsPerCycle and VisibleDotsPerLine is congruent to 1 modulo it
+	// (asserted where it is declared), so dots dot+1 through dot+7 are
+	// either all inside the window or all outside it, never split.
+	// dotclock0 through dotclock6 therefore carry no hblank check at all.
+	inWindow := v.dot+1 < VisibleDotsPerLine
+	paint := v.lineDrawable && inWindow
+	if paint {
 		v.dotclock0()
 		v.dotclock1()
 		v.dotclock2()
@@ -364,11 +403,17 @@ func (v *VICII) stepCycle() {
 		v.dot += 4
 	}
 	v.phi0low()
-	if v.lineDrawable {
+	if paint {
 		v.dotclock4()
 		v.dotclock5()
 		v.dotclock6()
-	} else if v.lineVisible {
+	} else if v.lineVisible && inWindow {
+		// dotclock6 carries the CSEL=0 border comparators (leftComp38 55,
+		// rightComp38 359), so it must still run on lines that are visible
+		// but not drawable, or the border flip-flops would miss a
+		// transition. Outside the horizontal window it can be skipped
+		// too: both comparators are below VisibleDotsPerLine, so a cycle
+		// starting at dot 400 or later cannot reach either.
 		v.dot += 2
 		v.dotclock6()
 	} else {
@@ -413,8 +458,8 @@ func FinishFrame() {
 
 // dotclock0 through dotclock5 execute the interior phases of a bus cycle.
 // Each advances the beam to dots 1 through 6 respectively. Every check
-// beyond the hblank test and the pixel paint itself only ever triggers on
-// one specific dot within a cycle:
+// beyond the pixel paint itself only ever triggers on one specific dot
+// within a cycle:
 //   - the line/frame wrap only happens advancing off dot 503 (the last
 //     dot of a line, DotsPerLine-1), which only the 8th dot of a cycle
 //     (dotclock7) can reach, since DotsPerLine is a multiple of
@@ -426,8 +471,9 @@ func FinishFrame() {
 //     only when dotclock7 advances the beam to phase 0.
 //
 // So these six functions are byte-for-byte identical to each other: just
-// the beam advance, the hblank test, and the pixel paint. The vblank test
-// is gone; stepCycle establishes that once per cycle for all 8 dots.
+// the beam advance, render-window test, and pixel paint. They carry no
+// hblank test; stepCycle establishes that for the first 7 dots of a cycle
+// at once.
 //
 // Do not deduplicate them into one function called six times. The
 // duplication is deliberate, and it is what makes them inline. LLVM
@@ -444,9 +490,6 @@ func FinishFrame() {
 func (v *VICII) dotclock0() {
 	v.dot++
 
-	if v.dot >= VisibleDotsPerLine {
-		return
-	}
 	if !v.lineDrawable || v.dot < renderFirstDot || v.dot >= renderDotAfter {
 		return
 	}
@@ -472,9 +515,6 @@ func (v *VICII) dotclock0() {
 func (v *VICII) dotclock1() {
 	v.dot++
 
-	if v.dot >= VisibleDotsPerLine {
-		return
-	}
 	if !v.lineDrawable || v.dot < renderFirstDot || v.dot >= renderDotAfter {
 		return
 	}
@@ -500,9 +540,6 @@ func (v *VICII) dotclock1() {
 func (v *VICII) dotclock2() {
 	v.dot++
 
-	if v.dot >= VisibleDotsPerLine {
-		return
-	}
 	if !v.lineDrawable || v.dot < renderFirstDot || v.dot >= renderDotAfter {
 		return
 	}
@@ -529,9 +566,6 @@ func (v *VICII) dotclock2() {
 func (v *VICII) dotclock3() {
 	v.dot++
 
-	if v.dot >= VisibleDotsPerLine {
-		return
-	}
 	if !v.lineDrawable || v.dot < renderFirstDot || v.dot >= renderDotAfter {
 		return
 	}
@@ -557,9 +591,6 @@ func (v *VICII) dotclock3() {
 func (v *VICII) dotclock4() {
 	v.dot++
 
-	if v.dot >= VisibleDotsPerLine {
-		return
-	}
 	if !v.lineDrawable || v.dot < renderFirstDot || v.dot >= renderDotAfter {
 		return
 	}
@@ -585,9 +616,6 @@ func (v *VICII) dotclock4() {
 func (v *VICII) dotclock5() {
 	v.dot++
 
-	if v.dot >= VisibleDotsPerLine {
-		return
-	}
 	if !v.lineDrawable || v.dot < renderFirstDot || v.dot >= renderDotAfter {
 		return
 	}
@@ -618,10 +646,6 @@ func (v *VICII) dotclock5() {
 // trigger here, so they're omitted too.
 func (v *VICII) dotclock6() {
 	v.dot++
-
-	if v.dot >= VisibleDotsPerLine {
-		return
-	}
 
 	if v.dot == rightComp38 && v.control2&csel == 0 {
 		// "1. If the X coordinate reaches the right comparison value, the
