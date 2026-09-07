@@ -327,25 +327,21 @@ func (v *VICII) dotclock1() {
 		return
 	}
 
-	var colorIndex byte
 	if v.verticalBorder {
-		colorIndex = v.registers[regBorderColor] & 0x0F
-	} else {
-		var graphicsColor byte
-		if v.gdSequencer&0x80 == 0 {
-			graphicsColor = v.registers[regBackground0] // background color 0
-		} else {
-			graphicsColor = byte(v.videoBuffer >> 8) // foreground color nibble
-		}
-		v.gdSequencer <<= 1 // this pixel is now shifted out
-
-		if v.mainBorder {
-			colorIndex = v.registers[regBorderColor] & 0x0F
-		} else {
-			colorIndex = graphicsColor & 0x0F
-		}
+		v.WritePixelToBuffer(v.dot, v.rasterLine, v.registers[regBorderColor]&0x0F)
+		return
 	}
-	v.WritePixelToBuffer(v.dot, v.rasterLine, colorIndex)
+	var graphicsColor byte
+	if v.gdSequencer&0x80 == 0 {
+		graphicsColor = v.registers[regBackground0] // background color 0
+	} else {
+		graphicsColor = byte(v.videoBuffer >> 8) // foreground color nibble
+	}
+	v.gdSequencer <<= 1 // this pixel is now shifted out
+	if v.mainBorder {
+		graphicsColor = v.registers[regBorderColor]
+	}
+	v.WritePixelToBuffer(v.dot, v.rasterLine, graphicsColor&0x0F)
 }
 
 // dotclock2 is dotclock1 for the cycle's 2nd dot - see dotclock1's comment.
@@ -359,25 +355,21 @@ func (v *VICII) dotclock2() {
 		return
 	}
 
-	var colorIndex byte
 	if v.verticalBorder {
-		colorIndex = v.registers[regBorderColor] & 0x0F
-	} else {
-		var graphicsColor byte
-		if v.gdSequencer&0x80 == 0 {
-			graphicsColor = v.registers[regBackground0] // background color 0
-		} else {
-			graphicsColor = byte(v.videoBuffer >> 8) // foreground color nibble
-		}
-		v.gdSequencer <<= 1 // this pixel is now shifted out
-
-		if v.mainBorder {
-			colorIndex = v.registers[regBorderColor] & 0x0F
-		} else {
-			colorIndex = graphicsColor & 0x0F
-		}
+		v.WritePixelToBuffer(v.dot, v.rasterLine, v.registers[regBorderColor]&0x0F)
+		return
 	}
-	v.WritePixelToBuffer(v.dot, v.rasterLine, colorIndex)
+	var graphicsColor byte
+	if v.gdSequencer&0x80 == 0 {
+		graphicsColor = v.registers[regBackground0] // background color 0
+	} else {
+		graphicsColor = byte(v.videoBuffer >> 8) // foreground color nibble
+	}
+	v.gdSequencer <<= 1 // this pixel is now shifted out
+	if v.mainBorder {
+		graphicsColor = v.registers[regBorderColor]
+	}
+	v.WritePixelToBuffer(v.dot, v.rasterLine, graphicsColor&0x0F)
 }
 
 // dotclock3 is dotclock1 for the cycle's 3rd dot - see dotclock1's comment.
@@ -391,25 +383,21 @@ func (v *VICII) dotclock3() {
 		return
 	}
 
-	var colorIndex byte
 	if v.verticalBorder {
-		colorIndex = v.registers[regBorderColor] & 0x0F
-	} else {
-		var graphicsColor byte
-		if v.gdSequencer&0x80 == 0 {
-			graphicsColor = v.registers[regBackground0] // background color 0
-		} else {
-			graphicsColor = byte(v.videoBuffer >> 8) // foreground color nibble
-		}
-		v.gdSequencer <<= 1 // this pixel is now shifted out
-
-		if v.mainBorder {
-			colorIndex = v.registers[regBorderColor] & 0x0F
-		} else {
-			colorIndex = graphicsColor & 0x0F
-		}
+		v.WritePixelToBuffer(v.dot, v.rasterLine, v.registers[regBorderColor]&0x0F)
+		return
 	}
-	v.WritePixelToBuffer(v.dot, v.rasterLine, colorIndex)
+	var graphicsColor byte
+	if v.gdSequencer&0x80 == 0 {
+		graphicsColor = v.registers[regBackground0] // background color 0
+	} else {
+		graphicsColor = byte(v.videoBuffer >> 8) // foreground color nibble
+	}
+	v.gdSequencer <<= 1 // this pixel is now shifted out
+	if v.mainBorder {
+		graphicsColor = v.registers[regBorderColor]
+	}
+	v.WritePixelToBuffer(v.dot, v.rasterLine, graphicsColor&0x0F)
 }
 
 // dotclock4 is dotclock1 for the cycle's 4th dot - see dotclock1's
@@ -424,25 +412,21 @@ func (v *VICII) dotclock4() {
 		return
 	}
 
-	var colorIndex byte
 	if v.verticalBorder {
-		colorIndex = v.registers[regBorderColor] & 0x0F
-	} else {
-		var graphicsColor byte
-		if v.gdSequencer&0x80 == 0 {
-			graphicsColor = v.registers[regBackground0] // background color 0
-		} else {
-			graphicsColor = byte(v.videoBuffer >> 8) // foreground color nibble
-		}
-		v.gdSequencer <<= 1 // this pixel is now shifted out
-
-		if v.mainBorder {
-			colorIndex = v.registers[regBorderColor] & 0x0F
-		} else {
-			colorIndex = graphicsColor & 0x0F
-		}
+		v.WritePixelToBuffer(v.dot, v.rasterLine, v.registers[regBorderColor]&0x0F)
+		return
 	}
-	v.WritePixelToBuffer(v.dot, v.rasterLine, colorIndex)
+	var graphicsColor byte
+	if v.gdSequencer&0x80 == 0 {
+		graphicsColor = v.registers[regBackground0] // background color 0
+	} else {
+		graphicsColor = byte(v.videoBuffer >> 8) // foreground color nibble
+	}
+	v.gdSequencer <<= 1 // this pixel is now shifted out
+	if v.mainBorder {
+		graphicsColor = v.registers[regBorderColor]
+	}
+	v.WritePixelToBuffer(v.dot, v.rasterLine, graphicsColor&0x0F)
 }
 
 // dotclock5 is dotclock1 for the cycle's 5th dot - see dotclock1's comment.
@@ -456,25 +440,21 @@ func (v *VICII) dotclock5() {
 		return
 	}
 
-	var colorIndex byte
 	if v.verticalBorder {
-		colorIndex = v.registers[regBorderColor] & 0x0F
-	} else {
-		var graphicsColor byte
-		if v.gdSequencer&0x80 == 0 {
-			graphicsColor = v.registers[regBackground0] // background color 0
-		} else {
-			graphicsColor = byte(v.videoBuffer >> 8) // foreground color nibble
-		}
-		v.gdSequencer <<= 1 // this pixel is now shifted out
-
-		if v.mainBorder {
-			colorIndex = v.registers[regBorderColor] & 0x0F
-		} else {
-			colorIndex = graphicsColor & 0x0F
-		}
+		v.WritePixelToBuffer(v.dot, v.rasterLine, v.registers[regBorderColor]&0x0F)
+		return
 	}
-	v.WritePixelToBuffer(v.dot, v.rasterLine, colorIndex)
+	var graphicsColor byte
+	if v.gdSequencer&0x80 == 0 {
+		graphicsColor = v.registers[regBackground0] // background color 0
+	} else {
+		graphicsColor = byte(v.videoBuffer >> 8) // foreground color nibble
+	}
+	v.gdSequencer <<= 1 // this pixel is now shifted out
+	if v.mainBorder {
+		graphicsColor = v.registers[regBorderColor]
+	}
+	v.WritePixelToBuffer(v.dot, v.rasterLine, graphicsColor&0x0F)
 }
 
 // dotclock6 is dotclock1 for the cycle's 6th dot - see dotclock1's comment.
@@ -488,25 +468,21 @@ func (v *VICII) dotclock6() {
 		return
 	}
 
-	var colorIndex byte
 	if v.verticalBorder {
-		colorIndex = v.registers[regBorderColor] & 0x0F
-	} else {
-		var graphicsColor byte
-		if v.gdSequencer&0x80 == 0 {
-			graphicsColor = v.registers[regBackground0] // background color 0
-		} else {
-			graphicsColor = byte(v.videoBuffer >> 8) // foreground color nibble
-		}
-		v.gdSequencer <<= 1 // this pixel is now shifted out
-
-		if v.mainBorder {
-			colorIndex = v.registers[regBorderColor] & 0x0F
-		} else {
-			colorIndex = graphicsColor & 0x0F
-		}
+		v.WritePixelToBuffer(v.dot, v.rasterLine, v.registers[regBorderColor]&0x0F)
+		return
 	}
-	v.WritePixelToBuffer(v.dot, v.rasterLine, colorIndex)
+	var graphicsColor byte
+	if v.gdSequencer&0x80 == 0 {
+		graphicsColor = v.registers[regBackground0] // background color 0
+	} else {
+		graphicsColor = byte(v.videoBuffer >> 8) // foreground color nibble
+	}
+	v.gdSequencer <<= 1 // this pixel is now shifted out
+	if v.mainBorder {
+		graphicsColor = v.registers[regBorderColor]
+	}
+	v.WritePixelToBuffer(v.dot, v.rasterLine, graphicsColor&0x0F)
 }
 
 // dotclock7 handles the cycle's 7th dot, the first of the two dots that
@@ -554,25 +530,21 @@ func (v *VICII) dotclock7() {
 		}
 	}
 
-	var colorIndex byte
 	if v.verticalBorder {
-		colorIndex = v.registers[regBorderColor] & 0x0F
-	} else {
-		var graphicsColor byte
-		if v.gdSequencer&0x80 == 0 {
-			graphicsColor = v.registers[regBackground0] // background color 0
-		} else {
-			graphicsColor = byte(v.videoBuffer >> 8) // foreground color nibble
-		}
-		v.gdSequencer <<= 1 // this pixel is now shifted out
-
-		if v.mainBorder {
-			colorIndex = v.registers[regBorderColor] & 0x0F
-		} else {
-			colorIndex = graphicsColor & 0x0F
-		}
+		v.WritePixelToBuffer(v.dot, v.rasterLine, v.registers[regBorderColor]&0x0F)
+		return
 	}
-	v.WritePixelToBuffer(v.dot, v.rasterLine, colorIndex)
+	var graphicsColor byte
+	if v.gdSequencer&0x80 == 0 {
+		graphicsColor = v.registers[regBackground0] // background color 0
+	} else {
+		graphicsColor = byte(v.videoBuffer >> 8) // foreground color nibble
+	}
+	v.gdSequencer <<= 1 // this pixel is now shifted out
+	if v.mainBorder {
+		graphicsColor = v.registers[regBorderColor]
+	}
+	v.WritePixelToBuffer(v.dot, v.rasterLine, graphicsColor&0x0F)
 }
 
 // dotclock0 handles the cycle's 8th (and a line's or frame's last) dot:
@@ -625,25 +597,21 @@ func (v *VICII) dotclock0() {
 		v.videoBuffer = v.videoBufferPending
 	}
 
-	var colorIndex byte
 	if v.verticalBorder {
-		colorIndex = v.registers[regBorderColor] & 0x0F
-	} else {
-		var graphicsColor byte
-		if v.gdSequencer&0x80 == 0 {
-			graphicsColor = v.registers[regBackground0] // background color 0
-		} else {
-			graphicsColor = byte(v.videoBuffer >> 8) // foreground color nibble
-		}
-		v.gdSequencer <<= 1 // this pixel is now shifted out
-
-		if v.mainBorder {
-			colorIndex = v.registers[regBorderColor] & 0x0F
-		} else {
-			colorIndex = graphicsColor & 0x0F
-		}
+		v.WritePixelToBuffer(v.dot, v.rasterLine, v.registers[regBorderColor]&0x0F)
+		return
 	}
-	v.WritePixelToBuffer(v.dot, v.rasterLine, colorIndex)
+	var graphicsColor byte
+	if v.gdSequencer&0x80 == 0 {
+		graphicsColor = v.registers[regBackground0] // background color 0
+	} else {
+		graphicsColor = byte(v.videoBuffer >> 8) // foreground color nibble
+	}
+	v.gdSequencer <<= 1 // this pixel is now shifted out
+	if v.mainBorder {
+		graphicsColor = v.registers[regBorderColor]
+	}
+	v.WritePixelToBuffer(v.dot, v.rasterLine, graphicsColor&0x0F)
 }
 
 // phi0low runs on the first dot of every 8-dot cycle: while the VIC-II is
