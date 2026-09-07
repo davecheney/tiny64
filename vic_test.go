@@ -33,7 +33,7 @@ func TestVICResetIsIdle(t *testing.T) {
 // incremented unconditionally every line regardless of state, counted up
 // to 7 and got stuck there, and VCBase/VC grew without bound).
 func TestVICStaysIdleWithoutDEN(t *testing.T) {
-	v := &VICII{WritePixelToBuffer: func(x, y int, colorIndex byte) {}}
+	v := &VICII{WritePixelToBuffer: func(x, y uint16, colorIndex byte) {}}
 	v.Reset()
 
 	for range 3 {
@@ -59,13 +59,16 @@ func TestVICStaysIdleWithoutDEN(t *testing.T) {
 // to idle state once raster lines stop matching YSCROLL (i.e. past $F7,
 // where no further Bad Line Condition can occur).
 func TestVICBadLineEntersDisplayState(t *testing.T) {
-	v := &VICII{WritePixelToBuffer: func(x, y int, colorIndex byte) {}}
+	v := &VICII{WritePixelToBuffer: func(x, y uint16, colorIndex byte) {}}
 	v.Reset()
 	v.registers[regControl1] = 0x13 // DEN=1, YSCROLL=3, RSEL=0
 
+	// Steps into the next raster line, far enough that its first phi0low
+	// (on dot 4, since bus cycles aren't phase-aligned to dot 0) has run
+	// and evaluated the Bad Line Condition.
 	stepLine := func() {
-		startLine := v.RasterLine
-		for v.RasterLine == startLine {
+		startLine := v.rasterLine
+		for v.rasterLine == startLine || v.dot < 4 {
 			v.StepDot()
 		}
 	}
@@ -73,7 +76,7 @@ func TestVICBadLineEntersDisplayState(t *testing.T) {
 	// Run up to (but not including) raster line $33, the first line whose
 	// low 3 bits match YSCROLL=3 once allowBadLine has latched (which
 	// happens at the end of raster line $30, per section 3.5).
-	for v.RasterLine != 0x32 || v.Dot != 0 {
+	for v.rasterLine != 0x32 || v.dot != 0 {
 		v.StepDot()
 	}
 	if !v.idle {
@@ -88,10 +91,10 @@ func TestVICBadLineEntersDisplayState(t *testing.T) {
 	rcSeen := map[uint8]bool{}
 	for range 25 * 8 {
 		if v.idle {
-			t.Fatalf("idle = true at raster=%d, want false (Bad Lines recur every 8 lines through $30-$F7)", v.RasterLine)
+			t.Fatalf("idle = true at raster=%d, want false (Bad Lines recur every 8 lines through $30-$F7)", v.rasterLine)
 		}
 		if v.RC > 7 {
-			t.Fatalf("RC = %d at raster=%d, want 0-7", v.RC, v.RasterLine)
+			t.Fatalf("RC = %d at raster=%d, want 0-7", v.RC, v.rasterLine)
 		}
 		rcSeen[v.RC] = true
 		stepLine()
@@ -105,7 +108,7 @@ func TestVICBadLineEntersDisplayState(t *testing.T) {
 	// Once raster lines no longer match YSCROLL within $30-$F7 (i.e. past
 	// $F7), no more Bad Lines occur and the video logic must return to
 	// idle state instead of staying stuck in display state forever.
-	for v.RasterLine <= badLineRasterEnd {
+	for v.rasterLine <= badLineRasterEnd {
 		v.StepDot()
 	}
 	if !v.idle {
@@ -120,16 +123,16 @@ func TestVICBadLineEntersDisplayState(t *testing.T) {
 // early, leaving the 40th column's gdSequencer stale (displaying as blank)
 // and VC drifting out of sync with the video matrix every row.
 func TestVICGAccessCountPerRow(t *testing.T) {
-	v := &VICII{WritePixelToBuffer: func(x, y int, colorIndex byte) {}}
+	v := &VICII{WritePixelToBuffer: func(x, y uint16, colorIndex byte) {}}
 	v.Reset()
 	v.registers[regControl1] = 0x1B // DEN=1, RSEL=1, YSCROLL=3
 
 	// Run to the start of the first Bad Line's row ($33).
-	for v.RasterLine != 0x33 || v.Dot != 0 {
+	for v.rasterLine != 0x33 || v.dot != 0 {
 		v.StepDot()
 	}
 	vcBefore := v.VC
-	for v.RasterLine == 0x33 {
+	for v.rasterLine == 0x33 {
 		v.StepDot()
 	}
 	if got := v.VC - vcBefore; got != 40 {
@@ -142,7 +145,7 @@ func TestVICGAccessCountPerRow(t *testing.T) {
 // and that VC stays within the 1000-entry video matrix range across a
 // full frame instead of drifting to unrelated pages of memory.
 func TestVICVideoMatrixAddress(t *testing.T) {
-	v := &VICII{WritePixelToBuffer: func(x, y int, colorIndex byte) {}}
+	v := &VICII{WritePixelToBuffer: func(x, y uint16, colorIndex byte) {}}
 	v.Reset()
 	v.registers[regControl1] = 0x1B    // DEN=1, RSEL=1, YSCROLL=3 (KERNAL defaults)
 	v.registers[regMemPointers] = 0x14 // VM=1 (screen at $0400), CB=2 (chars at $1000)

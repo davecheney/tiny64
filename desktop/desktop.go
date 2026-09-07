@@ -15,10 +15,18 @@ import (
 )
 
 const (
-	// Full PAL VIC-II screen dimension including borders
-	ScreenWidth  = tiny64.DotsPerLine
-	ScreenHeight = tiny64.RasterLinesPerFrame
+	// The picture the VIC-II actually emits: the blanking intervals are
+	// never written, so there's no point sizing the window for them.
+	ScreenWidth  = tiny64.VisibleDotsPerLine
+	ScreenHeight = tiny64.VisibleLines
 	Scale        = 2
+
+	// The buffer is full raster height, not ScreenHeight: that costs a few
+	// unused rows but means a pixel write needs neither an offset nor a
+	// bounds check, since the VIC only emits x < ScreenWidth and y is
+	// always a valid raster line. Draw slices the vblank rows back off.
+	bufferHeight = tiny64.RasterLinesPerFrame
+	vblankBytes  = tiny64.FirstVisibleLine * ScreenWidth * 4
 )
 
 // C64Palette is the C64 PAL color palette (RGBA format).
@@ -50,7 +58,7 @@ type emulator struct {
 
 func newEmulator() *emulator {
 	return &emulator{
-		frameBuffer: make([]byte, ScreenWidth*ScreenHeight*4),
+		frameBuffer: make([]byte, ScreenWidth*bufferHeight*4),
 	}
 }
 
@@ -66,24 +74,16 @@ func (e *emulator) Update() error {
 }
 
 // writePixelToBuffer maps a C64 color index (0-15) directly into the flat RGBA slice.
-func (e *emulator) writePixelToBuffer(x, y int, colorIndex byte) {
-	if x < 0 || x >= ScreenWidth || y < 0 || y >= ScreenHeight {
-		return
-	}
-	idx := (y*ScreenWidth + x) * 4
-	rgba := C64Palette[colorIndex&0xF]
-
-	e.frameBuffer[idx] = rgba[0]   // R
-	e.frameBuffer[idx+1] = rgba[1] // G
-	e.frameBuffer[idx+2] = rgba[2] // B
-	e.frameBuffer[idx+3] = rgba[3] // A
+func (e *emulator) writePixelToBuffer(x, y uint16, colorIndex byte) {
+	idx := (int(y)*ScreenWidth + int(x)) * 4
+	copy(e.frameBuffer[idx:idx+4], C64Palette[colorIndex&0xF][:])
 }
 
 // Draw blits the calculated frame buffer array straight onto the GPU texture.
 func (e *emulator) Draw(screen *ebiten.Image) {
 	// Blit the raw CPU bytes directly onto the Ebitengine screen texture.
 	// This uses highly optimized native OS calls under the hood (Metal on macOS).
-	screen.WritePixels(e.frameBuffer)
+	screen.WritePixels(e.frameBuffer[vblankBytes : vblankBytes+ScreenHeight*ScreenWidth*4])
 }
 
 func (e *emulator) Layout(outsideWidth, outsideHeight int) (int, int) {
