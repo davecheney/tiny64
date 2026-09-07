@@ -10,12 +10,15 @@ package tiny64
 // its PA line to its PB line, so a PA line driven low drags the PB lines
 // of any keys pressed on that line low too.
 //
-// The connection is a plain piece of wire, so it conducts both ways.
-// Software can (and the KERNAL does, when checking for SHIFT/CTRL/C=)
-// reverse the scan: write $DC01 and read $DC00. Scan models the matrix as
-// a wired-AND in both directions to get this right, which also reproduces
-// the "ghosting" that real hardware exhibits when three keys forming a
-// rectangle in the matrix are held at once.
+// The connection is a plain piece of wire, so it conducts both ways:
+// software can equally drive Port B and read Port A, which some titles do
+// to test for any keypress at all without walking all eight lines. Scan
+// therefore models the matrix as a wired-AND in both directions. That is
+// not only for the benefit of software that scans backwards: the reverse
+// direction is also what produces the "ghosting" real hardware exhibits
+// when three keys forming a rectangle in the matrix are held at once,
+// since the phantom fourth key is only reachable by a path that runs back
+// up a PA line and down again.
 //
 // Two keys are deliberately absent from the matrix, because they are
 // absent on real hardware too:
