@@ -183,10 +183,29 @@ func (v *VICII) ReadRegister(addr uint16) uint8 {
 }
 
 func (v *VICII) StepDot() {
-	// 1. Compute the pixel at the beam's new position.
-	v.dotclock()
+	// Compute the next pixel with the implementation for its phase. The
+	// phase is derived from the current beam position so StepDot remains
+	// correct when called from any point within a bus cycle.
+	switch v.dot & 7 {
+	case 0:
+		v.dotclock1()
+	case 1:
+		v.dotclock2()
+	case 2:
+		v.dotclock3()
+	case 3:
+		v.dotclock4()
+	case 4:
+		v.dotclock5()
+	case 5:
+		v.dotclock6()
+	case 6:
+		v.dotclock7()
+	case 7:
+		v.dotclock0()
+	}
 
-	// 2. Every 8 dots represents 1 full CPU cycle (Phi1 + Phi2). The
+	// Every 8 dots represents 1 full CPU cycle (Phi1 + Phi2). The
 	// cycle boundary sits 4 dots off dot=0 (the chip's bus cycles aren't
 	// phase-aligned to the left edge of the picture), so phi0low lands on
 	// dot&7==4 and phi0high, 4 dots later, on the next dot&7==0.
@@ -208,10 +227,8 @@ func (v *VICII) StepDot() {
 //
 // It assumes the beam sits on a bus-cycle boundary (dot divisible by
 // DotsPerCycle) on entry, which is where Reset and FinishFrame both leave
-// it: stepCycle hard-codes which of its 8 calls carries Phi1/Phi2 rather
-// than deriving it from dot, so entering StepFrame mid-cycle - only
-// reachable by interleaving an odd number of StepDot calls - would shift
-// the CPU's cycles against the beam for the rest of the frame.
+// it. Callers that interleave StepDot must return to a cycle boundary
+// before using this optimized frame path.
 //
 // Earlier attempts at this loop regressed on the Gopher Badge and are
 // recorded in stepCycle's comment; this shape (a single flat loop calling
@@ -238,16 +255,13 @@ func (v *VICII) StepFrame() {
 //     threshold, turning each call into a real BL/BX into a 352-byte
 //     function.
 //
-// Both regressions trace back to the same cause: dotclock (or StepDot,
-// which wraps it) had more than one call site. This version instead
-// gives each of the 8 dots in a cycle its own function - dotclock0
-// through dotclock7 - so every one has exactly the single call site
-// TinyGo's inliner already collapses for StepDot's single call to
-// dotclock. Splitting them apart also means each only contains the
-// checks that dot's position can actually reach: the border comparisons
-// and the line/frame-wrap and g-access-commit logic only ever trigger on
-// specific dots within a cycle (see each function's comment), so the six
-// interior dots' bodies are smaller than dotclock's besides.
+// Both regressions trace back to repeatedly entering the general per-dot
+// path. This version instead gives each of the 8 dots in a cycle its own
+// function - dotclock0 through dotclock7. Splitting them apart also means
+// each only contains the checks that dot's position can actually reach:
+// the border comparisons and the line/frame-wrap and g-access-commit logic
+// only ever trigger on specific dots within a cycle (see each function's
+// comment), so the six interior dots' bodies are smaller besides.
 func (v *VICII) stepCycle() {
 	v.dotclock1()
 	v.dotclock2()
@@ -288,107 +302,10 @@ func FinishFrame() {
 	vic.FinishFrame()
 }
 
-// dotclock paints the pixel at the beam's current position.
-//
-// borderUnit/display/calculateGraphicsInfo/cycleGAccessCommit are inlined
-// directly here (each had exactly one call site, from this function) to
-// remove per-dot function-call overhead - Cortex-M0+ has no branch
-// prediction or return-address stack, so on that target a BL/BX pair plus
-// prologue/epilogue is not free, and TinyGo's default (size-optimized)
-// build doesn't inline this aggressively on its own.
-func (v *VICII) dotclock() {
-	// 1. Advance the video beam by exactly 1 pixel/dot
-	v.dot++
-	if v.dot >= DotsPerLine {
-		v.dot = 0
-		v.rasterLine++
-		if v.rasterLine >= RasterLinesPerFrame {
-			v.rasterLine = 0
-		}
-	}
-
-	// are we in vertical blancking interval ?
-	if v.rasterLine >= firstVBlankLine || v.rasterLine <= lastVBlankLine {
-		return
-	}
-
-	// are we in horizontal blancking interval ?
-	if v.dot >= VisibleDotsPerLine {
-		return
-	}
-
-	// borderUnit (section 3.9 of the VIC Article): dot can only ever match
-	// a comparison value at 4 fixed positions per line, so registers are
-	// only read there instead of on every dot.
-	switch v.dot {
-	case rightComp[0], rightComp[1]:
-		// "1. If the X coordinate reaches the right comparison value, the
-		// main border flip flop is set."
-		csel := (v.registers[regControl2] >> 3) & 1
-		if v.dot == rightComp[csel] {
-			v.mainBorder = true
-		}
-	case leftComp[0], leftComp[1]:
-		csel := (v.registers[regControl2] >> 3) & 1
-		if v.dot == leftComp[csel] {
-			// "4./5. If the X coordinate reaches the left comparison value
-			// and the Y coordinate reaches the bottom/top one, set/reset
-			// (if DEN) the vertical border flip flop."
-			rsel := (v.registers[regControl1] >> 3) & 1
-			if v.rasterLine == bottomComp[rsel] {
-				v.verticalBorder = true
-			}
-			if v.rasterLine == topComp[rsel] && v.registers[regControl1]&0x10 != 0 {
-				v.verticalBorder = false
-			}
-			// "6. If the X coordinate reaches the left comparison value and
-			// the vertical border flip flop is not set, the main flip flop
-			// is reset."
-			if !v.verticalBorder {
-				v.mainBorder = false
-			}
-		}
-	}
-
-	// The byte fetched by this cycle's g-access becomes visible on the
-	// character-cell boundary: committing it in phi0high would run after
-	// this same dot's pixel is painted below, one pixel late.
-	if v.dot&7 == 0 {
-		if slot := v.dot / 8; slot >= 6 && slot <= 45 {
-			v.gdSequencer = v.gdPending
-			v.videoBuffer = v.videoBufferPending
-		}
-	}
-
-	// display()/calculateGraphicsInfo(): border color while either border
-	// flip-flop is set, otherwise the graphics color from the sequencer
-	// (section 3.9/3.7.3.1, standard text mode only for now). Sprites are
-	// not implemented yet.
-	var colorIndex byte
-	if v.verticalBorder {
-		colorIndex = v.registers[regBorderColor] & 0x0F
-	} else {
-		if v.gdSequencer&0x80 == 0 {
-			v.grColor = v.registers[regBackground0] // background color 0
-		} else {
-			v.grColor = byte(v.videoBuffer >> 8) // foreground color nibble
-		}
-		v.gdSequencer <<= 1 // this pixel is now shifted out
-
-		if v.mainBorder {
-			colorIndex = v.registers[regBorderColor] & 0x0F
-		} else {
-			colorIndex = v.grColor & 0x0F
-		}
-	}
-	v.WritePixelToBuffer(v.dot, v.rasterLine, colorIndex)
-}
-
 // dotclock1 through dotclock6 paint the interior dots of a bus cycle
 // (those that immediately follow phi0low's dot but precede phi0high's -
-// see stepCycle). Every check dotclock performs beyond the vblank/hblank
-// tests and the pixel paint itself only ever triggers on one specific
-// dot within a cycle:
+// see stepCycle). Every check beyond the vblank/hblank tests and the pixel
+// paint itself only ever triggers on one specific dot within a cycle:
 //   - the line/frame wrap only happens advancing off dot 503 (the last
 //     dot of a line, DotsPerLine-1), which only the 8th dot of a cycle
 //     (dotclock0) can reach, since DotsPerLine is a multiple of
@@ -399,12 +316,10 @@ func (v *VICII) dotclock() {
 //   - the g-access commit only runs when dot&7==0, true by definition
 //     only for the 8th dot.
 //
-// So these six functions are identical to each other and smaller than
-// dotclock: just the beam advance, the vblank/hblank tests, and the
-// pixel paint. They're written out separately, rather than shared,
-// specifically so each keeps the single call site (from stepCycle) that
-// lets TinyGo's inliner collapse it - see stepCycle's comment for what
-// happened when dotclock/StepDot instead had multiple call sites.
+// So these six functions are identical to each other: just the beam
+// advance, the vblank/hblank tests, and the pixel paint. They're written
+// out separately, rather than shared, so TinyGo can optimize the fixed
+// sequence in stepCycle independently of StepDot's phase dispatch.
 func (v *VICII) dotclock1() {
 	v.dot++
 
@@ -595,7 +510,7 @@ func (v *VICII) dotclock6() {
 // can carry a border transition (see dotclock1's comment): dot values
 // ≡7 (mod 8) are the only ones that can equal rightComp[0] (359) or
 // leftComp[0] (55), so this only needs to check those two, not the
-// switch over all four comparison values dotclock uses. Like dotclock1
+// switch over all four comparison values. Like dotclock1
 // through dotclock6, the line/frame wrap and the g-access commit can't
 // trigger here, so they're omitted too.
 func (v *VICII) dotclock7() {
@@ -662,7 +577,7 @@ func (v *VICII) dotclock7() {
 // one that can equal rightComp[1] (368) or leftComp[1] (48) - the other
 // half of the border comparisons dotclock7 doesn't check - and, since
 // dot&7==0 is true here by definition, the one that always evaluates the
-// g-access commit dotclock only conditionally reaches.
+// g-access commit.
 func (v *VICII) dotclock0() {
 	v.dot++
 	if v.dot >= DotsPerLine {
@@ -700,8 +615,7 @@ func (v *VICII) dotclock0() {
 		}
 	}
 
-	// dotclock's "if v.dot&7 == 0" guard is always true here, so only the
-	// slot range needs checking.
+	// dot&7==0 is always true here, so only the slot range needs checking.
 	if slot := v.dot / 8; slot >= 6 && slot <= 45 {
 		v.gdSequencer = v.gdPending
 		v.videoBuffer = v.videoBufferPending
@@ -733,7 +647,7 @@ func (v *VICII) dotclock0() {
 //
 // cycleRaster0/cycleRaster30/cycleIsBadLine/cycleIsCAccess are inlined
 // directly here (each had exactly one call site, unconditional or nearly
-// so) for the same function-call-overhead reason as dotclock, above.
+// so) to remove function-call overhead from the frame fast path.
 func (v *VICII) phi0low() {
 	// slot indexes the 8-dot bus cycles across a line. The article's cycle
 	// numbering starts 10 slots later (its cycle N is our slot N-11, mod
@@ -809,7 +723,7 @@ func (v *VICII) cycleSetVicCounter() {
 // cycleGAccess reads one row of character data (standard text mode only
 // for now), and advances VC/VMLI (section 3.7.2/3.7.3.1). The fetched
 // byte isn't displayed immediately: it's latched in gdPending and
-// committed to gdSequencer/videoBuffer by dotclock on the next
+// committed to gdSequencer/videoBuffer by dotclock0 on the next
 // character-cell boundary, 4 dots after this cycle's own dot&7==4.
 func (v *VICII) cycleGAccess() {
 	v.videoBufferPending = v.videoMatrixColor[v.VMLI]
