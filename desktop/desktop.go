@@ -64,6 +64,12 @@ func newEmulator() *emulator {
 
 // Update is called once per frame.
 func (e *emulator) Update() error {
+	// Sample the host keyboard once per frame. The matrix itself is
+	// combinational, so the guest sees whatever is held at the instant it
+	// scans; this only bounds how often that state can change. At 50Hz
+	// that is already finer than the KERNAL's own scan interval.
+	pollKeyboard(tiny64.Keys())
+
 	const dots = tiny64.DotsPerLine * tiny64.RasterLinesPerFrame // 63 cycles * 8 dots * 312 raster lines
 	for range dots {
 		tiny64.VIC().StepDot()
