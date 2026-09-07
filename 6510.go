@@ -29,7 +29,7 @@ type CPU struct {
 	// Interrupt records which kind of interrupt (if any) BRK's microcode is
 	// currently servicing: 0 = a real BRK instruction, 1 = IRQ, 2 = NMI.
 	Interrupt uint8
-	nmiLine   bool // last-seen state of CIA2's IRQ line, for edge detection
+	nmiLine   bool // last-seen state of the CPU's NMI pin, for edge detection
 	nmiLatch  bool // latched by a 0->1 transition of nmiLine, until serviced
 
 	// Clock counts elapsed Phi2 cycles, used to time the 2-cycle delay real
@@ -151,6 +151,10 @@ func (c *CPU) TickPhi2() {
 
 	cia1.Tick()
 	cia2.Tick()
+	// The key matrix is combinational and needs no clock, but the RESTORE
+	// monostable is a timer, so it counts here with the CIAs. It isn't on
+	// the bus, so AEC is none of its business.
+	keyboard.tick()
 
 	// If VIC-II has pulled AEC low, the CPU is electronically
 	// disconnected from the bus. It stalls entirely.
@@ -160,17 +164,18 @@ func (c *CPU) TickPhi2() {
 
 	switch c.TState {
 	// T0: Fetch the opcode, unless a pending interrupt takes over instead.
-	// NMI is edge-triggered (CIA2, latched); IRQ is level-triggered (CIA1,
-	// masked by the (delayed) I flag) - both are serviced via BRK's
-	// microcode. Real hardware needs an asserted IRQ/NMI line to be stable
-	// for 2 cycles before it's recognized (see Clock/irqAssertClock/
-	// nmiLatchClock).
+	// NMI is edge-triggered (CIA2 and the RESTORE monostable, latched);
+	// IRQ is level-triggered (CIA1, masked by the (delayed) I flag) - both
+	// are serviced via BRK's microcode. Real hardware needs an asserted
+	// IRQ/NMI line to be stable for 2 cycles before it's recognized (see
+	// Clock/irqAssertClock/nmiLatchClock).
 	case 0:
-		if cia2.IRQ && !c.nmiLine {
+		nmi := nmiAsserted()
+		if nmi && !c.nmiLine {
 			c.nmiLatch = true
 			c.nmiLatchClock = c.Clock
 		}
-		c.nmiLine = cia2.IRQ
+		c.nmiLine = nmi
 
 		if cia1.IRQ && !c.irqLine {
 			c.irqAssertClock = c.Clock
@@ -179,10 +184,22 @@ func (c *CPU) TickPhi2() {
 
 		switch {
 		case c.nmiLatch && c.Clock >= c.nmiLatchClock+2:
-			// NMI delivery is unverified: panic immediately rather than
-			// silently running unvalidated behavior, so any observed bug
-			// can be confidently attributed to BRK/IRQ instead.
-			panic(fmt.Sprintf("NMI taken at PC=%04X, Clock=%d - NMI support is unverified", c.PC, c.Clock))
+			// NMI is checked before IRQ because it wins when both are
+			// pending, and it is deliberately not gated on effectiveI: the
+			// I flag masks IRQ only, which is what makes this interrupt
+			// non-maskable.
+			//
+			// Recognition consumes the latched edge. That is the whole
+			// point of latching it: the NMI pin is edge-triggered, so a
+			// source that holds it asserted (CIA2 with an unserviced
+			// interrupt, say) produces exactly one NMI rather than a new
+			// one every instruction. Only a fresh 0->1 transition of
+			// nmiLine sets the latch again, and that can't happen until
+			// the pin has been seen deasserted in between.
+			c.nmiLatch = false
+			c.Interrupt = 2
+			c.Opcode = 0x00
+			c.TState = 1
 		case cia1.IRQ && c.effectiveI == 0 && c.Clock >= c.irqAssertClock+2:
 			c.Interrupt = 1
 			c.Opcode = 0x00

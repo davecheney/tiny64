@@ -211,3 +211,71 @@ func TestKeyboardPortAReadbackUnaffected(t *testing.T) {
 		t.Errorf("$DC00 = %#02x, want 0xaa", got)
 	}
 }
+
+// RESTORE has no matrix position, so triggering it must leave the scan
+// untouched: software walking Port A cannot see the key at all, which is
+// exactly why a program that has taken CIA1 over still gets NMIs from it.
+func TestRestoreIsNotInTheMatrix(t *testing.T) {
+	var k Keyboard
+	k.Restore()
+
+	for row := range 8 {
+		if got := scanPB(&k, row); got != 0xFF {
+			t.Errorf("PA%d low during a RESTORE pulse: PB = %#02x, want 0xff", row, got)
+		}
+	}
+}
+
+// One press is one pulse of a fixed width, however long the key is held.
+func TestRestorePulsesTheNMILine(t *testing.T) {
+	var k Keyboard
+	if k.NMI() {
+		t.Fatal("NMI asserted at rest")
+	}
+
+	k.Restore()
+	for range restorePulseCycles - 1 {
+		if !k.NMI() {
+			t.Fatal("NMI released early during the monostable's pulse")
+		}
+		k.tick()
+	}
+	if !k.NMI() {
+		t.Error("NMI released before the last cycle of the pulse")
+	}
+	k.tick()
+	if k.NMI() {
+		t.Error("NMI still asserted after the pulse should have ended")
+	}
+}
+
+// The monostable is triggered by the key, not held by it, so letting go
+// (or a front end rebuilding the matrix from scratch) must not truncate a
+// pulse already in flight.
+func TestRestorePulseSurvivesReleaseAll(t *testing.T) {
+	var k Keyboard
+	k.Restore()
+	k.ReleaseAll()
+
+	if !k.NMI() {
+		t.Error("ReleaseAll cancelled an in-flight RESTORE pulse")
+	}
+}
+
+// A second press after the first pulse has expired is a second edge, and
+// must assert the line again.
+func TestRestoreRetriggers(t *testing.T) {
+	var k Keyboard
+	k.Restore()
+	for range restorePulseCycles {
+		k.tick()
+	}
+	if k.NMI() {
+		t.Fatal("first pulse never ended")
+	}
+
+	k.Restore()
+	if !k.NMI() {
+		t.Error("second press did not assert NMI again")
+	}
+}

@@ -3,6 +3,7 @@ package desktop
 import (
 	"github.com/davecheney/tiny64"
 	"github.com/hajimehoshi/ebiten/v2"
+	"github.com/hajimehoshi/ebiten/v2/inpututil"
 )
 
 // This is a positional key map: host keys are matched to C64 keys by where
@@ -151,5 +152,21 @@ func pollKeyboard(keys *tiny64.Keyboard) {
 			keys.Press(c64)
 			keys.Press(tiny64.KeyLShift)
 		}
+	}
+
+	// RESTORE is the one key that cannot be rebuilt from level state,
+	// because it is not in the matrix: it triggers a monostable that
+	// pulses the CPU's NMI pin once per press, so what it needs is the
+	// press edge, not "is it down now". IsKeyJustPressed supplies exactly
+	// that, and the emulated monostable owns the pulse width from there,
+	// so a dropped release or a lost focus event cannot leave RESTORE
+	// jammed the way a mishandled level key could.
+	//
+	// PageUp for want of a truly positional home: RESTORE sits above the
+	// right-hand cursor keys on a C64, which is where the host's
+	// navigation cluster sits relative to its arrows, and keeping it out
+	// of the main block matches the fact that it is not a matrix key.
+	if inpututil.IsKeyJustPressed(ebiten.KeyPageUp) {
+		keys.Restore()
 	}
 }
