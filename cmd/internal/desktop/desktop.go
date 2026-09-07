@@ -70,10 +70,7 @@ func (e *emulator) Update() error {
 	// that is already finer than the KERNAL's own scan interval.
 	pollKeyboard(tiny64.Keys())
 
-	const dots = tiny64.DotsPerLine * tiny64.RasterLinesPerFrame // 63 cycles * 8 dots * 312 raster lines
-	for range dots {
-		tiny64.VIC().StepDot()
-	}
+	tiny64.StepFrame()
 	e.frames++
 
 	return nil

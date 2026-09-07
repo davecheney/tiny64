@@ -1,12 +1,98 @@
 package tiny64
 
-import "testing"
+import (
+	"reflect"
+	"testing"
+)
 
 // stepFrame runs the VIC-II for exactly one full PAL frame's worth of dots.
 func stepFrame(v *VICII) {
-	const dotsPerFrame = DotsPerLine * RasterLinesPerFrame
-	for range dotsPerFrame {
-		v.StepDot()
+	v.StepFrame()
+}
+
+// TestVICStepFrameMatchesStepDot pins down the unrolled frame loop:
+// StepFrame decides which dot of a bus cycle carries Phi1 and which
+// carries Phi2 from its position in stepCycle rather than from dot&7, so
+// it must produce exactly the same machine state, and exactly the same
+// pixels, as driving the same number of dots one at a time through
+// StepDot.
+//
+// The test vector is a frame of a machine already booted to the BASIC
+// prompt, not a freshly reset one: during the first frame after reset the
+// KERNAL hasn't set DEN yet, so there are no Bad Lines, no c- or
+// g-accesses, and every pixel is border - which any arrangement of
+// stepCycle would reproduce.
+func TestVICStepFrameMatchesStepDot(t *testing.T) {
+	type pixel struct {
+		x, y  uint16
+		color byte
+	}
+
+	m := newMachine(t)
+	m.waitForLine(5, "READY.")
+
+	// Snapshot the booted machine so both runs start from bit-identical
+	// state, rather than booting twice and trusting that to be
+	// reproducible.
+	savedCPU, savedVIC := cpu, vic
+	savedCIA1, savedCIA2 := cia1, cia2
+	savedKeyboard := keyboard
+	savedRAM, savedColorRAM := ram, colorRAM
+
+	run := func(step func()) (VICII, CPU, []pixel) {
+		cpu, vic = savedCPU, savedVIC
+		cia1, cia2 = savedCIA1, savedCIA2
+		keyboard = savedKeyboard
+		ram, colorRAM = savedRAM, savedColorRAM
+
+		pixels := make([]pixel, 0, DotsPerFrame)
+		vic.WritePixelToBuffer = func(x, y uint16, colorIndex byte) {
+			pixels = append(pixels, pixel{x, y, colorIndex})
+		}
+		step()
+
+		gotVIC, gotCPU := vic, cpu
+		// func values aren't comparable, and it's the video logic under
+		// test here, not the callback.
+		gotVIC.WritePixelToBuffer = nil
+		return gotVIC, gotCPU, pixels
+	}
+
+	frameVIC, frameCPU, framePixels := run(func() { vic.StepFrame() })
+	dotVIC, dotCPU, dotPixels := run(func() {
+		for range DotsPerFrame {
+			vic.StepDot()
+		}
+	})
+
+	// Guard against the comparison below passing on a vector that can't
+	// tell the two apart: a live display paints more than one colour, and
+	// only reaches the second one via a Bad Line's c- and g-accesses.
+	colors := map[byte]bool{}
+	for _, p := range framePixels {
+		colors[p.color] = true
+	}
+	if len(colors) < 2 {
+		t.Fatalf("frame painted %d distinct colours, want at least 2 (the display isn't active, so this proves nothing)", len(colors))
+	}
+
+	if !reflect.DeepEqual(frameVIC, dotVIC) {
+		t.Errorf("VIC state after StepFrame differs from %d StepDot calls:\n StepFrame: %+v\n   StepDot: %+v",
+			DotsPerFrame, frameVIC, dotVIC)
+	}
+	if !reflect.DeepEqual(frameCPU, dotCPU) {
+		t.Errorf("CPU state after StepFrame differs from %d StepDot calls:\n StepFrame: %+v\n   StepDot: %+v",
+			DotsPerFrame, frameCPU, dotCPU)
+	}
+	if len(framePixels) != len(dotPixels) {
+		t.Fatalf("StepFrame emitted %d pixels, %d StepDot calls emitted %d",
+			len(framePixels), DotsPerFrame, len(dotPixels))
+	}
+	for i := range framePixels {
+		if framePixels[i] != dotPixels[i] {
+			t.Fatalf("pixel %d: StepFrame emitted %+v, StepDot emitted %+v",
+				i, framePixels[i], dotPixels[i])
+		}
 	}
 }
 
@@ -48,6 +134,23 @@ func TestVICStaysIdleWithoutDEN(t *testing.T) {
 	}
 	if v.VC != 0 || v.VCBase != 0 {
 		t.Errorf("VC=%d VCBase=%d, want both 0 (must not advance in idle state)", v.VC, v.VCBase)
+	}
+}
+
+func TestVICFinishFrameAdvancesToNextFrameBoundary(t *testing.T) {
+	v := &VICII{WritePixelToBuffer: func(x, y uint16, colorIndex byte) {}}
+	v.Reset()
+
+	v.dot = 123
+	v.rasterLine = 45
+	v.FinishFrame()
+	if v.dot != 0 || v.rasterLine != 0 {
+		t.Fatalf("after FinishFrame from mid-frame, dot=%d raster=%d, want top of frame", v.dot, v.rasterLine)
+	}
+
+	v.FinishFrame()
+	if v.dot != 0 || v.rasterLine != 0 {
+		t.Fatalf("after FinishFrame from frame boundary, dot=%d raster=%d, want next frame boundary", v.dot, v.rasterLine)
 	}
 }
 
