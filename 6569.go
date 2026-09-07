@@ -54,40 +54,17 @@ type VICII struct {
 	dot        uint16 // 0 to 503
 	rasterLine uint16 // 0 to 311
 
+	WritePixelToBuffer func(x, y uint16, colorIndex byte)
+
+	// Keep per-dot and per-cycle scalar state before the larger buffers so
+	// TinyGo can use compact fixed-offset accesses.
+	mainBorder     bool
+	verticalBorder bool
+	gdSequencer    uint8
+
 	// Signals driven by the VIC-II and sensed by the CPU
 	BA  bool // Bus Available (true = high/free, false = low/stalled)
 	AEC bool // Address Enable Control (true = CPU owns Phi2, false = VIC owns Phi2)
-
-	WritePixelToBuffer func(x, y uint16, colorIndex byte)
-
-	// VIC-II Internal Registers
-	registers [47]uint8 // d000 to d02e
-
-	// Border unit flip-flops (section 3.9 of the VIC Article): mainBorder
-	// gates the whole display, verticalBorder additionally gates graphics.
-	mainBorder     bool
-	verticalBorder bool
-
-	// gdSequencer is the graphics data shift register: reloaded by a
-	// g-access and shifted once per pixel.
-	gdSequencer uint8
-	// videoBuffer holds the c-access result (char code + color) consumed by
-	// the most recent g-access.
-	videoBuffer uint16
-	// videoMatrixColor buffers one text row's worth of c-access results
-	// (char code + color), indexed by VMLI.
-	videoMatrixColor [40]uint16
-	// gdPending/videoBufferPending hold a g-access's fetch result until it's
-	// committed to gdSequencer/videoBuffer 4 dots later (see cycleGAccess).
-	gdPending          uint8
-	videoBufferPending uint16
-
-	// VC/VCBase/VMLI/RC drive the video matrix and character row fetch
-	// (section 3.7.2 of the VIC Article).
-	VC     uint16
-	VCBase uint16
-	VMLI   uint8
-	RC     uint8
 
 	// badLine/allowBadLine/denLatch implement the Bad Line Condition
 	// (section 3.5): allowBadLine is latched from DEN once per frame during
@@ -103,6 +80,27 @@ type VICII struct {
 	// Condition, and back to true in cycle 58 if RC=7 and there's no Bad
 	// Line Condition.
 	idle bool
+
+	// VC/VCBase/VMLI/RC drive the video matrix and character row fetch
+	// (section 3.7.2 of the VIC Article).
+	VMLI   uint8
+	RC     uint8
+	VC     uint16
+	VCBase uint16
+
+	// videoBuffer holds the c-access result (char code + color) consumed by
+	// the most recent g-access. gdPending/videoBufferPending hold a
+	// g-access's fetch result until it is committed 4 dots later.
+	gdPending          uint8
+	videoBuffer        uint16
+	videoBufferPending uint16
+
+	// VIC-II Internal Registers
+	registers [47]uint8 // d000 to d02e
+
+	// Keep the dynamically indexed row buffer at the cold end so it does
+	// not push fixed-offset fields out of cheap reach.
+	videoMatrixColor [40]uint16
 }
 
 var vic VICII
