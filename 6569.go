@@ -59,6 +59,11 @@ type VICII struct {
 	mainBorder     bool
 	verticalBorder bool
 	gdSequencer    uint8
+	borderColor    uint8
+	background0    uint8
+	control1       uint8
+	control2       uint8
+	memPointers    uint8
 
 	// Signals driven by the VIC-II and sensed by the CPU
 	BA  bool // Bus Available (true = high/free, false = low/stalled)
@@ -93,12 +98,18 @@ type VICII struct {
 	videoBuffer        uint16
 	videoBufferPending uint16
 
-	// VIC-II Internal Registers
-	registers [47]uint8 // d000 to d02e
-
 	// Keep the dynamically indexed row buffer at the cold end so it does
 	// not push fixed-offset fields out of cheap reach.
 	videoMatrixColor [40]uint16
+
+	// Registers not used by the current hot video path remain grouped by
+	// address range. ReadRegister and WriteRegister map around the named
+	// registers above.
+	registers00To10 [0x11]uint8
+	registers12To15 [0x04]uint8
+	register17      uint8
+	registers19To1F [0x07]uint8
+	registers22To2E [0x0D]uint8
 }
 
 var vic VICII
@@ -151,8 +162,27 @@ func (v *VICII) Reset() {
 
 func (v *VICII) WriteRegister(addr uint16, value uint8) {
 	reg := addr & 0x3F
-	if int(reg) < len(v.registers) {
-		v.registers[reg] = value
+	switch {
+	case reg < 0x11:
+		v.registers00To10[reg] = value
+	case reg == regControl1:
+		v.control1 = value
+	case reg < regControl2:
+		v.registers12To15[reg-0x12] = value
+	case reg == regControl2:
+		v.control2 = value
+	case reg == 0x17:
+		v.register17 = value
+	case reg == regMemPointers:
+		v.memPointers = value
+	case reg < regBorderColor:
+		v.registers19To1F[reg-0x19] = value
+	case reg == regBorderColor:
+		v.borderColor = value
+	case reg == regBackground0:
+		v.background0 = value
+	case reg < 0x2F:
+		v.registers22To2E[reg-0x22] = value
 	}
 }
 
@@ -167,14 +197,31 @@ func (v *VICII) ReadRegister(addr uint16) uint8 {
 	case 0x12:
 		return uint8(v.rasterLine)
 	case 0x11:
-		val := v.registers[0x11] & 0x7F
+		val := v.control1 & 0x7F
 		if v.rasterLine&0x100 != 0 {
 			val |= 0x80
 		}
 		return val
+	case regControl2:
+		return v.control2
+	case regMemPointers:
+		return v.memPointers
+	case regBorderColor:
+		return v.borderColor
+	case regBackground0:
+		return v.background0
 	}
-	if int(reg) < len(v.registers) {
-		return v.registers[reg]
+	switch {
+	case reg < 0x11:
+		return v.registers00To10[reg]
+	case reg < regControl2:
+		return v.registers12To15[reg-0x12]
+	case reg == 0x17:
+		return v.register17
+	case reg < regBorderColor:
+		return v.registers19To1F[reg-0x19]
+	case reg < 0x2F:
+		return v.registers22To2E[reg-0x22]
 	}
 	return 0xFF
 }
@@ -328,18 +375,18 @@ func (v *VICII) dotclock1() {
 	}
 
 	if v.verticalBorder {
-		WritePixelToBuffer(v.dot, v.rasterLine, v.registers[regBorderColor]&0x0F)
+		WritePixelToBuffer(v.dot, v.rasterLine, v.borderColor&0x0F)
 		return
 	}
 	var graphicsColor byte
 	if v.gdSequencer&0x80 == 0 {
-		graphicsColor = v.registers[regBackground0] // background color 0
+		graphicsColor = v.background0
 	} else {
 		graphicsColor = byte(v.videoBuffer >> 8) // foreground color nibble
 	}
 	v.gdSequencer <<= 1 // this pixel is now shifted out
 	if v.mainBorder {
-		graphicsColor = v.registers[regBorderColor]
+		graphicsColor = v.borderColor
 	}
 	WritePixelToBuffer(v.dot, v.rasterLine, graphicsColor&0x0F)
 }
@@ -356,18 +403,18 @@ func (v *VICII) dotclock2() {
 	}
 
 	if v.verticalBorder {
-		WritePixelToBuffer(v.dot, v.rasterLine, v.registers[regBorderColor]&0x0F)
+		WritePixelToBuffer(v.dot, v.rasterLine, v.borderColor&0x0F)
 		return
 	}
 	var graphicsColor byte
 	if v.gdSequencer&0x80 == 0 {
-		graphicsColor = v.registers[regBackground0] // background color 0
+		graphicsColor = v.background0
 	} else {
 		graphicsColor = byte(v.videoBuffer >> 8) // foreground color nibble
 	}
 	v.gdSequencer <<= 1 // this pixel is now shifted out
 	if v.mainBorder {
-		graphicsColor = v.registers[regBorderColor]
+		graphicsColor = v.borderColor
 	}
 	WritePixelToBuffer(v.dot, v.rasterLine, graphicsColor&0x0F)
 }
@@ -384,18 +431,18 @@ func (v *VICII) dotclock3() {
 	}
 
 	if v.verticalBorder {
-		WritePixelToBuffer(v.dot, v.rasterLine, v.registers[regBorderColor]&0x0F)
+		WritePixelToBuffer(v.dot, v.rasterLine, v.borderColor&0x0F)
 		return
 	}
 	var graphicsColor byte
 	if v.gdSequencer&0x80 == 0 {
-		graphicsColor = v.registers[regBackground0] // background color 0
+		graphicsColor = v.background0
 	} else {
 		graphicsColor = byte(v.videoBuffer >> 8) // foreground color nibble
 	}
 	v.gdSequencer <<= 1 // this pixel is now shifted out
 	if v.mainBorder {
-		graphicsColor = v.registers[regBorderColor]
+		graphicsColor = v.borderColor
 	}
 	WritePixelToBuffer(v.dot, v.rasterLine, graphicsColor&0x0F)
 }
@@ -413,18 +460,18 @@ func (v *VICII) dotclock4() {
 	}
 
 	if v.verticalBorder {
-		WritePixelToBuffer(v.dot, v.rasterLine, v.registers[regBorderColor]&0x0F)
+		WritePixelToBuffer(v.dot, v.rasterLine, v.borderColor&0x0F)
 		return
 	}
 	var graphicsColor byte
 	if v.gdSequencer&0x80 == 0 {
-		graphicsColor = v.registers[regBackground0] // background color 0
+		graphicsColor = v.background0
 	} else {
 		graphicsColor = byte(v.videoBuffer >> 8) // foreground color nibble
 	}
 	v.gdSequencer <<= 1 // this pixel is now shifted out
 	if v.mainBorder {
-		graphicsColor = v.registers[regBorderColor]
+		graphicsColor = v.borderColor
 	}
 	WritePixelToBuffer(v.dot, v.rasterLine, graphicsColor&0x0F)
 }
@@ -441,18 +488,18 @@ func (v *VICII) dotclock5() {
 	}
 
 	if v.verticalBorder {
-		WritePixelToBuffer(v.dot, v.rasterLine, v.registers[regBorderColor]&0x0F)
+		WritePixelToBuffer(v.dot, v.rasterLine, v.borderColor&0x0F)
 		return
 	}
 	var graphicsColor byte
 	if v.gdSequencer&0x80 == 0 {
-		graphicsColor = v.registers[regBackground0] // background color 0
+		graphicsColor = v.background0
 	} else {
 		graphicsColor = byte(v.videoBuffer >> 8) // foreground color nibble
 	}
 	v.gdSequencer <<= 1 // this pixel is now shifted out
 	if v.mainBorder {
-		graphicsColor = v.registers[regBorderColor]
+		graphicsColor = v.borderColor
 	}
 	WritePixelToBuffer(v.dot, v.rasterLine, graphicsColor&0x0F)
 }
@@ -469,18 +516,18 @@ func (v *VICII) dotclock6() {
 	}
 
 	if v.verticalBorder {
-		WritePixelToBuffer(v.dot, v.rasterLine, v.registers[regBorderColor]&0x0F)
+		WritePixelToBuffer(v.dot, v.rasterLine, v.borderColor&0x0F)
 		return
 	}
 	var graphicsColor byte
 	if v.gdSequencer&0x80 == 0 {
-		graphicsColor = v.registers[regBackground0] // background color 0
+		graphicsColor = v.background0
 	} else {
 		graphicsColor = byte(v.videoBuffer >> 8) // foreground color nibble
 	}
 	v.gdSequencer <<= 1 // this pixel is now shifted out
 	if v.mainBorder {
-		graphicsColor = v.registers[regBorderColor]
+		graphicsColor = v.borderColor
 	}
 	WritePixelToBuffer(v.dot, v.rasterLine, graphicsColor&0x0F)
 }
@@ -505,20 +552,20 @@ func (v *VICII) dotclock7() {
 	if v.dot == rightComp[0] {
 		// "1. If the X coordinate reaches the right comparison value, the
 		// main border flip flop is set."
-		if (v.registers[regControl2]>>3)&1 == 0 {
+		if (v.control2>>3)&1 == 0 {
 			v.mainBorder = true
 		}
 	}
 	if v.dot == leftComp[0] {
-		if (v.registers[regControl2]>>3)&1 == 0 {
+		if (v.control2>>3)&1 == 0 {
 			// "4./5. If the X coordinate reaches the left comparison value
 			// and the Y coordinate reaches the bottom/top one, set/reset
 			// (if DEN) the vertical border flip flop."
-			rsel := (v.registers[regControl1] >> 3) & 1
+			rsel := (v.control1 >> 3) & 1
 			if v.rasterLine == bottomComp[rsel] {
 				v.verticalBorder = true
 			}
-			if v.rasterLine == topComp[rsel] && v.registers[regControl1]&0x10 != 0 {
+			if v.rasterLine == topComp[rsel] && v.control1&0x10 != 0 {
 				v.verticalBorder = false
 			}
 			// "6. If the X coordinate reaches the left comparison value and
@@ -531,18 +578,18 @@ func (v *VICII) dotclock7() {
 	}
 
 	if v.verticalBorder {
-		WritePixelToBuffer(v.dot, v.rasterLine, v.registers[regBorderColor]&0x0F)
+		WritePixelToBuffer(v.dot, v.rasterLine, v.borderColor&0x0F)
 		return
 	}
 	var graphicsColor byte
 	if v.gdSequencer&0x80 == 0 {
-		graphicsColor = v.registers[regBackground0] // background color 0
+		graphicsColor = v.background0
 	} else {
 		graphicsColor = byte(v.videoBuffer >> 8) // foreground color nibble
 	}
 	v.gdSequencer <<= 1 // this pixel is now shifted out
 	if v.mainBorder {
-		graphicsColor = v.registers[regBorderColor]
+		graphicsColor = v.borderColor
 	}
 	WritePixelToBuffer(v.dot, v.rasterLine, graphicsColor&0x0F)
 }
@@ -572,17 +619,17 @@ func (v *VICII) dotclock0() {
 	}
 
 	if v.dot == rightComp[1] {
-		if (v.registers[regControl2]>>3)&1 == 1 {
+		if (v.control2>>3)&1 == 1 {
 			v.mainBorder = true
 		}
 	}
 	if v.dot == leftComp[1] {
-		if (v.registers[regControl2]>>3)&1 == 1 {
-			rsel := (v.registers[regControl1] >> 3) & 1
+		if (v.control2>>3)&1 == 1 {
+			rsel := (v.control1 >> 3) & 1
 			if v.rasterLine == bottomComp[rsel] {
 				v.verticalBorder = true
 			}
-			if v.rasterLine == topComp[rsel] && v.registers[regControl1]&0x10 != 0 {
+			if v.rasterLine == topComp[rsel] && v.control1&0x10 != 0 {
 				v.verticalBorder = false
 			}
 			if !v.verticalBorder {
@@ -598,18 +645,18 @@ func (v *VICII) dotclock0() {
 	}
 
 	if v.verticalBorder {
-		WritePixelToBuffer(v.dot, v.rasterLine, v.registers[regBorderColor]&0x0F)
+		WritePixelToBuffer(v.dot, v.rasterLine, v.borderColor&0x0F)
 		return
 	}
 	var graphicsColor byte
 	if v.gdSequencer&0x80 == 0 {
-		graphicsColor = v.registers[regBackground0] // background color 0
+		graphicsColor = v.background0
 	} else {
 		graphicsColor = byte(v.videoBuffer >> 8) // foreground color nibble
 	}
 	v.gdSequencer <<= 1 // this pixel is now shifted out
 	if v.mainBorder {
-		graphicsColor = v.registers[regBorderColor]
+		graphicsColor = v.borderColor
 	}
 	WritePixelToBuffer(v.dot, v.rasterLine, graphicsColor&0x0F)
 }
@@ -637,7 +684,7 @@ func (v *VICII) phi0low() {
 	// raster line $30 into allowBadLine, at the end of that line
 	// (section 3.5).
 	if v.rasterLine == badLineRasterStart {
-		if v.registers[regControl1]&0x10 != 0 {
+		if v.control1&0x10 != 0 {
 			v.denLatch = true
 		}
 		if slot == 52 { // article cycle 63, the line's last
@@ -649,7 +696,7 @@ func (v *VICII) phi0low() {
 	// cycleIsBadLine: evaluates the Bad Line Condition (section 3.5):
 	// raster within $30-$F7, its lower 3 bits matching YSCROLL, and DEN
 	// having been set at some point during raster line $30.
-	yscroll := v.registers[regControl1] & 0x07
+	yscroll := v.control1 & 0x07
 	badLine := v.rasterLine >= badLineRasterStart && v.rasterLine <= badLineRasterEnd &&
 		uint8(v.rasterLine)&0x07 == yscroll && v.allowBadLine
 	v.badLine = badLine
@@ -698,7 +745,7 @@ func (v *VICII) cycleSetVicCounter() {
 func (v *VICII) cycleGAccess() {
 	v.videoBufferPending = v.videoMatrixColor[v.VMLI]
 
-	cb := (uint16(v.registers[regMemPointers]) >> 1) & 0x07
+	cb := (uint16(v.memPointers) >> 1) & 0x07
 	addr := (cb << 11) + (v.videoBufferPending&0xFF)<<3 + uint16(v.RC)
 	v.gdPending = plaVICLoad(addr)
 
@@ -728,11 +775,11 @@ func (v *VICII) cycleGotoIdle() {
 // coordinate alone, on cycle 63 (rules 2/3 of section 3.9; independent of
 // the X-driven rules 4/5/6 already handled by borderUnit).
 func (v *VICII) cycleBorderComp() {
-	rsel := (v.registers[regControl1] >> 3) & 1
+	rsel := (v.control1 >> 3) & 1
 	if v.rasterLine == bottomComp[rsel] {
 		v.verticalBorder = true
 	}
-	if v.rasterLine == topComp[rsel] && v.registers[regControl1]&0x10 != 0 {
+	if v.rasterLine == topComp[rsel] && v.control1&0x10 != 0 {
 		v.verticalBorder = false
 	}
 }
@@ -758,7 +805,7 @@ func (v *VICII) cycleCAccess() {
 	if !v.badLine {
 		return
 	}
-	vm := (uint16(v.registers[regMemPointers]) >> 4) & 0x0F
+	vm := (uint16(v.memPointers) >> 4) & 0x0F
 	char := plaVICLoad((vm << 10) + v.VC)
 	// Colour RAM is a dedicated 2114 chip wired directly to the VIC-II's
 	// colour bus, not part of the 64K address space the c-access above
