@@ -36,6 +36,11 @@ const (
 	// Bad Line Condition raster range (section 3.5 of the VIC Article).
 	badLineRasterStart = 0x30
 	badLineRasterEnd   = 0xF7
+
+	leftComp38  = 55  // CSEL=0: 38 columns (article $1F)
+	leftComp40  = 48  // CSEL=1: 40 columns (article $18)
+	rightComp38 = 359 // CSEL=0: 38 columns (article $14F)
+	rightComp40 = 368 // CSEL=1: 40 columns (article $158)
 )
 
 // Border unit comparison values, indexed by the RSEL/CSEL control bits.
@@ -44,8 +49,6 @@ const (
 // dot (its X=480 is our dot 0), so they can be compared against dot with
 // no conversion; the Y values are raster lines and need none.
 var (
-	leftComp   = [2]uint16{55, 48}   // CSEL: 38 vs 40 columns (article $1F/$18)
-	rightComp  = [2]uint16{359, 368} // CSEL: 38 vs 40 columns (article $14F/$158)
 	topComp    = [2]uint16{0x37, 0x33}
 	bottomComp = [2]uint16{0xF7, 0xFB}
 )
@@ -549,14 +552,14 @@ func (v *VICII) dotclock7() {
 		return
 	}
 
-	if v.dot == rightComp[0] {
+	if v.dot == rightComp38 {
 		// "1. If the X coordinate reaches the right comparison value, the
 		// main border flip flop is set."
 		if (v.control2>>3)&1 == 0 {
 			v.mainBorder = true
 		}
 	}
-	if v.dot == leftComp[0] {
+	if v.dot == leftComp38 {
 		if (v.control2>>3)&1 == 0 {
 			// "4./5. If the X coordinate reaches the left comparison value
 			// and the Y coordinate reaches the bottom/top one, set/reset
@@ -618,12 +621,12 @@ func (v *VICII) dotclock0() {
 		return
 	}
 
-	if v.dot == rightComp[1] {
+	if v.dot == rightComp40 {
 		if (v.control2>>3)&1 == 1 {
 			v.mainBorder = true
 		}
 	}
-	if v.dot == leftComp[1] {
+	if v.dot == leftComp40 {
 		if (v.control2>>3)&1 == 1 {
 			rsel := (v.control1 >> 3) & 1
 			if v.rasterLine == bottomComp[rsel] {
