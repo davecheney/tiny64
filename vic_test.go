@@ -39,8 +39,8 @@ func TestVICStepFrameMatchesStepDot(t *testing.T) {
 	savedKeyboard := keyboard
 	savedRAM, savedColorRAM := ram, colorRAM
 
-	run := func(step func()) (VICII, CPU, []pixel) {
-		cpu, vic = savedCPU, savedVIC
+	run := func(startVIC VICII, step func()) (VICII, CPU, []pixel) {
+		cpu, vic = savedCPU, startVIC
 		cia1, cia2 = savedCIA1, savedCIA2
 		keyboard = savedKeyboard
 		ram, colorRAM = savedRAM, savedColorRAM
@@ -58,8 +58,46 @@ func TestVICStepFrameMatchesStepDot(t *testing.T) {
 		return gotVIC, gotCPU, pixels
 	}
 
-	frameVIC, frameCPU, framePixels := run(func() { vic.StepFrame() })
-	dotVIC, dotCPU, dotPixels := run(func() {
+	// StepDot must select the implementation for the next dot from every
+	// possible current phase, including both bus hand-off phases.
+	for phase := uint16(0); phase < DotsPerCycle; phase++ {
+		startVIC := savedVIC
+		startVIC.dot = startVIC.dot&^7 | phase
+
+		gotVIC, gotCPU, gotPixels := run(startVIC, func() { vic.StepDot() })
+		wantVIC, wantCPU, wantPixels := run(startVIC, func() {
+			switch phase {
+			case 0:
+				vic.dotclock1()
+			case 1:
+				vic.dotclock2()
+			case 2:
+				vic.dotclock3()
+			case 3:
+				vic.dotclock4()
+				vic.phi0low()
+			case 4:
+				vic.dotclock5()
+			case 5:
+				vic.dotclock6()
+			case 6:
+				vic.dotclock7()
+			case 7:
+				vic.dotclock0()
+				vic.phi0high()
+				cpu.TickPhi2()
+			}
+		})
+
+		if !reflect.DeepEqual(gotVIC, wantVIC) ||
+			!reflect.DeepEqual(gotCPU, wantCPU) ||
+			!reflect.DeepEqual(gotPixels, wantPixels) {
+			t.Errorf("StepDot from phase %d did not match dotclock%d and its bus action", phase, (phase+1)&7)
+		}
+	}
+
+	frameVIC, frameCPU, framePixels := run(savedVIC, func() { vic.StepFrame() })
+	dotVIC, dotCPU, dotPixels := run(savedVIC, func() {
 		for range DotsPerFrame {
 			vic.StepDot()
 		}
