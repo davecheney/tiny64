@@ -4,7 +4,7 @@ import (
 	"log"
 
 	"github.com/davecheney/tiny64"
-	"github.com/davecheney/tiny64/desktop"
+	"github.com/davecheney/tiny64/cmd/internal/desktop"
 	"github.com/davecheney/tiny64/rom"
 )
 
