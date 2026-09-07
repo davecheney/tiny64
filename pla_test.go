@@ -14,6 +14,8 @@ import (
 // custom character base at (e.g. DiSTestMAX's $3800) to redefine the
 // character set without needing a cartridge at all.
 func TestPLAVICLoadCharacterMemory(t *testing.T) {
+	saveMachine(t)
+
 	const ramMarker = 0xAA
 	for i := range ram {
 		ram[i] = ramMarker
@@ -42,7 +44,7 @@ func TestPLAVICLoadCharacterMemory(t *testing.T) {
 // has 13 address pins, so it presents the same addr&0x1FFF offset
 // regardless of which window asserted its chip-select.
 func TestPLAVICLoadUltimaxROMH(t *testing.T) {
-	defer func() { cartridge = Cartridge{} }()
+	saveMachine(t)
 
 	const ramMarker = 0xBB
 	for i := range ram {
