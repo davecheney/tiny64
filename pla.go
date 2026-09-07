@@ -92,6 +92,13 @@ func ioLoad(addr uint16) uint8 {
 		// the chip).
 		return colorRAM[addr-0xD800] | 0xF0
 	case addr >= 0xDC00 && addr <= 0xDCFF:
+		switch addr & 0xF {
+		case 0x0:
+			// PRA/PRB read back the keyboard matrix, see keyboard.go.
+			return cia1ReadPRA()
+		case 0x1:
+			return cia1ReadPRB()
+		}
 		return cia1.Load(addr)
 	case addr >= 0xDD00 && addr <= 0xDDFF:
 		if addr&0xF == 0x0 {
