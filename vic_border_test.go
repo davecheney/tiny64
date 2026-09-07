@@ -63,8 +63,8 @@ func TestVICBorderPlacement(t *testing.T) {
 
 	// Expected: left border/display transition at leftComp (CSEL=1), right
 	// at rightComp (CSEL=1); dot is the display column directly.
-	wantFirst := int(leftComp[1])
-	wantLast := int(rightComp[1]) - 1 // last border pixel is one before the right comparison value
+	wantFirst := leftComp40
+	wantLast := rightComp40 - 1 // last border pixel is one before the right comparison value
 	t.Logf("want first non-border displayX=%d", wantFirst)
 
 	if firstNonBorder != wantFirst {
@@ -121,8 +121,8 @@ func TestVICGAccessPixelAlignment(t *testing.T) {
 	}
 
 	const foreground = 0x01
-	wantFirst := int(leftComp[1])     // displayX 48
-	wantLast := int(rightComp[1]) - 2 // displayX 366
+	wantFirst := leftComp40     // displayX 48
+	wantLast := rightComp40 - 2 // displayX 366
 	if pixels[wantFirst] != foreground {
 		t.Errorf("pixel at first column's leftmost displayX=%d is %#x, want foreground %#x (occluded by border)", wantFirst, pixels[wantFirst], foreground)
 	}
