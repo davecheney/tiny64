@@ -58,6 +58,8 @@ type VICII struct {
 	BA  bool // Bus Available (true = high/free, false = low/stalled)
 	AEC bool // Address Enable Control (true = CPU owns Phi2, false = VIC owns Phi2)
 
+	WritePixelToBuffer func(x, y uint16, colorIndex byte)
+
 	// VIC-II Internal Registers
 	registers [47]uint8 // d000 to d02e
 
@@ -101,8 +103,6 @@ type VICII struct {
 	// Condition, and back to true in cycle 58 if RC=7 and there's no Bad
 	// Line Condition.
 	idle bool
-
-	WritePixelToBuffer func(x, y uint16, colorIndex byte)
 }
 
 var vic VICII
