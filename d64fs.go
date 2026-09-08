@@ -32,6 +32,7 @@ const (
 	ftypeREL = 4
 
 	ftypeClosed = 0x80
+	ftypeLocked = 0x40
 	ftypeMask   = 0x07
 )
 

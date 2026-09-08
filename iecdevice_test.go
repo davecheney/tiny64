@@ -3,6 +3,8 @@ package tiny64
 import (
 	"bytes"
 	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -289,46 +291,156 @@ func TestDrivesAgreeOnDirectoryText(t *testing.T) {
 		}
 	}
 
-	// The directory is listed twice over: once by each drive, into a
-	// fresh machine, so neither run can see what the other left behind.
-	read := func(t *testing.T, virtual bool) []string {
+	// A $A0 is written into the header field below, because that is what
+	// CBM DOS pads it with and it is the case the real images here do not
+	// isolate: it must reach the screen as a space, since LIST renders
+	// $A0 in a BASIC line as the token CLOSE.
+	if bam := diskReadSector(dirTrack, 0); bam != nil {
+		bam[0xA4] = 0xA0
+	}
+
+	real, virtual := listDirectoryOnBothDrives(t, disk)
+
+	// Two blank screens compare equal, so the oracle has to be shown to
+	// have said something before its agreement means anything.
+	if !containsAny(real, "COMPARE DISK") {
+		t.Fatalf("the 1541 listed no directory header, so the comparison proved nothing: %q", real)
+	}
+	for i := range real {
+		if real[i] != virtual[i] {
+			t.Errorf("screen row %d differs:\n1541    %q\nvirtual %q", i, real[i], virtual[i])
+		}
+	}
+}
+
+// waitForListing runs until a directory listing has finished being
+// printed: the screen carries the drive's "BLOCKS FREE." trailer and
+// BASIC is back at a prompt.
+//
+// Both halves are needed, and neither is a cycle count. Counting prompts
+// does not survive a directory long enough to scroll, because the earlier
+// ones leave the screen. Waiting for the screen to stop changing is worse
+// than useless here: during a 1541 load it is legitimately static for
+// long stretches while the drive works, so that returns mid-transfer and
+// reports a half-drawn listing. That failure reads exactly like a
+// formatting difference between the drives while actually being a race,
+// which is the one confusion this comparison must not invite.
+func waitForListing(m *machine) {
+	m.t.Helper()
+	const budget = 80_000_000
+	for spent := 0; spent < budget; spent += 500_000 {
+		if lastNonBlankRow() != "" && strings.HasPrefix(lastNonBlankRow(), "READY.") && screenHas("BLOCKS FREE.") {
+			return
+		}
+		m.run(500_000)
+	}
+	m.t.Fatalf("no completed directory listing after %d cycles; last row %q", budget, lastNonBlankRow())
+}
+
+func lastNonBlankRow() string {
+	for row := 24; row >= 0; row-- {
+		if s := strings.TrimRight(screenLine(row), " "); s != "" {
+			return s
+		}
+	}
+	return ""
+}
+
+func screenHas(want string) bool {
+	for row := range 25 {
+		if strings.Contains(screenLine(row), want) {
+			return true
+		}
+	}
+	return false
+}
+
+// listDirectoryOnBothDrives returns the whole screen after listing disk's
+// directory, once through the 1541 and once through the generic drive.
+func listDirectoryOnBothDrives(t *testing.T, disk []byte) (real, virtual []string) {
+	t.Helper()
+	read := func(useVirtual bool) []string {
 		m := newMachine(t)
 		InsertDisk(disk)
-		if virtual {
+		if useVirtual {
 			AttachDrive(false)
 			AttachVirtualDrive(8)
 		}
 		m.waitForLine(5, "READY.")
 		m.typeLine(`LOAD"$",8`)
-		m.waitForLine(10, "READY.")
+		waitForLoad(m)
 		m.typeLine("LIST")
-
-		// LIST prints the directory a line at a time, so the screen is
-		// only complete once BASIC is back at the prompt. Reading before
-		// that catches a half-drawn listing, which compares as a
-		// difference between the drives when it is really a difference
-		// in how long each took to answer.
-		m.waitForLine(18, "READY.")
+		waitForListing(m)
 
 		var out []string
-		for row := 13; row <= 17; row++ {
+		for row := range 25 {
 			out = append(out, screenLine(row))
 		}
 		return out
 	}
+	return read(false), read(true)
+}
 
-	var real, virt []string
-	t.Run("1541", func(t *testing.T) { real = read(t, false) })
-	t.Run("virtual", func(t *testing.T) { virt = read(t, true) })
+// waitForLoad waits for BASIC to come back after a LOAD. Real directories
+// take longer to read than waitForLine's budget allows.
+func waitForLoad(m *machine) {
+	m.t.Helper()
+	const budget = 80_000_000
+	for spent := 0; spent < budget; spent += 500_000 {
+		if strings.HasPrefix(lastNonBlankRow(), "READY.") {
+			return
+		}
+		m.run(500_000)
+	}
+	m.t.Fatalf("no prompt after LOAD in %d cycles; last row %q", budget, lastNonBlankRow())
+}
 
-	for i := range real {
-		if real[i] != virt[i] {
-			t.Errorf("directory line %d differs:\n1541    %q\nvirtual %q", i, real[i], virt[i])
+// TestDrivesAgreeOnRealDisks runs the same comparison as
+// TestDrivesAgreeOnDirectoryText against images this repository did not
+// produce.
+//
+// This is the stronger form of that test and it is worth having both. A
+// synthesised disk is written by the same code that reads it, so the two
+// can share an assumption and agree while both being wrong; more
+// importantly a generator only ever emits the shapes it knows how to
+// emit. Every difference these images exposed was of that kind: a header
+// whose five bytes are one string rather than an ID and a DOS version,
+// DEL entries occupying live slots, and locked files. None of those can
+// arise from FormatDisk and diskWriteFile however many files are written.
+//
+// The synthesised test is not redundant, because it covers the case real
+// disks here do not reach as cheaply: a $A0 in the header, which must
+// become a space before LIST renders it as the token CLOSE.
+func TestDrivesAgreeOnRealDisks(t *testing.T) {
+	for _, name := range []string{"enforcer", "lastnight", "validated"} {
+		t.Run(name, func(t *testing.T) {
+			disk, err := os.ReadFile(filepath.Join("d64", name+".d64"))
+			if err != nil {
+				t.Skipf("no %s.d64 to compare against: %v", name, err)
+			}
+			saveMachine(t)
+			real, virtual := listDirectoryOnBothDrives(t, disk)
+
+			// Two blank screens compare equal, so the oracle has to be
+			// shown to have said something before agreement means
+			// anything.
+			if !containsAny(real, "BLOCKS FREE.") {
+				t.Fatalf("the 1541 listed no directory, so the comparison proved nothing: %q", real)
+			}
+			for i := range real {
+				if real[i] != virtual[i] {
+					t.Errorf("screen row %d differs:\n1541    %q\nvirtual %q", i, real[i], virtual[i])
+				}
+			}
+		})
+	}
+}
+
+func containsAny(rows []string, want string) bool {
+	for _, r := range rows {
+		if strings.Contains(r, want) {
+			return true
 		}
 	}
-	// Two blank screens compare equal, so the oracle has to be shown to
-	// have said something before its agreement means anything.
-	if len(real) == 0 || !strings.Contains(real[0], "COMPARE DISK") {
-		t.Fatalf("the 1541 listed no directory header, so the comparison proved nothing: %q", real)
-	}
+	return false
 }

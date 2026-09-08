@@ -350,23 +350,37 @@ func (d *cbmDOS) directory(pattern string) []byte {
 
 	// Header line: the disk name in reverse video, then the ID and DOS
 	// type, all inside quotes so LIST renders it like the real thing.
-	id := "  "
-	dos := "2A"
+	// The five bytes at $A2 are copied out verbatim rather than read as
+	// an ID, a separator and a DOS version. That is what the drive does,
+	// and on a freshly formatted disk the two are indistinguishable
+	// because $A4 is left at $A0. Real disks do not all keep to that:
+	// some use the whole field as one five-character string, so parsing
+	// it eats the middle character.
+	//
+	// $A0 is the shifted space CBM DOS pads with, and it has to become a
+	// real space here for the same reason the filename padding does: this
+	// text is handed to LIST as a BASIC line, and $A0 there is the token
+	// for CLOSE.
+	tail := "   2A"
 	if bam := diskReadSector(dirTrack, 0); bam != nil {
-		id = string([]byte{bam[0xA2], bam[0xA3]})
-		dos = string([]byte{bam[0xA5], bam[0xA6]})
+		t := append([]byte(nil), bam[0xA2:0xA7]...)
+		for i, c := range t {
+			if c == 0xA0 {
+				t[i] = ' '
+			}
+		}
+		tail = string(t)
 	}
 	header := append([]byte{0x12, '"'}, padTo(diskName(), 16)...)
 	header = append(header, '"', ' ')
-	header = append(header, id...)
-	header = append(header, ' ')
-	header = append(header, dos...)
+	header = append(header, tail...)
 	out = dirLine(out, 0, header)
 
+	// Every occupied slot is listed, including DEL entries. A scratched
+	// file has its type byte zeroed, which diskDirectory already treats
+	// as a free slot, so there is nothing left here to filter: a slot
+	// that survives to this point is one the drive would show.
 	for _, e := range diskDirectory() {
-		if e.fileType() == ftypeDEL {
-			continue
-		}
 		if pattern != "" && !cbmMatch(pattern, e.nameString()) {
 			continue
 		}
@@ -391,6 +405,11 @@ func (d *cbmDOS) directory(pattern string) []byte {
 			text = append(text, ' ')
 		}
 		text = append(text, ftypeName(e.fileType())...)
+		// A locked file is shown with a trailing '<', the counterpart to
+		// the '*' that marks an unclosed one.
+		if e.typ&ftypeLocked != 0 {
+			text = append(text, '<')
+		}
 		out = dirLine(out, e.blocks, text)
 	}
 
