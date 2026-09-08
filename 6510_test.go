@@ -1,6 +1,9 @@
 package tiny64
 
-import "testing"
+import (
+	"fmt"
+	"testing"
+)
 
 // busCycle describes one expected Phi2 bus transaction: the address
 // asserted, the byte transferred, and the direction (read vs write).
@@ -3375,5 +3378,36 @@ func TestCPUStallsWhenAECLow(t *testing.T) {
 
 	if cpu != before {
 		t.Errorf("CPU state changed while AEC was low: got %+v, want %+v", cpu, before)
+	}
+}
+
+// TestResetMidInstructionReboots resets the machine at a range of moments
+// during a running program rather than from cold. Reset has to abandon
+// whatever instruction was in progress: the T-states above 0 are the
+// middle of an instruction, so a CPU that only reloaded its PC would go on
+// running the remaining microcode of the interrupted instruction against
+// the new PC, and then fetch an opcode from wherever that left it. The
+// offsets are deliberately not multiples of any instruction length, so
+// between them they land part way through instructions of several
+// different cycle counts.
+func TestResetMidInstructionReboots(t *testing.T) {
+	for _, offset := range []int{0, 1, 2, 3, 5, 7, 11, 13, 17, 19, 23, 29} {
+		t.Run(fmt.Sprint(offset), func(t *testing.T) {
+			m := newMachine(t)
+			m.waitForLine(5, "READY.")
+			m.run(offset)
+
+			// A cold boot leaves the prompt on screen and Reset() does
+			// not clear it, so wait for text this boot produced.
+			m.reset(5, "READY.")
+
+			// Reaching the prompt shows the KERNAL ran; typing proves the
+			// machine is actually interactive rather than merely painted.
+			m.typeLine("PRINT 6*7")
+			m.run(400_000)
+			if got, want := screenLine(7), " 42"; got != want {
+				t.Errorf("after reset at offset %d, screen row 7 = %q, want %q", offset, got, want)
+			}
+		})
 	}
 }

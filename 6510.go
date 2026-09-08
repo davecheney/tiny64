@@ -89,6 +89,29 @@ func Reset() {
 }
 
 func (c *CPU) Reset() {
+	// Restart the instruction sequencer. Loading the PC is not enough on
+	// its own: T-states other than 0 are the middle of an instruction, so
+	// a CPU reset part way through one would carry on running the rest of
+	// that instruction's microcode against the new PC and then fetch
+	// whatever it happened to land on. Real hardware abandons the
+	// instruction and begins with an opcode fetch.
+	c.TState = 0
+	c.Opcode = 0
+	c.Operand = 0
+	c.Pointer = 0
+	c.Value = 0
+	c.Addr2 = 0
+
+	// Reset masks interrupts and abandons any it was in the middle of
+	// taking. The three stack slots come from the reset sequence going
+	// through BRK's motions with the write line held to read: nothing is
+	// stored, but the stack pointer still moves.
+	c.Interrupt = 0
+	c.nmiLatch = false
+	c.regP |= P_INTERRUPT
+	c.effectiveI = P_INTERRUPT
+	c.SP -= 3
+
 	lo := c.load(0xFFFC)
 	hi := c.load(0xFFFD)
 	c.PC = uint16(hi)<<8 | uint16(lo)

@@ -180,6 +180,26 @@ var (
 // waitForLine runs the machine until the given screen row starts with
 // want, giving up after a generous budget. Booting to the BASIC prompt
 // takes around two million cycles, or a couple of seconds of C64 time.
+// reset restarts the machine and waits for the KERNAL to repaint the
+// screen, which is not the same as waiting for the prompt to appear.
+// Reset() does not clear screen RAM, and the KERNAL spends over two
+// million cycles counting memory before it writes anything, so whatever
+// was on the screen beforehand - including a "READY." from the previous
+// boot - stays there and will satisfy waitForLine immediately. A test
+// that waits for the prompt after a reset can therefore carry on typing
+// into a machine that is still in its RAM test, and pass or fail for
+// reasons that have nothing to do with what it meant to check. Blanking
+// the screen first means the text that gets waited for has to be text
+// this boot actually produced.
+func (m *machine) reset(row int, want string) {
+	m.t.Helper()
+	for i := range 1000 {
+		ram[0x0400+i] = 0x20 // space
+	}
+	Reset()
+	m.waitForLine(row, want)
+}
+
 func (m *machine) waitForLine(row int, want string) {
 	m.t.Helper()
 	const budget = 4_000_000
