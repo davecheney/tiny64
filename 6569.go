@@ -552,12 +552,10 @@ func (v *VICII) dotclock7() {
 		return
 	}
 
-	if v.dot == rightComp38 {
+	if v.dot == rightComp38 && v.control2&csel == 0 {
 		// "1. If the X coordinate reaches the right comparison value, the
 		// main border flip flop is set."
-		if v.control2&csel == 0 {
-			v.mainBorder = true
-		}
+		v.mainBorder = true
 	}
 	if v.dot == leftComp38 {
 		if v.control2&csel == 0 {
@@ -621,10 +619,8 @@ func (v *VICII) dotclock0() {
 		return
 	}
 
-	if v.dot == rightComp40 {
-		if v.control2&csel != 0 {
-			v.mainBorder = true
-		}
+	if v.dot == rightComp40 && v.control2&csel != 0 {
+		v.mainBorder = true
 	}
 	if v.dot == leftComp40 {
 		if v.control2&csel != 0 {
