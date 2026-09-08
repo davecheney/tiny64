@@ -17,31 +17,12 @@ import (
 	"tinygo.org/x/drivers/st7789"
 )
 
-var C64Palette = [16]pixel.RGB565BE{
-	pixel.NewRGB565BE(0x00, 0x00, 0x00),
-	pixel.NewRGB565BE(0xff, 0xff, 0xff),
-	pixel.NewRGB565BE(0x88, 0x00, 0x00),
-	pixel.NewRGB565BE(0xaa, 0xff, 0xee),
-	pixel.NewRGB565BE(0xcc, 0x44, 0xcc),
-	pixel.NewRGB565BE(0x00, 0xcc, 0x55),
-	pixel.NewRGB565BE(0x00, 0x00, 0xaa),
-	pixel.NewRGB565BE(0xee, 0xee, 0x77),
-	pixel.NewRGB565BE(0xdd, 0x88, 0x55),
-	pixel.NewRGB565BE(0x66, 0x44, 0x00),
-	pixel.NewRGB565BE(0xff, 0x77, 0x77),
-	pixel.NewRGB565BE(0x33, 0x33, 0x33),
-	pixel.NewRGB565BE(0x77, 0x77, 0x77),
-	pixel.NewRGB565BE(0xaa, 0xff, 0x66),
-	pixel.NewRGB565BE(0x00, 0x88, 0xff),
-	pixel.NewRGB565BE(0xbb, 0xbb, 0xbb),
+func renderFrames(display *st7789.Device, frames <-chan int) {
+	fb := pixel.NewImageFromBytes[pixel.RGB565BE](320, 240, tiny64.FrameBufferRGB565BE())
+	for range frames {
+		display.DrawBitmap(0, 0, fb)
+	}
 }
-
-const (
-	cropX = 48
-	cropY = 31
-)
-
-var fb = pixel.NewImage[pixel.RGB565BE](320, 240)
 
 func main() {
 	machine.SPI0.Configure(machine.SPIConfig{
@@ -62,14 +43,6 @@ func main() {
 
 	// Clear the screen to black
 	display.FillScreen(color.RGBA{0, 0, 0, 255})
-	tiny64.WritePixelToBuffer = func(x, y uint16, colorIndex byte) {
-		x -= cropX
-		y -= cropY
-		if x >= 320 || y >= 240 {
-			return
-		}
-		fb.Set(int(x), int(y), C64Palette[colorIndex])
-	}
 
 	// Fill RAM with random values to simulate power-on randomness.
 	ram := tiny64.Ram()
@@ -90,11 +63,7 @@ func main() {
 	}()
 
 	render := make(chan int, 1)
-	go func() {
-		for range render {
-			display.DrawBitmap(0, 0, fb)
-		}
-	}()
+	go renderFrames(&display, render)
 
 	var emulateTime, drawTime time.Duration
 	for frame := 0; ; frame++ {

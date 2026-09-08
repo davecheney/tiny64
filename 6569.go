@@ -20,7 +20,7 @@ const (
 	firstVBlankLine = 300
 	lastVBlankLine  = 15
 
-	// The picture occupies raster lines 16-299; WritePixelToBuffer is
+	// The picture occupies raster lines 16-299; writePixelToBuffer is
 	// never called outside FirstVisibleLine..FirstVisibleLine+VisibleLines
 	// horizontally 0..VisibleDotsPerLine, so a display only needs a buffer
 	// that size.
@@ -374,7 +374,7 @@ func (v *VICII) dotclock1() {
 	}
 
 	if v.verticalBorder {
-		WritePixelToBuffer(v.dot, v.rasterLine, v.borderColor&0x0F)
+		writePixelToBuffer(v.dot, v.rasterLine, v.borderColor&0x0F)
 		return
 	}
 	var graphicsColor byte
@@ -387,7 +387,7 @@ func (v *VICII) dotclock1() {
 	if v.mainBorder {
 		graphicsColor = v.borderColor
 	}
-	WritePixelToBuffer(v.dot, v.rasterLine, graphicsColor&0x0F)
+	writePixelToBuffer(v.dot, v.rasterLine, graphicsColor&0x0F)
 }
 
 // dotclock2 is dotclock1 for the cycle's 2nd dot - see dotclock1's comment.
@@ -402,7 +402,7 @@ func (v *VICII) dotclock2() {
 	}
 
 	if v.verticalBorder {
-		WritePixelToBuffer(v.dot, v.rasterLine, v.borderColor&0x0F)
+		writePixelToBuffer(v.dot, v.rasterLine, v.borderColor&0x0F)
 		return
 	}
 	var graphicsColor byte
@@ -415,7 +415,7 @@ func (v *VICII) dotclock2() {
 	if v.mainBorder {
 		graphicsColor = v.borderColor
 	}
-	WritePixelToBuffer(v.dot, v.rasterLine, graphicsColor&0x0F)
+	writePixelToBuffer(v.dot, v.rasterLine, graphicsColor&0x0F)
 }
 
 // dotclock3 is dotclock1 for the cycle's 3rd dot - see dotclock1's comment.
@@ -430,7 +430,7 @@ func (v *VICII) dotclock3() {
 	}
 
 	if v.verticalBorder {
-		WritePixelToBuffer(v.dot, v.rasterLine, v.borderColor&0x0F)
+		writePixelToBuffer(v.dot, v.rasterLine, v.borderColor&0x0F)
 		return
 	}
 	var graphicsColor byte
@@ -443,7 +443,7 @@ func (v *VICII) dotclock3() {
 	if v.mainBorder {
 		graphicsColor = v.borderColor
 	}
-	WritePixelToBuffer(v.dot, v.rasterLine, graphicsColor&0x0F)
+	writePixelToBuffer(v.dot, v.rasterLine, graphicsColor&0x0F)
 }
 
 // dotclock4 is dotclock1 for the cycle's 4th dot - see dotclock1's
@@ -459,7 +459,7 @@ func (v *VICII) dotclock4() {
 	}
 
 	if v.verticalBorder {
-		WritePixelToBuffer(v.dot, v.rasterLine, v.borderColor&0x0F)
+		writePixelToBuffer(v.dot, v.rasterLine, v.borderColor&0x0F)
 		return
 	}
 	var graphicsColor byte
@@ -472,7 +472,7 @@ func (v *VICII) dotclock4() {
 	if v.mainBorder {
 		graphicsColor = v.borderColor
 	}
-	WritePixelToBuffer(v.dot, v.rasterLine, graphicsColor&0x0F)
+	writePixelToBuffer(v.dot, v.rasterLine, graphicsColor&0x0F)
 }
 
 // dotclock5 is dotclock1 for the cycle's 5th dot - see dotclock1's comment.
@@ -487,7 +487,7 @@ func (v *VICII) dotclock5() {
 	}
 
 	if v.verticalBorder {
-		WritePixelToBuffer(v.dot, v.rasterLine, v.borderColor&0x0F)
+		writePixelToBuffer(v.dot, v.rasterLine, v.borderColor&0x0F)
 		return
 	}
 	var graphicsColor byte
@@ -500,7 +500,7 @@ func (v *VICII) dotclock5() {
 	if v.mainBorder {
 		graphicsColor = v.borderColor
 	}
-	WritePixelToBuffer(v.dot, v.rasterLine, graphicsColor&0x0F)
+	writePixelToBuffer(v.dot, v.rasterLine, graphicsColor&0x0F)
 }
 
 // dotclock6 is dotclock1 for the cycle's 6th dot - see dotclock1's comment.
@@ -515,7 +515,7 @@ func (v *VICII) dotclock6() {
 	}
 
 	if v.verticalBorder {
-		WritePixelToBuffer(v.dot, v.rasterLine, v.borderColor&0x0F)
+		writePixelToBuffer(v.dot, v.rasterLine, v.borderColor&0x0F)
 		return
 	}
 	var graphicsColor byte
@@ -528,7 +528,7 @@ func (v *VICII) dotclock6() {
 	if v.mainBorder {
 		graphicsColor = v.borderColor
 	}
-	WritePixelToBuffer(v.dot, v.rasterLine, graphicsColor&0x0F)
+	writePixelToBuffer(v.dot, v.rasterLine, graphicsColor&0x0F)
 }
 
 // dotclock7 handles the cycle's 7th dot, the first of the two dots that
@@ -577,7 +577,7 @@ func (v *VICII) dotclock7() {
 	}
 
 	if v.verticalBorder {
-		WritePixelToBuffer(v.dot, v.rasterLine, v.borderColor&0x0F)
+		writePixelToBuffer(v.dot, v.rasterLine, v.borderColor&0x0F)
 		return
 	}
 	var graphicsColor byte
@@ -590,7 +590,7 @@ func (v *VICII) dotclock7() {
 	if v.mainBorder {
 		graphicsColor = v.borderColor
 	}
-	WritePixelToBuffer(v.dot, v.rasterLine, graphicsColor&0x0F)
+	writePixelToBuffer(v.dot, v.rasterLine, graphicsColor&0x0F)
 }
 
 // dotclock0 handles the cycle's 8th (and a line's or frame's last) dot:
@@ -644,7 +644,7 @@ func (v *VICII) dotclock0() {
 	}
 
 	if v.verticalBorder {
-		WritePixelToBuffer(v.dot, v.rasterLine, v.borderColor&0x0F)
+		writePixelToBuffer(v.dot, v.rasterLine, v.borderColor&0x0F)
 		return
 	}
 	var graphicsColor byte
@@ -657,7 +657,7 @@ func (v *VICII) dotclock0() {
 	if v.mainBorder {
 		graphicsColor = v.borderColor
 	}
-	WritePixelToBuffer(v.dot, v.rasterLine, graphicsColor&0x0F)
+	writePixelToBuffer(v.dot, v.rasterLine, graphicsColor&0x0F)
 }
 
 // phi0low runs on the first dot of every 8-dot cycle: while the VIC-II is

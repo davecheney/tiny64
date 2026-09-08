@@ -6,9 +6,7 @@ const visibleFrameOffset = FirstVisibleLine * VisibleDotsPerLine * 4
 
 var frameBufferRGBA [VisibleDotsPerLine * RasterLinesPerFrame * 4]byte
 
-// WritePixelToBuffer receives each visible VIC-II pixel. Embedders using
-// this compatibility build may replace it before stepping the machine.
-var WritePixelToBuffer = writePixelToRGBA
+var writePixelToBuffer = writePixelToRGBA
 
 // FrameBufferRGBA returns the current visible frame in row-major RGBA order.
 func FrameBufferRGBA() []byte {
