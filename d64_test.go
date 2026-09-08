@@ -56,9 +56,9 @@ func TestDiskReadSector(t *testing.T) {
 // per sector) and that each sector's header decodes to the right
 // track/sector/ID.
 func TestDiskEncodeTrack(t *testing.T) {
-	defer func() { diskImage = nil }()
+	defer func() { InsertDisk(nil) }()
 
-	data := make([]byte, 174848)
+	data := make([]byte, D64Size)
 	bamOffset := trackOffset(18)
 	data[bamOffset+0xA2] = 0x41
 	data[bamOffset+0xA3] = 0x42
@@ -67,24 +67,34 @@ func TestDiskEncodeTrack(t *testing.T) {
 	const track = 1
 	bitstream := diskEncodeTrack(track)
 
-	sectorLen := gcrSyncLen + 5 + 5 + gcrHeaderGap + gcrSyncLen + 5*65 + gcrTailGap
-	wantLen := sectorLen * sectorsPerTrack(track)
-	if len(bitstream) != wantLen {
-		t.Fatalf("len(diskEncodeTrack(%d)) = %d, want %d", track, len(bitstream), wantLen)
+	// A track image is exactly one revolution long, whatever that track's
+	// bit-cell rate makes it: the sectors take what they take and the gaps
+	// absorb the rest.
+	if len(bitstream) != trackCapacity(track) {
+		t.Fatalf("len(diskEncodeTrack(%d)) = %d, want one revolution (%d)", track, len(bitstream), trackCapacity(track))
 	}
 
-	for s := 0; s < sectorsPerTrack(track); s++ {
-		base := s * sectorLen
-		headerStart := base + gcrSyncLen
-		header := gcrDecode4Bytes([5]byte{
-			bitstream[headerStart], bitstream[headerStart+1], bitstream[headerStart+2],
-			bitstream[headerStart+3], bitstream[headerStart+4],
-		})
-		if header[0] != 0x08 {
-			t.Fatalf("sector %d: header block ID = %#02x, want 0x08", s, header[0])
+	// Every block on the track is whatever follows a SYNC mark, which is
+	// how the drive itself finds them.
+	saveTrack := driveTrackData
+	defer func() { driveTrackData = saveTrack }()
+	driveTrackData = bitstream
+
+	var headers int
+	for _, pos := range driveTrackBlocks() {
+		raw, ok := gcrDecodeBlock(bitstream, pos, 8)
+		if !ok {
+			t.Fatalf("block at %d does not decode as GCR", pos)
 		}
-		if header[2] != uint8(s) || header[3] != track {
-			t.Fatalf("sector %d: header sector/track = %d/%d, want %d/%d", s, header[2], header[3], s, track)
+		if raw[0] != gcrHeaderID {
+			continue
 		}
+		if raw[2] != uint8(headers) || raw[3] != track {
+			t.Fatalf("block at %d: header sector/track = %d/%d, want %d/%d", pos, raw[2], raw[3], headers, track)
+		}
+		headers++
+	}
+	if want := sectorsPerTrack(track); headers != want {
+		t.Fatalf("found %d sector headers on track %d, want %d", headers, track, want)
 	}
 }

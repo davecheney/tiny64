@@ -7,11 +7,12 @@ import "strings"
 // via pull-up) when every device releases it. Only one drive is modeled,
 // so the two drivers are the C64's CIA2 and the drive's own VIA1.
 //
-// CIA2 Port A ($DD00) bits 3/4/5 (ATN/CLOCK/DATA OUT) use "0 = asserted"
-// when WRITTEN by the CPU (real hardware has inverting buffers between the
-// CIA pins and the bus), matching the classic KERNAL convention. There is
-// no separate test-harness state: cmd/drivec (or a real CIA2) both just
-// manipulate CIA2's registers directly via CIA2().
+// CIA2 Port A ($DD00) bits 3/4/5 (ATN/CLOCK/DATA OUT) drive the bus
+// through inverting 7406 buffers, so a bit WRITTEN as 1 pulls its line low
+// - asserted. That is the convention the KERNAL uses throughout: CLKLO is
+// LDA $DD00 / ORA #$10 / STA $DD00, and CLKHI is the matching AND #$EF.
+// There is no separate test-harness state: cmd/drivec (or a real CIA2)
+// both just manipulate CIA2's registers directly via CIA2().
 
 // ATNAsserted, CLKAsserted and DATAAsserted report the actual IEC bus line
 // states, combining CIA2's output with the drive's own VIA1 output.
@@ -29,23 +30,24 @@ func DATAAsserted() bool {
 
 // cia2AtnOut/cia2ClkOut/cia2DataOut report whether CIA2 is currently
 // pulling the corresponding line low: the bit must be configured as an
-// output (DDRA=1) and written as 0 (asserted).
+// output (DDRA=1) and written as 1, which the inverting buffer turns into
+// a low on the bus.
 func cia2AtnOut() bool {
-	return cia2.DDRA&0x08 != 0 && cia2.PRA&0x08 == 0
+	return cia2.DDRA&0x08 != 0 && cia2.PRA&0x08 != 0
 }
 
 func cia2ClkOut() bool {
-	return cia2.DDRA&0x10 != 0 && cia2.PRA&0x10 == 0
+	return cia2.DDRA&0x10 != 0 && cia2.PRA&0x10 != 0
 }
 
 func cia2DataOut() bool {
-	return cia2.DDRA&0x20 != 0 && cia2.PRA&0x20 == 0
+	return cia2.DDRA&0x20 != 0 && cia2.PRA&0x20 != 0
 }
 
 // SetCIA2ATN, SetCIA2CLK and SetCIA2DATA drive CIA2's Port A as if a C64
 // (or a test harness standing in for one) wanted to assert/release the
 // corresponding IEC line: they configure the bit as an output and write
-// it using the real "0 = asserted" convention, for tools like cmd/drivec.
+// it the way the KERNAL does, for tools like cmd/drivec.
 func SetCIA2ATN(asserted bool)  { setCIA2OutputBit(0x08, asserted) }
 func SetCIA2CLK(asserted bool)  { setCIA2OutputBit(0x10, asserted) }
 func SetCIA2DATA(asserted bool) { setCIA2OutputBit(0x20, asserted) }
@@ -53,22 +55,22 @@ func SetCIA2DATA(asserted bool) { setCIA2OutputBit(0x20, asserted) }
 func setCIA2OutputBit(bit uint8, asserted bool) {
 	cia2.DDRA |= bit
 	if asserted {
-		cia2.PRA &^= bit
-	} else {
 		cia2.PRA |= bit
+	} else {
+		cia2.PRA &^= bit
 	}
 }
 
 // cia2ReadPRA constructs CIA2 Port A's read value. Bits 7/6 (DATA/CLOCK
-// IN) reflect the live bus state using "0 = asserted" (the raw electrical
-// pin level); bits 5/4/3 (DATA/CLOCK/ATN OUT) echo whether *we* are
-// currently asserting that line, using "1 = asserted" - the opposite
-// polarity from writes, since real hardware feeds back the post-wired-AND
-// bus state here rather than a simple echo, letting software detect other
-// devices overriding the line. Bits 0-2 (VIC bank, RS-232 TXD) use normal
-// DDR-effective read-back.
+// IN) are inputs fed from the bus through inverting buffers, so they read
+// the live wired-AND state of the whole bus using "0 = asserted" - which
+// is how a device notices another device holding a line down. Every other
+// bit, including 5/4/3 (DATA/CLOCK/ATN OUT), is an ordinary port bit and
+// reads back what was written to it, since that's what the KERNAL's
+// read-modify-write sequences (LDA $DD00 / ORA #$10 / STA $DD00) rely on
+// to change one line without disturbing the others.
 func cia2ReadPRA() uint8 {
-	base := effective(cia2.PRA, cia2.DDRA) & 0x07
+	base := effective(cia2.PRA, cia2.DDRA) & 0x3F
 
 	var in uint8 = 0xC0 // bits 7,6 default released (1) unless asserted
 	if DATAAsserted() {
@@ -78,18 +80,7 @@ func cia2ReadPRA() uint8 {
 		in &^= 0x40
 	}
 
-	var out uint8
-	if cia2AtnOut() {
-		out |= 0x08
-	}
-	if cia2ClkOut() {
-		out |= 0x10
-	}
-	if cia2DataOut() {
-		out |= 0x20
-	}
-
-	return base | in | out
+	return base | in
 }
 
 // via1ClkOut reports whether VIA1 is currently driving CLOCK OUT (PRB bit
@@ -133,6 +124,16 @@ func via1ReadPRB() uint8 {
 // 4), overriding the automatic ATN->DATA pulldown.
 func via1AtnAck() bool {
 	return via1.DDRB&0x10 != 0 && via1.ORB&0x10 != 0
+}
+
+// via1SampleATN presents the current bus ATN state to VIA1's CA1 pin,
+// which is how the drive learns that the C64 wants its attention: the
+// 7406 inverter between the bus and the chip means an asserted (low) ATN
+// arrives at CA1 as a high level, and the DOS ROM programs PCR bit 0 for
+// a low-to-high active edge and enables the CA1 interrupt, so asserting
+// ATN interrupts the drive into its command handler.
+func via1SampleATN() {
+	via1.setCA1(ATNAsserted())
 }
 
 // IECStatus returns a human-readable summary of the IEC bus lines, who is
