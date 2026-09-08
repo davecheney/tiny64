@@ -2,6 +2,7 @@ package tiny64
 
 import (
 	"bytes"
+	"fmt"
 	"testing"
 )
 
@@ -55,24 +56,35 @@ var helloPRG = []byte{
 // the wire. If the drive gets the ATN response, the turnaround, EOI or
 // the frame handshake wrong, BASIC either hangs or reports an error
 // instead of printing READY.
+//
+// The load is repeated at a range of raster phases, because the KERNAL's
+// receive loop is level-triggered and a Bad Line can stall it for most of
+// a bit time. A transfer that only works at one phase works by luck: the
+// symptom of losing that race is not a failed load but a silently
+// corrupt one, so the bytes are compared rather than the screen.
 func TestDriveLoadsFileThroughKERNAL(t *testing.T) {
-	m := newMachine(t)
-	useDrive(t, virtualDriveDisk(t, "HELLO", helloPRG))
+	for _, skew := range []int{0, 13, 34, 55, 89, 144} {
+		t.Run(fmt.Sprintf("skew%d", skew), func(t *testing.T) {
+			m := newMachine(t)
+			useDrive(t, virtualDriveDisk(t, "HELLO", helloPRG))
 
-	m.waitForLine(5, "READY.")
-	m.typeLine(`LOAD"HELLO",8`)
+			m.waitForLine(5, "READY.")
+			m.run(skew)
+			m.typeLine(`LOAD"HELLO",8`)
 
-	m.waitForLine(8, "SEARCHING FOR HELLO")
-	m.waitForLine(9, "LOADING")
-	m.waitForLine(10, "READY.")
+			m.waitForLine(8, "SEARCHING FOR HELLO")
+			m.waitForLine(9, "LOADING")
+			m.waitForLine(10, "READY.")
 
-	// BASIC loads at $0801 and leaves the end-of-program pointer at $2D,
-	// so the bytes that arrived can be compared against the file.
-	end := int(ram[0x2D]) | int(ram[0x2E])<<8
-	got := ram[0x0801:end]
-	want := helloPRG[2:]
-	if !bytes.Equal(got, want) {
-		t.Errorf("loaded %v, want %v", got, want)
+			// BASIC loads at $0801 and leaves the end-of-program pointer
+			// at $2D, so the bytes that arrived can be compared against
+			// the file.
+			end := int(ram[0x2D]) | int(ram[0x2E])<<8
+			got, want := ram[0x0801:end], helloPRG[2:]
+			if !bytes.Equal(got, want) {
+				t.Errorf("loaded %v, want %v", got, want)
+			}
+		})
 	}
 }
 
