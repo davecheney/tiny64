@@ -2,4 +2,4 @@
 
 package tiny64
 
-func WritePixelToBuffer(x, y uint16, colorIndex byte) {}
+func writePixelToBuffer(x, y uint16, colorIndex byte) {}
