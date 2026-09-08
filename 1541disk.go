@@ -132,6 +132,32 @@ func via2ReadPRA() uint8 {
 	return driveTrackData[driveTrackPos]
 }
 
+// driveAtSync reports whether the byte at pos is part of a SYNC mark.
+//
+// A SYNC is ten or more consecutive one bits, which is why the drive can
+// tell one from data at all: GCR's longest possible run of ones is eight,
+// from $5 (01111) followed by $E (11110). Eight is enough to make a whole
+// byte $FF when it happens to land on a byte boundary, so "this byte is
+// $FF" is not a SYNC test - real data contains such bytes, and treating
+// them as SYNC swallows them, which corrupts the block. Two adjacent $FF
+// bytes are sixteen ones, which data cannot produce, so a run of at least
+// two is the byte-aligned equivalent of the hardware's ten-bit rule. A
+// real SYNC is five $FF bytes, so every byte of one is still detected.
+func driveAtSync(pos int) bool {
+	n := len(driveTrackData)
+	if n == 0 || driveTrackData[pos] != 0xFF {
+		return false
+	}
+	prev, next := pos-1, pos+1
+	if prev < 0 {
+		prev = n - 1
+	}
+	if next >= n {
+		next = 0
+	}
+	return driveTrackData[prev] == 0xFF || driveTrackData[next] == 0xFF
+}
+
 // via2ReadPRB returns Port B's read value: bit 7 (SYNC detected) is 0
 // exactly when the byte under the head right now is part of a SYNC mark,
 // which can only happen while reading, since the SYNC detector watches the
@@ -144,7 +170,7 @@ func via2ReadPRB() uint8 {
 		return base | 0x80
 	}
 	ensureTrackData()
-	if len(driveTrackData) > 0 && driveTrackData[driveTrackPos] == 0xFF {
+	if driveAtSync(driveTrackPos) {
 		return base
 	}
 	return base | 0x80
@@ -186,7 +212,7 @@ func via2DiskTick(c *DriveCPU) {
 	if !driveByteReadyEnabled() {
 		return
 	}
-	if writing || driveTrackData[driveTrackPos] != 0xFF {
+	if writing || !driveAtSync(driveTrackPos) {
 		c.SetOverflow()
 	}
 }
