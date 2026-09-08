@@ -179,3 +179,70 @@ func TestDriveReportsStatusOnChannel15(t *testing.T) {
 func contains(haystack, needle string) bool {
 	return len(needle) <= len(haystack) && bytes.Contains([]byte(haystack), []byte(needle))
 }
+
+// TestDriveAttachedBeforeReset covers the order a front end uses. Every
+// other test here builds the machine first and attaches afterwards,
+// because newMachine ends in Reset(); a -disk flag does the opposite,
+// inserting the disk and attaching the drive before the machine is ever
+// started. Nothing in the device should depend on the C64 having been
+// reset first, but that is worth a test rather than an assumption.
+func TestDriveAttachedBeforeReset(t *testing.T) {
+	saveMachine(t)
+
+	cpu, cia1, cia2 = CPU{}, CIA{}, CIA{}
+	keyboard = Keyboard{}
+	bus.Remove()
+	vic = VICII{}
+	for i := range ram {
+		ram[i] = 0
+	}
+	colorRAM = [1024]byte{}
+
+	// Drive on the bus before the machine is started, not after.
+	InsertDisk(virtualDriveDisk(t, "HELLO", helloPRG))
+	AttachDrive(false)
+	AttachVirtualDrive(8)
+
+	Reset()
+	m := &machine{t: t}
+
+	m.waitForLine(5, "READY.")
+	m.typeLine(`LOAD"HELLO",8`)
+	m.waitForLine(8, "SEARCHING FOR HELLO")
+	m.waitForLine(10, "READY.")
+
+	end := int(ram[0x2D]) | int(ram[0x2E])<<8
+	if got, want := ram[0x0801:end], helloPRG[2:]; !bytes.Equal(got, want) {
+		t.Errorf("loaded %v, want %v", got, want)
+	}
+}
+
+// TestDriveRecoversFromResetMidTransfer resets the C64 in the middle of a
+// load. RESET is a wire on the C64, not on the IEC bus, so nothing tells
+// the drive the machine went away: it is left part way through sending a
+// byte, holding CLOCK or DATA. What rescues it is ATN, which aborts
+// whatever a device is doing - the same mechanism a real 1541 relies on,
+// since it has no other way of hearing about a reset either.
+func TestDriveRecoversFromResetMidTransfer(t *testing.T) {
+	m := newMachine(t)
+	useDrive(t, virtualDriveDisk(t, "HELLO", helloPRG))
+
+	m.waitForLine(5, "READY.")
+	m.typeLine(`LOAD"HELLO",8`)
+	m.waitForLine(9, "LOADING")
+
+	// Mid-transfer: the device is driving the bus right now.
+	if virtualDrive.state == iecIdle {
+		t.Fatalf("test is not exercising anything: device already idle")
+	}
+	m.reset(5, "READY.")
+
+	m.typeLine(`LOAD"HELLO",8`)
+	m.waitForLine(8, "SEARCHING FOR HELLO")
+	m.waitForLine(10, "READY.")
+
+	end := int(ram[0x2D]) | int(ram[0x2E])<<8
+	if got, want := ram[0x0801:end], helloPRG[2:]; !bytes.Equal(got, want) {
+		t.Errorf("loaded %v after reset, want %v", got, want)
+	}
+}
