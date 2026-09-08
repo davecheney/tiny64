@@ -33,6 +33,8 @@ const (
 	regBorderColor = 0x20 // $D020
 	regBackground0 = 0x21 // $D021
 
+	csel = 0x08 // $D016 bit 3: Column Select (CSEL)
+
 	// Bad Line Condition raster range (section 3.5 of the VIC Article).
 	badLineRasterStart = 0x30
 	badLineRasterEnd   = 0xF7
@@ -553,12 +555,12 @@ func (v *VICII) dotclock7() {
 	if v.dot == rightComp38 {
 		// "1. If the X coordinate reaches the right comparison value, the
 		// main border flip flop is set."
-		if (v.control2>>3)&1 == 0 {
+		if v.control2&csel == 0 {
 			v.mainBorder = true
 		}
 	}
 	if v.dot == leftComp38 {
-		if (v.control2>>3)&1 == 0 {
+		if v.control2&csel == 0 {
 			// "4./5. If the X coordinate reaches the left comparison value
 			// and the Y coordinate reaches the bottom/top one, set/reset
 			// (if DEN) the vertical border flip flop."
@@ -620,12 +622,12 @@ func (v *VICII) dotclock0() {
 	}
 
 	if v.dot == rightComp40 {
-		if (v.control2>>3)&1 == 1 {
+		if v.control2&csel != 0 {
 			v.mainBorder = true
 		}
 	}
 	if v.dot == leftComp40 {
-		if (v.control2>>3)&1 == 1 {
+		if v.control2&csel != 0 {
 			rsel := (v.control1 >> 3) & 1
 			if v.rasterLine == bottomComp[rsel] {
 				v.verticalBorder = true
