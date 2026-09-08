@@ -14,18 +14,116 @@ import "strings"
 // There is no separate test-harness state: cmd/drivec (or a real CIA2)
 // both just manipulate CIA2's registers directly via CIA2().
 
+// iecPeripheral is a device hanging off the IEC bus. Because the bus is
+// open-collector, a peripheral only ever says whether it is *pulling* a
+// line low; releasing is the absence of that. iecTick advances whatever
+// internal clocking the peripheral needs, once per system Phi2 cycle.
+//
+// The interface exists so the bus can carry and address devices without
+// knowing what they are. How faithfully a device is modelled is its own
+// business: everything the bus needs is the three lines and an address.
+type iecPeripheral interface {
+	iecCLKOut() bool
+	iecDATAOut() bool
+	iecTick()
+
+	// iecAddress is the primary address the device answers to, 8-11 for
+	// drives. Nothing on the wire carries it - the device compares it
+	// against the LISTEN/TALK byte itself - but the bus needs it to tell
+	// two devices apart, since an address is the only thing that makes a
+	// device distinct as far as the protocol is concerned.
+	iecAddress() uint8
+}
+
+// iecBus holds the peripherals currently attached to the bus. The C64 is
+// not in here: it drives the bus through CIA2, which is always present.
+var iecBus []iecPeripheral
+
+// attachIEC adds a peripheral to the bus, replacing whatever was already
+// answering to its address.
+//
+// Address, not type, is the thing that has to be unique. Two devices
+// jumpered to the same address is a wiring mistake that a real bus punishes
+// rather than diagnoses: both see the LISTEN, both answer, and their
+// open-collector drivers hold the lines low against each other so the
+// computer sees a garbled byte or nothing at all. That is faithful, but it
+// is not useful, and the failure it produces here - a directory that loads
+// as ?FILE NOT FOUND - looks nothing like its cause. So the last device
+// plugged in at an address wins, and the previous occupant comes off.
+func attachIEC(p iecPeripheral) {
+	// Both paths below build a new slice rather than writing into the
+	// existing one. Callers snapshot iecBus to restore it later, and any
+	// write into the shared backing array reaches those snapshots: the
+	// replace path by assigning through it directly, the append path by
+	// filling spare capacity. Neither changes the snapshot's length, so a
+	// corrupted one still looks entirely well formed. See detachIEC.
+	for i, existing := range iecBus {
+		if existing.iecAddress() == p.iecAddress() {
+			replaced := append([]iecPeripheral(nil), iecBus...)
+			replaced[i] = p
+			iecBus = replaced
+			return
+		}
+	}
+	iecBus = append(append(make([]iecPeripheral, 0, len(iecBus)+1), iecBus...), p)
+}
+
+// detachIEC removes whatever is answering to p's address.
+//
+// This builds a new slice rather than filtering into iecBus[:0]. The
+// in-place idiom is the usual one, but it is wrong for a package-level
+// variable that callers hold references to: the filter shortens the slice
+// without giving up the array, so the detached device's slot is still
+// shared, and the next attach reuses it. Anything still looking at the bus
+// then acquires a device it never saw attached. That is not a leak that
+// shows up as a leak - the length stays right, only the contents are wrong -
+// and it is what made a drive appear to survive a test that detached it.
+func detachIEC(p iecPeripheral) {
+	kept := make([]iecPeripheral, 0, len(iecBus))
+	for _, existing := range iecBus {
+		if existing.iecAddress() != p.iecAddress() {
+			kept = append(kept, existing)
+		}
+	}
+	iecBus = kept
+}
+
+// iecTick advances every attached peripheral by one Phi2 cycle.
+func iecTick() {
+	for _, p := range iecBus {
+		p.iecTick()
+	}
+}
+
 // ATNAsserted, CLKAsserted and DATAAsserted report the actual IEC bus line
-// states, combining CIA2's output with the drive's own VIA1 output.
+// states, combining CIA2's output with every attached peripheral's. Only
+// the C64 drives ATN.
 func ATNAsserted() bool {
 	return cia2AtnOut()
 }
 
 func CLKAsserted() bool {
-	return cia2ClkOut() || via1ClkOut()
+	if cia2ClkOut() {
+		return true
+	}
+	for _, p := range iecBus {
+		if p.iecCLKOut() {
+			return true
+		}
+	}
+	return false
 }
 
 func DATAAsserted() bool {
-	return cia2DataOut() || via1DataOut()
+	if cia2DataOut() {
+		return true
+	}
+	for _, p := range iecBus {
+		if p.iecDATAOut() {
+			return true
+		}
+	}
+	return false
 }
 
 // cia2AtnOut/cia2ClkOut/cia2DataOut report whether CIA2 is currently
@@ -137,7 +235,7 @@ func via1SampleATN() {
 }
 
 // IECStatus returns a human-readable summary of the IEC bus lines, who is
-// driving each one, and the drive's device address - for debugging tools.
+// driving each one, and the attached peripherals - for debugging tools.
 func IECStatus() string {
 	line := func(name string, asserted bool, drivers ...string) string {
 		state := "released"
@@ -150,27 +248,37 @@ func IECStatus() string {
 		return name + ": " + state + " (" + strings.Join(drivers, ", ") + ")"
 	}
 
-	var atnDrivers, clkDrivers, dataDrivers []string
+	var atnDrivers, clkDrivers, dataDrivers, devices []string
 	if cia2AtnOut() {
 		atnDrivers = append(atnDrivers, "C64")
 	}
 	if cia2ClkOut() {
 		clkDrivers = append(clkDrivers, "C64")
 	}
-	if via1ClkOut() {
-		clkDrivers = append(clkDrivers, "drive")
-	}
 	if cia2DataOut() {
 		dataDrivers = append(dataDrivers, "C64")
 	}
-	if via1.DDRB&0x02 != 0 && via1.ORB&0x02 != 0 {
-		dataDrivers = append(dataDrivers, "drive:DATA_OUT")
+	for _, p := range iecBus {
+		switch p.(type) {
+		case *drive1541:
+			devices = append(devices, "1541 #8")
+			if via1ClkOut() {
+				clkDrivers = append(clkDrivers, "1541")
+			}
+			if via1.DDRB&0x02 != 0 && via1.ORB&0x02 != 0 {
+				dataDrivers = append(dataDrivers, "1541:DATA_OUT")
+			}
+			if ATNAsserted() && !via1AtnAck() {
+				dataDrivers = append(dataDrivers, "1541:auto-ack")
+			}
+		}
 	}
-	if ATNAsserted() && !via1AtnAck() {
-		dataDrivers = append(dataDrivers, "drive:auto-ack")
+	if len(devices) == 0 {
+		devices = append(devices, "none")
 	}
 
 	return line("ATN", ATNAsserted(), atnDrivers...) + " | " +
 		line("CLK", CLKAsserted(), clkDrivers...) + " | " +
-		line("DATA", DATAAsserted(), dataDrivers...) + " | device #8"
+		line("DATA", DATAAsserted(), dataDrivers...) + " | " +
+		strings.Join(devices, ", ")
 }

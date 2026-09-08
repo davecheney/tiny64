@@ -258,7 +258,7 @@ func (v *VICII) StepDot() {
 	case 0:
 		v.phi0high()
 		cpu.TickPhi2()
-		driveTickPhi2()
+		iecTick()
 	}
 }
 
@@ -318,7 +318,7 @@ func (v *VICII) stepCycle() {
 	v.dotclock0()
 	v.phi0high()
 	cpu.TickPhi2()
-	driveTickPhi2()
+	iecTick()
 }
 
 // FinishFrame advances the VIC-II, and therefore the rest of the machine it
