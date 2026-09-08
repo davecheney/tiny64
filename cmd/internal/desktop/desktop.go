@@ -26,10 +26,6 @@ type emulator struct {
 	frames int
 }
 
-func newEmulator() *emulator {
-	return &emulator{}
-}
-
 // Update is called once per frame.
 func (e *emulator) Update() error {
 	// Sample the host keyboard once per frame. The matrix itself is
@@ -62,7 +58,7 @@ func (e *emulator) Layout(outsideWidth, outsideHeight int) (int, int) {
 // caller can plug in a cartridge before reset, resets the machine, and
 // blocks running the game loop until the window is closed.
 func Run(title string, insertCart func()) error {
-	emu := newEmulator()
+	var emu emulator
 	defer func() {
 		fmt.Println("emulated frames:", emu.frames)
 	}()
@@ -81,5 +77,5 @@ func Run(title string, insertCart func()) error {
 	ebiten.SetWindowSize(ScreenWidth*Scale, ScreenHeight*Scale)
 	ebiten.SetWindowTitle(title)
 
-	return ebiten.RunGame(emu)
+	return ebiten.RunGame(&emu)
 }
