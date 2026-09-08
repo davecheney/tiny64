@@ -18,7 +18,3 @@ func writePixelToRGBA(x, y uint16, colorIndex byte) {
 	idx := int(y-FirstVisibleLine)*stride + int(x)*4
 	copy(frameBufferRGBA[idx:idx+4], C64Palette[colorIndex&0x0f][:])
 }
-
-func writePixelToBuffer(x, y uint16, colorIndex byte) {
-	WritePixelToBuffer(x, y, colorIndex)
-}
