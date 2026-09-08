@@ -259,7 +259,7 @@ func IECStatus() string {
 		dataDrivers = append(dataDrivers, "C64")
 	}
 	for _, p := range iecBus {
-		switch p.(type) {
+		switch d := p.(type) {
 		case *drive1541:
 			devices = append(devices, "1541 #8")
 			if via1ClkOut() {
@@ -271,6 +271,14 @@ func IECStatus() string {
 			if ATNAsserted() && !via1AtnAck() {
 				dataDrivers = append(dataDrivers, "1541:auto-ack")
 			}
+		case *iecDevice:
+			devices = append(devices, "device #"+itoa(int(d.address))+" "+d.stateName())
+			if d.clk {
+				clkDrivers = append(clkDrivers, "device")
+			}
+			if d.data {
+				dataDrivers = append(dataDrivers, "device")
+			}
 		}
 	}
 	if len(devices) == 0 {
@@ -281,4 +289,20 @@ func IECStatus() string {
 		line("CLK", CLKAsserted(), clkDrivers...) + " | " +
 		line("DATA", DATAAsserted(), dataDrivers...) + " | " +
 		strings.Join(devices, ", ")
+}
+
+// itoa formats a small non-negative int without pulling in strconv, which
+// keeps the TinyGo build lean.
+func itoa(n int) string {
+	if n == 0 {
+		return "0"
+	}
+	var buf [8]byte
+	i := len(buf)
+	for n > 0 {
+		i--
+		buf[i] = byte('0' + n%10)
+		n /= 10
+	}
+	return string(buf[i:])
 }
