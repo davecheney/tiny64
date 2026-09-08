@@ -22,7 +22,9 @@ func TestD64TrackLayout(t *testing.T) {
 // TestDiskReadSector checks that a disk image's bytes land at the
 // expected (track,sector) via diskReadSector.
 func TestDiskReadSector(t *testing.T) {
-	defer func() { diskImage = nil }()
+	// InsertDisk plugs in a 1541 as a side effect, so this needs the full
+	// machine snapshot to put the bus back, not just diskImage.
+	saveMachine(t)
 
 	data := make([]byte, 174848)
 	// Mark track 1 sector 0's first byte, and track 18 sector 0 (BAM)'s
@@ -56,7 +58,8 @@ func TestDiskReadSector(t *testing.T) {
 // per sector) and that each sector's header decodes to the right
 // track/sector/ID.
 func TestDiskEncodeTrack(t *testing.T) {
-	defer func() { InsertDisk(nil) }()
+	// InsertDisk(nil) does not undo the drive InsertDisk(data) attached.
+	saveMachine(t)
 
 	data := make([]byte, D64Size)
 	bamOffset := trackOffset(18)

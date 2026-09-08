@@ -2,6 +2,20 @@ package tiny64
 
 import "github.com/davecheney/tiny64/rom"
 
+// drive1541 is the full 1541 as an IEC peripheral: a 6502 running the DOS
+// ROM, two VIAs, and a GCR read head. Its bus lines come straight from
+// VIA1's port B (see iec.go).
+type drive1541 struct{}
+
+func (*drive1541) iecCLKOut() bool  { return via1ClkOut() }
+func (*drive1541) iecDATAOut() bool { return via1DataOut() }
+func (*drive1541) iecTick()         { driveTickPhi2() }
+
+// A real 1541 takes its address from two jumpers on the board, giving 8
+// through 11. Nothing here reads them, so the drive is always the first
+// one.
+func (*drive1541) iecAddress() uint8 { return 8 }
+
 // driveRAM is the 1541's 2K static RAM at $0000-$07FF.
 var driveRAM [0x0800]byte
 
@@ -29,8 +43,11 @@ var driveAttached bool
 func AttachDrive(attached bool) {
 	driveAttached = attached
 	if attached {
+		attachIEC(&drive1541{})
 		ResetDrive()
+		return
 	}
+	detachIEC(&drive1541{})
 }
 
 // DriveAttached reports whether the 1541 is currently connected.
