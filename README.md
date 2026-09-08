@@ -32,8 +32,17 @@ that talks to the drive's own processor.
 
 A drive is only plugged in when something asks for one, with
 `AttachDrive`, or by inserting a disk: `cmd/c64` and `cmd/c64cli` both
-take a `-disk FILE` flag naming a 35-track D64 image. Only one drive can
-answer for a given address, so attaching one replaces the other.
+take a `-disk FILE` flag naming a 35-track D64 image, and a `-drive` flag
+choosing which drive answers for device 8 — `1541` (the default) or
+`virtual`. Only one drive can answer for a given address, so attaching one
+replaces the other.
+
+    go run ./cmd/c64 -disk demo.d64                  # the real 1541
+    go run ./cmd/c64 -disk demo.d64 -drive=virtual   # the generic drive
+
+Both should behave identically for `LOAD"$",8`, `LOAD"NAME",8` and
+`SAVE`; the difference only shows for software that drives the 1541's own
+processor.
 
 It is deliberately small: the core package has no dependency on any
 graphics library, so it can run headless (for testing) or under
