@@ -16,6 +16,37 @@ type DriveBus struct {
 
 var driveBus DriveBus
 
+// driveAttached reports whether a 1541 is plugged into the IEC bus. A real
+// C64 works perfectly well without one - and stepping a second CPU costs
+// as much again as stepping the C64's - so nothing gets a drive until it
+// asks for one with AttachDrive(true) or puts a disk in with InsertDisk.
+// Until then the KERNAL simply reports DEVICE NOT PRESENT, exactly as a
+// bare machine with nothing on the serial bus does.
+var driveAttached bool
+
+// AttachDrive connects or disconnects the 1541 from the IEC bus. A drive
+// that is connected is reset immediately, as it would be at power-on.
+func AttachDrive(attached bool) {
+	driveAttached = attached
+	if attached {
+		ResetDrive()
+	}
+}
+
+// DriveAttached reports whether the 1541 is currently connected.
+func DriveAttached() bool { return driveAttached }
+
+// driveTickPhi2 advances the drive by one of its Phi2 cycles. The 1541 has
+// its own 16MHz crystal and so runs asynchronously from the C64, but the
+// two Phi2 rates are within 1.5% of each other (1.0MHz vs PAL's 985248Hz)
+// and the IEC bus is fully handshaked, so clocking the drive from the same
+// cycle as the C64's CPU is both simpler and close enough.
+func driveTickPhi2() {
+	if driveAttached {
+		driveCPU.TickPhi2()
+	}
+}
+
 // GetDriveBus returns the singleton DriveBus instance, for debugging/
 // tracing tools.
 func GetDriveBus() *DriveBus {
@@ -84,3 +115,7 @@ func driveStore(addr uint16, val uint8) {
 		via2.Store(addr, val)
 	}
 }
+
+// DriveRAM returns the drive's 2K of static RAM, for debugging/tracing
+// tools that want to look at the DOS's variables.
+func DriveRAM() []byte { return driveRAM[:] }

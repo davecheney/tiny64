@@ -20,10 +20,18 @@ func saveMachine(t *testing.T) {
 	savedCPU, savedCIA1, savedCIA2 := cpu, cia1, cia2
 	savedKeyboard, savedVIC, savedCartridge := keyboard, vic, cartridge
 	savedRAM, savedColorRAM := ram, colorRAM
+	savedDriveCPU, savedVIA1, savedVIA2 := driveCPU, via1, via2
+	savedDriveRAM, savedDisk := driveRAM, diskImage
+	savedDriveAttached := driveAttached
 	t.Cleanup(func() {
 		cpu, cia1, cia2 = savedCPU, savedCIA1, savedCIA2
 		keyboard, vic, cartridge = savedKeyboard, savedVIC, savedCartridge
 		ram, colorRAM = savedRAM, savedColorRAM
+		driveCPU, via1, via2 = savedDriveCPU, savedVIA1, savedVIA2
+		driveRAM = savedDriveRAM
+		InsertDisk(savedDisk)
+		driveResetDisk()
+		driveAttached = savedDriveAttached
 	})
 }
 
@@ -97,6 +105,61 @@ func (m *machine) press(shift bool, key Key) {
 	keyboard.ReleaseAll()
 	m.run(cyclesPerKeyPhase)
 }
+
+// typeLine types a line of BASIC and presses RETURN, the way someone
+// sitting at the machine would. Only the characters the tests need are
+// mapped; anything else is a bug in the test, not something the emulated
+// keyboard should be asked to guess at.
+func (m *machine) typeLine(line string) {
+	m.t.Helper()
+	for _, r := range line {
+		shift, key, ok := keyFor(r)
+		if !ok {
+			m.t.Fatalf("no key mapping for %q", r)
+		}
+		m.press(shift, key)
+	}
+	m.press(false, KeyReturn)
+}
+
+// keyFor maps an ASCII character to the key (and SHIFT state) that
+// produces it on a C64 keyboard.
+func keyFor(r rune) (shift bool, key Key, ok bool) {
+	if r >= 'A' && r <= 'Z' {
+		return false, letterKeys[r-'A'], true
+	}
+	if r >= '0' && r <= '9' {
+		return false, digitKeys[r-'0'], true
+	}
+	switch r {
+	case ' ':
+		return false, KeySpace, true
+	case ',':
+		return false, KeyComma, true
+	case ':':
+		return false, KeyColon, true
+	case ';':
+		return false, KeySemicolon, true
+	case '$':
+		return true, Key4, true
+	case '"':
+		return true, Key2, true
+	case '(':
+		return true, Key8, true
+	case ')':
+		return true, Key9, true
+	}
+	return false, 0, false
+}
+
+var (
+	letterKeys = [26]Key{
+		KeyA, KeyB, KeyC, KeyD, KeyE, KeyF, KeyG, KeyH, KeyI,
+		KeyJ, KeyK, KeyL, KeyM, KeyN, KeyO, KeyP, KeyQ, KeyR,
+		KeyS, KeyT, KeyU, KeyV, KeyW, KeyX, KeyY, KeyZ,
+	}
+	digitKeys = [10]Key{Key0, Key1, Key2, Key3, Key4, Key5, Key6, Key7, Key8, Key9}
+)
 
 // waitForLine runs the machine until the given screen row starts with
 // want, giving up after a generous budget. Booting to the BASIC prompt

@@ -62,13 +62,24 @@ func (c *DriveCPU) Status() uint8 {
 	return c.regP
 }
 
-// Reset loads PC from the reset vector at $FFFC/$FFFD, as the real 1541
-// does when the RESET line is asserted.
+// ResetDrive asserts the 1541's RESET line: the two VIAs return to their
+// power-on state and the CPU restarts from the reset vector, exactly as
+// happens when the drive is powered up alongside the C64.
 func ResetDrive() {
+	via1.Reset()
+	via2.Reset()
+	driveResetDisk()
 	driveCPU.Reset()
 }
 
+// Reset restarts the CPU from the reset vector at $FFFC/$FFFD, as the real
+// 1541 does when the RESET line is asserted.
 func (c *DriveCPU) Reset() {
+	c.TState = 0
+	c.Interrupt = 0
+	c.regP = P_INTERRUPT
+	c.effectiveI = P_INTERRUPT
+	c.irqLine = false
 	lo := c.load(0xFFFC)
 	hi := c.load(0xFFFD)
 	c.PC = uint16(hi)<<8 | uint16(lo)
@@ -117,6 +128,7 @@ func (c *DriveCPU) pop() uint8 {
 func (c *DriveCPU) TickPhi2() {
 	c.Clock++
 
+	via1SampleATN()
 	via1.Tick()
 	via2.Tick()
 	via2DiskTick(c)

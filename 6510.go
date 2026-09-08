@@ -83,6 +83,9 @@ func (c *CPU) Status() uint8 {
 func Reset() {
 	cpu.Reset()
 	vic.Reset()
+	if driveAttached {
+		ResetDrive()
+	}
 }
 
 func (c *CPU) Reset() {

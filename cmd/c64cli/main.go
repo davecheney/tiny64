@@ -5,6 +5,7 @@ package main
 import (
 	"flag"
 	"fmt"
+	"log"
 	"math/rand/v2"
 	"os"
 
@@ -63,6 +64,7 @@ func main() {
 	cycles := flag.Int64("cycles", 0, "stop after this many CPU cycles (0 = run forever)")
 	destestmax := flag.Bool("destestmax", false, "insert the DiSTestMAX MAX-mode cartridge before reset")
 	deadtest := flag.Bool("deadtest", false, "insert the Dead Test MAX-mode cartridge before reset")
+	disk := flag.String("disk", "", "insert this D64 disk image into drive 8")
 	flag.Parse()
 
 	// Fill RAM with random values to simulate power-on randomness.
@@ -76,6 +78,18 @@ func main() {
 	}
 	if *deadtest {
 		tiny64.GetBus().Insert(rom.DeadTest, true, false, true, false)
+	}
+	if *disk != "" {
+		image, err := os.ReadFile(*disk)
+		if err != nil {
+			log.Fatal(err)
+		}
+		if len(image) != tiny64.D64Size {
+			log.Fatalf("%s is %d bytes, not a %d byte 35-track D64", *disk, len(image), tiny64.D64Size)
+		}
+		// Inserting a disk plugs a 1541 into the serial bus, if there
+		// wasn't one there already.
+		tiny64.InsertDisk(image)
 	}
 
 	tiny64.Reset()

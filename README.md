@@ -17,7 +17,14 @@ tiny64 emulates:
 - the 6510 CPU
 - the 6569 VIC-II video chip (PAL)
 - the 6526 CIA I/O chips
-- the 6522 VIA and 1541 disk drive, connected over a simulated IEC bus
+- the 6522 VIA and a complete 1541 disk drive - its own 6502 running the
+  real DOS ROM, a rotating GCR track under the head, and the serial IEC
+  bus between the two machines - so `LOAD"$",8` reads a real D64, and the
+  DOS can format a blank one for itself
+
+A drive is only plugged in when something asks for one, with
+`AttachDrive`, or by inserting a disk: `cmd/c64` and `cmd/c64cli` both
+take a `-disk FILE` flag naming a 35-track D64 image.
 
 It is deliberately small: the core package has no dependency on any
 graphics library, so it can run headless (for testing) or under

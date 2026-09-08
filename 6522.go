@@ -4,8 +4,8 @@ package tiny64
 // VIA1 (UC1) talks to the C64 over the IEC serial bus and reads the drive's
 // device-address jumpers; VIA2 (UC3) drives the stepper motor, read/write
 // head and write-protect sensor. Only the generic register-level behavior
-// (ports, timers, interrupts) is modeled here - VIA2's disk-specific wiring
-// is stubbed for now, since GCR/track emulation is out of scope.
+// (ports, timers, CA1 interrupts) is modeled here - VIA1's IEC wiring lives
+// in iec.go and VIA2's disk-specific wiring in 1541disk.go.
 type VIA struct {
 	ORA, ORB   uint8 // Output Register A/B
 	DDRA, DDRB uint8 // Data Direction Register A/B (1 = output)
@@ -14,9 +14,13 @@ type VIA struct {
 	t2c, t2l uint16 // Timer 2 counter/latch
 
 	acr uint8 // Auxiliary Control Register (bit6: Timer 1 continuous vs one-shot)
-	pcr uint8 // Peripheral Control Register (CA1/CA2/CB1/CB2 modes, not modeled)
+	pcr uint8 // Peripheral Control Register (bit0 selects the CA1 active edge)
 	ifr uint8 // Interrupt Flag Register
 	ier uint8 // Interrupt Enable Register
+
+	// ca1 is the last-seen level on the CA1 input pin, kept for edge
+	// detection. On the 1541's VIA1 this pin carries ATN IN.
+	ca1 bool
 
 	// IRQ is the chip's interrupt output line: asserted whenever any
 	// enabled interrupt flag is set (IFR & IER & 0x7F != 0).
@@ -29,9 +33,34 @@ var via1, via2 VIA
 // jumpers), for debugging/tracing tools.
 func Via1() *VIA { return &via1 }
 
-// Via2 returns the singleton VIA2 (stepper motor/head/write-protect,
-// stubbed), for debugging/tracing tools.
+// Via2 returns the singleton VIA2 (stepper motor/head/write-protect),
+// for debugging/tracing tools.
 func Via2() *VIA { return &via2 }
+
+// viaIFRCA1 is the Interrupt Flag Register bit set by an active edge on
+// CA1; the 1541's VIA1 wires ATN IN to that pin, so this is the flag the
+// DOS ROM's ATN handler runs from.
+const viaIFRCA1 = 0x02
+
+// Reset returns the chip to its power-on state, as the RESET line does:
+// every register cleared, both interrupt registers empty, IRQ released.
+func (v *VIA) Reset() {
+	*v = VIA{}
+}
+
+// setCA1 presents a new level on the CA1 input pin and raises the CA1
+// interrupt flag if it is the active edge, which PCR bit 0 selects
+// (1 = low-to-high, 0 = high-to-low).
+func (v *VIA) setCA1(level bool) {
+	if level == v.ca1 {
+		return
+	}
+	v.ca1 = level
+	if level == (v.pcr&0x01 != 0) {
+		v.ifr |= viaIFRCA1
+		v.updateIRQ()
+	}
+}
 
 // effective returns the electrical state of a VIA port: output-configured
 // bits (ddr=1) reflect the written value, input-configured bits float high
@@ -46,6 +75,10 @@ func (v *VIA) Load(addr uint16) uint8 {
 	case 0x0:
 		return viaEffective(v.ORB, v.DDRB)
 	case 0x1:
+		// Reading ORA/IRA clears the CA1 interrupt flag; $nF is the
+		// no-handshake mirror that leaves it alone.
+		v.ifr &^= viaIFRCA1
+		v.updateIRQ()
 		return viaEffective(v.ORA, v.DDRA)
 	case 0x2:
 		return v.DDRB
@@ -93,6 +126,7 @@ func (v *VIA) Store(addr uint16, val uint8) {
 		v.ORB = val
 	case 0x1:
 		v.ORA = val
+		v.ifr &^= viaIFRCA1 // as with reads, $nF is the no-handshake mirror
 	case 0x2:
 		v.DDRB = val
 	case 0x3:

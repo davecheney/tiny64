@@ -54,10 +54,10 @@ func (e *emulator) Layout(outsideWidth, outsideHeight int) (int, int) {
 }
 
 // Run wires the VIC-II's pixel output to an Ebitengine window, randomizes
-// RAM to simulate power-on noise, calls insertCart (if non-nil) so the
-// caller can plug in a cartridge before reset, resets the machine, and
-// blocks running the game loop until the window is closed.
-func Run(title string, insertCart func()) error {
+// RAM to simulate power-on noise, calls setup (if non-nil) so the caller
+// can plug in a cartridge or a disk drive before reset, resets the
+// machine, and blocks running the game loop until the window is closed.
+func Run(title string, setup func()) error {
 	var emu emulator
 	defer func() {
 		fmt.Println("emulated frames:", emu.frames)
@@ -68,8 +68,8 @@ func Run(title string, insertCart func()) error {
 		ram[i] = byte(rand.Uint())
 	}
 
-	if insertCart != nil {
-		insertCart()
+	if setup != nil {
+		setup()
 	}
 
 	tiny64.Reset()

@@ -5,27 +5,12 @@ import (
 	"testing"
 )
 
-// gcrDecodeTable is the inverse of gcrEncodeTable (a 5-bit GCR code maps
-// back to its 4-bit nibble); used only to verify gcrEncode4Bytes below via
-// round-trip, mirroring VICE's From_GCR_conv_data.
-var gcrDecodeTable = [32]uint8{
-	0, 0, 0, 0, 0, 0, 0, 0,
-	0, 8, 0, 1, 0, 12, 4, 5,
-	0, 0, 2, 3, 0, 15, 6, 7,
-	0, 9, 10, 11, 0, 13, 14, 0,
-}
-
-// gcrDecode4Bytes inverts gcrEncode4Bytes, for testing.
+// gcrDecode4Bytes is gcrDecode5Bytes without the validity result, for the
+// round-trip checks below.
 func gcrDecode4Bytes(src [5]byte) [4]byte {
-	var tdest uint64
-	tdest = uint64(src[0]) << 13
-	var dest [4]byte
-	for i, di := 5, 0; di < 4; i, di = i+2, di+1 {
-		tdest |= uint64(src[di+1]) << uint(i)
-		dest[di] = gcrDecodeTable[(tdest>>16)&0x1F] << 4
-		tdest <<= 5
-		dest[di] |= gcrDecodeTable[(tdest>>16)&0x1F]
-		tdest <<= 5
+	dest, ok := gcrDecode5Bytes(src)
+	if !ok {
+		panic("gcrDecode5Bytes rejected a code gcrEncode4Bytes produced")
 	}
 	return dest
 }
@@ -50,9 +35,10 @@ func TestGCREncodeSectorStructure(t *testing.T) {
 		data[i] = byte(i)
 	}
 
-	got := gcrEncodeSector(nil, 1, 0, 0x41, 0x42, &data)
+	const tailGap = 12
+	got := gcrEncodeSector(nil, 1, 0, 0x41, 0x42, &data, tailGap)
 
-	wantLen := gcrSyncLen + 5 + 5 + gcrHeaderGap + gcrSyncLen + 5*65 + gcrTailGap
+	wantLen := gcrSyncLen + 5 + 5 + gcrHeaderGap + gcrSyncLen + 5*65 + tailGap
 	if len(got) != wantLen {
 		t.Fatalf("len = %d, want %d", len(got), wantLen)
 	}
