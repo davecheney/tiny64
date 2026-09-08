@@ -23,11 +23,6 @@ func stepFrame(v *VICII) {
 // g-accesses, and every pixel is border - which any arrangement of
 // stepCycle would reproduce.
 func TestVICStepFrameMatchesStepDot(t *testing.T) {
-	type pixel struct {
-		x, y  uint16
-		color byte
-	}
-
 	m := newMachine(t)
 	m.waitForLine(5, "READY.")
 
@@ -39,20 +34,17 @@ func TestVICStepFrameMatchesStepDot(t *testing.T) {
 	savedKeyboard := keyboard
 	savedRAM, savedColorRAM := ram, colorRAM
 
-	run := func(startVIC VICII, step func()) (VICII, CPU, []pixel) {
+	run := func(startVIC VICII, step func()) (VICII, CPU, []byte) {
 		cpu, vic = savedCPU, startVIC
 		cia1, cia2 = savedCIA1, savedCIA2
 		keyboard = savedKeyboard
 		ram, colorRAM = savedRAM, savedColorRAM
 
-		pixels := make([]pixel, 0, DotsPerFrame)
-		WritePixelToBuffer = func(x, y uint16, colorIndex byte) {
-			pixels = append(pixels, pixel{x, y, colorIndex})
-		}
+		clearFrameBufferRGBA()
 		step()
 
 		gotVIC, gotCPU := vic, cpu
-		return gotVIC, gotCPU, pixels
+		return gotVIC, gotCPU, append([]byte(nil), FrameBufferRGBA()...)
 	}
 
 	// StepDot must select the implementation for the next dot from every
@@ -103,9 +95,12 @@ func TestVICStepFrameMatchesStepDot(t *testing.T) {
 	// Guard against the comparison below passing on a vector that can't
 	// tell the two apart: a live display paints more than one colour, and
 	// only reaches the second one via a Bad Line's c- and g-accesses.
-	colors := map[byte]bool{}
-	for _, p := range framePixels {
-		colors[p.color] = true
+	colors := map[[4]byte]bool{}
+	for i := 0; i < len(framePixels); i += 4 {
+		color := [4]byte(framePixels[i : i+4])
+		if color[3] != 0 {
+			colors[color] = true
+		}
 	}
 	if len(colors) < 2 {
 		t.Fatalf("frame painted %d distinct colours, want at least 2 (the display isn't active, so this proves nothing)", len(colors))
@@ -182,7 +177,6 @@ func TestVICRegisterStorage(t *testing.T) {
 // incremented unconditionally every line regardless of state, counted up
 // to 7 and got stuck there, and VCBase/VC grew without bound).
 func TestVICStaysIdleWithoutDEN(t *testing.T) {
-	WritePixelToBuffer = func(x, y uint16, colorIndex byte) {}
 	v := &VICII{}
 	v.Reset()
 
@@ -202,7 +196,6 @@ func TestVICStaysIdleWithoutDEN(t *testing.T) {
 }
 
 func TestVICFinishFrameAdvancesToNextFrameBoundary(t *testing.T) {
-	WritePixelToBuffer = func(x, y uint16, colorIndex byte) {}
 	v := &VICII{}
 	v.Reset()
 
@@ -227,7 +220,6 @@ func TestVICFinishFrameAdvancesToNextFrameBoundary(t *testing.T) {
 // to idle state once raster lines stop matching YSCROLL (i.e. past $F7,
 // where no further Bad Line Condition can occur).
 func TestVICBadLineEntersDisplayState(t *testing.T) {
-	WritePixelToBuffer = func(x, y uint16, colorIndex byte) {}
 	v := &VICII{}
 	v.Reset()
 	v.control1 = 0x13 // DEN=1, YSCROLL=3, RSEL=0
@@ -292,7 +284,6 @@ func TestVICBadLineEntersDisplayState(t *testing.T) {
 // early, leaving the 40th column's gdSequencer stale (displaying as blank)
 // and VC drifting out of sync with the video matrix every row.
 func TestVICGAccessCountPerRow(t *testing.T) {
-	WritePixelToBuffer = func(x, y uint16, colorIndex byte) {}
 	v := &VICII{}
 	v.Reset()
 	v.control1 = 0x1B // DEN=1, RSEL=1, YSCROLL=3
@@ -315,7 +306,6 @@ func TestVICGAccessCountPerRow(t *testing.T) {
 // and that VC stays within the 1000-entry video matrix range across a
 // full frame instead of drifting to unrelated pages of memory.
 func TestVICVideoMatrixAddress(t *testing.T) {
-	WritePixelToBuffer = func(x, y uint16, colorIndex byte) {}
 	v := &VICII{}
 	v.Reset()
 	v.control1 = 0x1B    // DEN=1, RSEL=1, YSCROLL=3 (KERNAL defaults)

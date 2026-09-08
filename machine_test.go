@@ -1,6 +1,7 @@
 package tiny64
 
 import (
+	"bytes"
 	"strings"
 	"testing"
 )
@@ -19,13 +20,25 @@ func saveMachine(t *testing.T) {
 	savedCPU, savedCIA1, savedCIA2 := cpu, cia1, cia2
 	savedKeyboard, savedVIC, savedCartridge := keyboard, vic, cartridge
 	savedRAM, savedColorRAM := ram, colorRAM
-	savedWritePixelToBuffer := WritePixelToBuffer
 	t.Cleanup(func() {
 		cpu, cia1, cia2 = savedCPU, savedCIA1, savedCIA2
 		keyboard, vic, cartridge = savedKeyboard, savedVIC, savedCartridge
 		ram, colorRAM = savedRAM, savedColorRAM
-		WritePixelToBuffer = savedWritePixelToBuffer
 	})
+}
+
+func clearFrameBufferRGBA() {
+	clear(FrameBufferRGBA())
+}
+
+func frameBufferPixelRGBA(x, y uint16) []byte {
+	const stride = VisibleDotsPerLine * 4
+	idx := int(y-FirstVisibleLine)*stride + int(x)*4
+	return FrameBufferRGBA()[idx : idx+4]
+}
+
+func frameBufferPixelIs(x, y uint16, colorIndex byte) bool {
+	return bytes.Equal(frameBufferPixelRGBA(x, y), C64Palette[colorIndex&0x0f][:])
 }
 
 // A key has to stay down long enough for the KERNAL to see it on one scan
@@ -58,9 +71,7 @@ func newMachine(t *testing.T) *machine {
 		ram[i] = 0
 	}
 	colorRAM = [1024]byte{}
-	// The VIC-II will not step without somewhere to put its pixels, and
-	// there is no display here, so throw them away.
-	WritePixelToBuffer = func(x, y uint16, colorIndex byte) {}
+	clearFrameBufferRGBA()
 	Reset()
 	return &machine{t: t}
 }

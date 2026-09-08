@@ -10,20 +10,8 @@ import "testing"
 // at real X coordinate $18 (24) on the left and $158 (344) on the right.
 func TestVICBorderPlacement(t *testing.T) {
 	v := &VICII{}
-	const w, h = DotsPerLine, RasterLinesPerFrame
-	const unwritten = 0xFF // sentinel: dot never painted (horizontal blanking)
-	pixels := make([][]byte, h)
-	for y := range pixels {
-		pixels[y] = make([]byte, w)
-		for x := range pixels[y] {
-			pixels[y][x] = unwritten
-		}
-	}
-	WritePixelToBuffer = func(x, y uint16, colorIndex byte) {
-		if int(y) < h && int(x) < w {
-			pixels[y][x] = colorIndex
-		}
-	}
+	const w = DotsPerLine
+	clearFrameBufferRGBA()
 	v.Reset()
 
 	v.WriteRegister(0xD020, 0x0E) // border: light blue (14)
@@ -45,14 +33,13 @@ func TestVICBorderPlacement(t *testing.T) {
 	// Raster line 100 is safely inside the 25-row display window
 	// (51-250) and outside the very first Bad Line's character row, so
 	// c-accesses have long since populated the video matrix buffer.
-	row := pixels[100]
 	firstNonBorder := -1
 	lastNonBorder := -1
-	for x, c := range row {
-		if c == unwritten {
+	for x := range w {
+		if frameBufferPixelRGBA(uint16(x), 100)[3] == 0 {
 			continue
 		}
-		if c != 0x0E {
+		if !frameBufferPixelIs(uint16(x), 100, 0x0e) {
 			if firstNonBorder == -1 {
 				firstNonBorder = x
 			}
@@ -86,14 +73,8 @@ func TestVICBorderPlacement(t *testing.T) {
 // 8-pixel-wide character cell.
 func TestVICGAccessPixelAlignment(t *testing.T) {
 	v := &VICII{}
-	const w, h = DotsPerLine, RasterLinesPerFrame
-	pixels := make([]byte, w)
 	const targetRow = 52 // within the first Bad Line's row (raster $33-$3A)
-	WritePixelToBuffer = func(x, y uint16, colorIndex byte) {
-		if int(y) == targetRow && int(x) < w {
-			pixels[x] = colorIndex
-		}
-	}
+	clearFrameBufferRGBA()
 	v.Reset()
 
 	v.WriteRegister(0xD020, 0x0E) // border: light blue (14)
@@ -121,12 +102,14 @@ func TestVICGAccessPixelAlignment(t *testing.T) {
 	}
 
 	const foreground = 0x01
-	wantFirst := leftComp40     // displayX 48
-	wantLast := rightComp40 - 2 // displayX 366
-	if pixels[wantFirst] != foreground {
-		t.Errorf("pixel at first column's leftmost displayX=%d is %#x, want foreground %#x (occluded by border)", wantFirst, pixels[wantFirst], foreground)
+	wantFirst := uint16(leftComp40)     // displayX 48
+	wantLast := uint16(rightComp40 - 2) // displayX 366
+	if !frameBufferPixelIs(wantFirst, targetRow, foreground) {
+		t.Errorf("pixel at first column's leftmost displayX=%d is %v, want foreground %v (occluded by border)",
+			wantFirst, frameBufferPixelRGBA(wantFirst, targetRow), C64Palette[foreground])
 	}
-	if pixels[wantLast] != foreground {
-		t.Errorf("pixel at last column's rightmost displayX=%d is %#x, want foreground %#x (gap before right border)", wantLast, pixels[wantLast], foreground)
+	if !frameBufferPixelIs(wantLast, targetRow, foreground) {
+		t.Errorf("pixel at last column's rightmost displayX=%d is %v, want foreground %v (gap before right border)",
+			wantLast, frameBufferPixelRGBA(wantLast, targetRow), C64Palette[foreground])
 	}
 }

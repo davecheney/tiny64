@@ -17,36 +17,11 @@ import (
 	"tinygo.org/x/drivers/st7789"
 )
 
-// C64Palette is the C64 PAL color palette (RGBA format).
-var C64Palette = [16]pixel.RGB565BE{
-	pixel.NewRGB565BE(0x00, 0x00, 0x00), // 0: Black
-	pixel.NewRGB565BE(0xff, 0xff, 0xff), // 1: White
-	pixel.NewRGB565BE(0x88, 0x00, 0x00), // 2: Red
-	pixel.NewRGB565BE(0xaa, 0xff, 0xee), // 3: Cyan
-	pixel.NewRGB565BE(0xcc, 0x44, 0xcc), // 4: Purple
-	pixel.NewRGB565BE(0x00, 0xcc, 0x55), // 5: Green
-	pixel.NewRGB565BE(0x00, 0x00, 0xaa), // 6: Blue
-	pixel.NewRGB565BE(0xee, 0xee, 0x77), // 7: Yellow
-	pixel.NewRGB565BE(0xdd, 0x88, 0x55), // 8: Orange
-	pixel.NewRGB565BE(0x66, 0x44, 0x00), // 9: Brown
-	pixel.NewRGB565BE(0xff, 0x77, 0x77), // 10: Light Red
-	pixel.NewRGB565BE(0x33, 0x33, 0x33), // 11: Dark Gray
-	pixel.NewRGB565BE(0x77, 0x77, 0x77), // 12: Medium Gray
-	pixel.NewRGB565BE(0xaa, 0xff, 0x66), // 13: Light Green
-	pixel.NewRGB565BE(0x00, 0x88, 0xff), // 14: Light Blue
-	pixel.NewRGB565BE(0xbb, 0xbb, 0xbb), // 15: Light Gray
-}
-
-// The 320x240 panel can't show the whole 405x284 picture, so crop to the
-// 40-column display window (dots 48-367, exactly 320 wide) and centre the
-// 25-row window (raster 51-250) vertically, leaving 20 lines of border
-// above and below.
-const (
-	cropX = 48
-	cropY = 31
+var fb = pixel.NewImageFromBytes[pixel.RGB565BE](
+	320,
+	240,
+	tiny64.FrameBufferRGB565BE(),
 )
-
-var fb = pixel.NewImage[pixel.RGB565BE](320, 240)
 
 func main() {
 	machine.SPI0.Configure(machine.SPIConfig{
@@ -67,15 +42,6 @@ func main() {
 
 	// Clear the screen to black
 	display.FillScreen(color.RGBA{0, 0, 0, 255})
-	tiny64.WritePixelToBuffer = func(x, y uint16, colorIndex byte) {
-		x -= cropX // underflows out of range below the crop origin
-		y -= cropY
-		if x >= 320 || y >= 240 {
-			return
-		}
-		fb.Set(int(x), int(y), C64Palette[colorIndex])
-	}
-
 	// Fill RAM with random values to simulate power-on randomness.
 	ram := tiny64.Ram()
 	for i := range ram {

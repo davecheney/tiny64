@@ -1,0 +1,44 @@
+//go:build !tinygo && pixelsink_func
+
+package tiny64
+
+// C64Palette is the C64 PAL colour palette in premultiplied RGBA format.
+var C64Palette = [16][4]byte{
+	{0x00, 0x00, 0x00, 0xff},
+	{0xff, 0xff, 0xff, 0xff},
+	{0x88, 0x00, 0x00, 0xff},
+	{0xaa, 0xff, 0xee, 0xff},
+	{0xcc, 0x44, 0xcc, 0xff},
+	{0x00, 0xcc, 0x55, 0xff},
+	{0x00, 0x00, 0xaa, 0xff},
+	{0xee, 0xee, 0x77, 0xff},
+	{0xdd, 0x88, 0x55, 0xff},
+	{0x66, 0x44, 0x00, 0xff},
+	{0xff, 0x77, 0x77, 0xff},
+	{0x33, 0x33, 0x33, 0xff},
+	{0x77, 0x77, 0x77, 0xff},
+	{0xaa, 0xff, 0x66, 0xff},
+	{0x00, 0x88, 0xff, 0xff},
+	{0xbb, 0xbb, 0xbb, 0xff},
+}
+
+var frameBufferRGBA [VisibleDotsPerLine * VisibleLines * 4]byte
+
+// WritePixelToBuffer receives each visible VIC-II pixel. Embedders using
+// this compatibility build may replace it before stepping the machine.
+var WritePixelToBuffer = writePixelToRGBA
+
+// FrameBufferRGBA returns the current visible frame in row-major RGBA order.
+func FrameBufferRGBA() []byte {
+	return frameBufferRGBA[:]
+}
+
+func writePixelToRGBA(x, y uint16, colorIndex byte) {
+	const stride = VisibleDotsPerLine * 4
+	idx := int(y-FirstVisibleLine)*stride + int(x)*4
+	copy(frameBufferRGBA[idx:idx+4], C64Palette[colorIndex&0x0f][:])
+}
+
+func writePixelToBuffer(x, y uint16, colorIndex byte) {
+	WritePixelToBuffer(x, y, colorIndex)
+}
