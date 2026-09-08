@@ -37,6 +37,14 @@ const (
 	badLineRasterStart = 0x30
 	badLineRasterEnd   = 0xF7
 
+	// csel is $D016 bit 3, which selects the 38/40 column window.
+	csel = 0x08
+
+	// borderMask is the set state of the border flip-flops: an all-ones
+	// byte so the per-dot path can select the border color with a mask
+	// merge (see dotclock1).
+	borderMask = 0xFF
+
 	leftComp38  = 55  // CSEL=0: 38 columns (article $1F)
 	leftComp40  = 48  // CSEL=1: 40 columns (article $18)
 	rightComp38 = 359 // CSEL=0: 38 columns (article $14F)
@@ -59,8 +67,12 @@ type VICII struct {
 
 	// Keep per-dot and per-cycle scalar state before the larger buffers so
 	// TinyGo can use compact fixed-offset accesses.
-	mainBorder     bool
-	verticalBorder bool
+	// mainBorder/verticalBorder are the border flip-flops of section 3.9,
+	// held as all-ones/all-zeroes masks (borderMask/0) rather than bools:
+	// the per-dot path merges them into the pixel color with and/andnot
+	// instead of branching, and nothing has to materialise a bool.
+	mainBorder     uint8
+	verticalBorder uint8
 	gdSequencer    uint8
 	borderColor    uint8
 	background0    uint8
@@ -75,17 +87,19 @@ type VICII struct {
 	// badLine/allowBadLine/denLatch implement the Bad Line Condition
 	// (section 3.5): allowBadLine is latched from DEN once per frame during
 	// raster line $30, and badLine is re-evaluated every cycle.
-	badLine      bool
-	allowBadLine bool
-	denLatch     bool
+	// Held as 0/1 rather than bools so the per-cycle path can combine them
+	// arithmetically (see phi0low and cycleGotoIdle).
+	badLine      uint8
+	allowBadLine uint8
+	denLatch     uint8
 
-	// idle is the video logic's idle/display state (section 3.7.1): true in
-	// idle state (only g-accesses occur, VC/VMLI don't advance), false in
-	// display state (c- and g-accesses take place, VC/VMLI advance). Starts
-	// true after a reset; transitions to false as soon as there's a Bad Line
-	// Condition, and back to true in cycle 58 if RC=7 and there's no Bad
-	// Line Condition.
-	idle bool
+	// idle is the video logic's idle/display state (section 3.7.1), held
+	// as 1 in idle state (only g-accesses occur, VC/VMLI don't advance)
+	// and 0 in display state (c- and g-accesses take place, VC/VMLI
+	// advance) so cycleGAccess can advance them without a branch. Starts
+	// 1 after a reset; becomes 0 as soon as there's a Bad Line Condition,
+	// and 1 again in cycle 58 if RC=7 and there's no Bad Line Condition.
+	idle uint8
 
 	// VC/VCBase/VMLI/RC drive the video matrix and character row fetch
 	// (section 3.7.2 of the VIC Article).
@@ -146,8 +160,8 @@ func (v *VICII) Reset() {
 	v.rasterLine = 0
 	v.BA = true
 	v.AEC = true
-	v.mainBorder = false
-	v.verticalBorder = false
+	v.mainBorder = 0
+	v.verticalBorder = 0
 	v.gdSequencer = 0
 	v.videoBuffer = 0
 	v.gdPending = 0
@@ -157,10 +171,10 @@ func (v *VICII) Reset() {
 	v.VCBase = 0
 	v.VMLI = 0
 	v.RC = 0
-	v.badLine = false
-	v.allowBadLine = false
-	v.denLatch = false
-	v.idle = true
+	v.badLine = 0
+	v.allowBadLine = 0
+	v.denLatch = 0
+	v.idle = 1
 }
 
 func (v *VICII) WriteRegister(addr uint16, value uint8) {
@@ -377,21 +391,19 @@ func (v *VICII) dotclock1() {
 		return
 	}
 
-	if v.verticalBorder {
-		WritePixelToBuffer(v.dot, v.rasterLine, v.borderColor&0x0F)
-		return
-	}
-	var graphicsColor byte
-	if v.gdSequencer&0x80 == 0 {
-		graphicsColor = v.background0
-	} else {
-		graphicsColor = byte(v.videoBuffer >> 8) // foreground color nibble
-	}
-	v.gdSequencer <<= 1 // this pixel is now shifted out
-	if v.mainBorder {
-		graphicsColor = v.borderColor
-	}
-	WritePixelToBuffer(v.dot, v.rasterLine, graphicsColor&0x0F)
+	// fg is 0xFF when the sequencer's MSB (this dot's graphics bit) is
+	// set and 0x00 otherwise, and border is 0xFF while either border
+	// flip-flop is set, so both choices are mask merges rather than
+	// branches on a materialised bool. See the borderMask comment.
+	fg := uint8(int8(v.gdSequencer) >> 7)
+	color := v.background0&^fg | uint8(v.videoBuffer>>8)&fg // foreground color nibble
+	border := v.mainBorder | v.verticalBorder
+	color = color&^border | v.borderColor&border
+	// The sequencer shifts this pixel out, except inside the vertical
+	// border where it is not displayed at all: the shift count is 1 when
+	// verticalBorder is clear and 0 when it is set.
+	v.gdSequencer <<= 1 &^ v.verticalBorder
+	WritePixelToBuffer(v.dot, v.rasterLine, color&0x0F)
 }
 
 // dotclock2 is dotclock1 for the cycle's 2nd dot - see dotclock1's comment.
@@ -405,21 +417,19 @@ func (v *VICII) dotclock2() {
 		return
 	}
 
-	if v.verticalBorder {
-		WritePixelToBuffer(v.dot, v.rasterLine, v.borderColor&0x0F)
-		return
-	}
-	var graphicsColor byte
-	if v.gdSequencer&0x80 == 0 {
-		graphicsColor = v.background0
-	} else {
-		graphicsColor = byte(v.videoBuffer >> 8) // foreground color nibble
-	}
-	v.gdSequencer <<= 1 // this pixel is now shifted out
-	if v.mainBorder {
-		graphicsColor = v.borderColor
-	}
-	WritePixelToBuffer(v.dot, v.rasterLine, graphicsColor&0x0F)
+	// fg is 0xFF when the sequencer's MSB (this dot's graphics bit) is
+	// set and 0x00 otherwise, and border is 0xFF while either border
+	// flip-flop is set, so both choices are mask merges rather than
+	// branches on a materialised bool. See the borderMask comment.
+	fg := uint8(int8(v.gdSequencer) >> 7)
+	color := v.background0&^fg | uint8(v.videoBuffer>>8)&fg // foreground color nibble
+	border := v.mainBorder | v.verticalBorder
+	color = color&^border | v.borderColor&border
+	// The sequencer shifts this pixel out, except inside the vertical
+	// border where it is not displayed at all: the shift count is 1 when
+	// verticalBorder is clear and 0 when it is set.
+	v.gdSequencer <<= 1 &^ v.verticalBorder
+	WritePixelToBuffer(v.dot, v.rasterLine, color&0x0F)
 }
 
 // dotclock3 is dotclock1 for the cycle's 3rd dot - see dotclock1's comment.
@@ -433,21 +443,19 @@ func (v *VICII) dotclock3() {
 		return
 	}
 
-	if v.verticalBorder {
-		WritePixelToBuffer(v.dot, v.rasterLine, v.borderColor&0x0F)
-		return
-	}
-	var graphicsColor byte
-	if v.gdSequencer&0x80 == 0 {
-		graphicsColor = v.background0
-	} else {
-		graphicsColor = byte(v.videoBuffer >> 8) // foreground color nibble
-	}
-	v.gdSequencer <<= 1 // this pixel is now shifted out
-	if v.mainBorder {
-		graphicsColor = v.borderColor
-	}
-	WritePixelToBuffer(v.dot, v.rasterLine, graphicsColor&0x0F)
+	// fg is 0xFF when the sequencer's MSB (this dot's graphics bit) is
+	// set and 0x00 otherwise, and border is 0xFF while either border
+	// flip-flop is set, so both choices are mask merges rather than
+	// branches on a materialised bool. See the borderMask comment.
+	fg := uint8(int8(v.gdSequencer) >> 7)
+	color := v.background0&^fg | uint8(v.videoBuffer>>8)&fg // foreground color nibble
+	border := v.mainBorder | v.verticalBorder
+	color = color&^border | v.borderColor&border
+	// The sequencer shifts this pixel out, except inside the vertical
+	// border where it is not displayed at all: the shift count is 1 when
+	// verticalBorder is clear and 0 when it is set.
+	v.gdSequencer <<= 1 &^ v.verticalBorder
+	WritePixelToBuffer(v.dot, v.rasterLine, color&0x0F)
 }
 
 // dotclock4 is dotclock1 for the cycle's 4th dot - see dotclock1's
@@ -462,21 +470,19 @@ func (v *VICII) dotclock4() {
 		return
 	}
 
-	if v.verticalBorder {
-		WritePixelToBuffer(v.dot, v.rasterLine, v.borderColor&0x0F)
-		return
-	}
-	var graphicsColor byte
-	if v.gdSequencer&0x80 == 0 {
-		graphicsColor = v.background0
-	} else {
-		graphicsColor = byte(v.videoBuffer >> 8) // foreground color nibble
-	}
-	v.gdSequencer <<= 1 // this pixel is now shifted out
-	if v.mainBorder {
-		graphicsColor = v.borderColor
-	}
-	WritePixelToBuffer(v.dot, v.rasterLine, graphicsColor&0x0F)
+	// fg is 0xFF when the sequencer's MSB (this dot's graphics bit) is
+	// set and 0x00 otherwise, and border is 0xFF while either border
+	// flip-flop is set, so both choices are mask merges rather than
+	// branches on a materialised bool. See the borderMask comment.
+	fg := uint8(int8(v.gdSequencer) >> 7)
+	color := v.background0&^fg | uint8(v.videoBuffer>>8)&fg // foreground color nibble
+	border := v.mainBorder | v.verticalBorder
+	color = color&^border | v.borderColor&border
+	// The sequencer shifts this pixel out, except inside the vertical
+	// border where it is not displayed at all: the shift count is 1 when
+	// verticalBorder is clear and 0 when it is set.
+	v.gdSequencer <<= 1 &^ v.verticalBorder
+	WritePixelToBuffer(v.dot, v.rasterLine, color&0x0F)
 }
 
 // dotclock5 is dotclock1 for the cycle's 5th dot - see dotclock1's comment.
@@ -490,21 +496,19 @@ func (v *VICII) dotclock5() {
 		return
 	}
 
-	if v.verticalBorder {
-		WritePixelToBuffer(v.dot, v.rasterLine, v.borderColor&0x0F)
-		return
-	}
-	var graphicsColor byte
-	if v.gdSequencer&0x80 == 0 {
-		graphicsColor = v.background0
-	} else {
-		graphicsColor = byte(v.videoBuffer >> 8) // foreground color nibble
-	}
-	v.gdSequencer <<= 1 // this pixel is now shifted out
-	if v.mainBorder {
-		graphicsColor = v.borderColor
-	}
-	WritePixelToBuffer(v.dot, v.rasterLine, graphicsColor&0x0F)
+	// fg is 0xFF when the sequencer's MSB (this dot's graphics bit) is
+	// set and 0x00 otherwise, and border is 0xFF while either border
+	// flip-flop is set, so both choices are mask merges rather than
+	// branches on a materialised bool. See the borderMask comment.
+	fg := uint8(int8(v.gdSequencer) >> 7)
+	color := v.background0&^fg | uint8(v.videoBuffer>>8)&fg // foreground color nibble
+	border := v.mainBorder | v.verticalBorder
+	color = color&^border | v.borderColor&border
+	// The sequencer shifts this pixel out, except inside the vertical
+	// border where it is not displayed at all: the shift count is 1 when
+	// verticalBorder is clear and 0 when it is set.
+	v.gdSequencer <<= 1 &^ v.verticalBorder
+	WritePixelToBuffer(v.dot, v.rasterLine, color&0x0F)
 }
 
 // dotclock6 is dotclock1 for the cycle's 6th dot - see dotclock1's comment.
@@ -518,21 +522,19 @@ func (v *VICII) dotclock6() {
 		return
 	}
 
-	if v.verticalBorder {
-		WritePixelToBuffer(v.dot, v.rasterLine, v.borderColor&0x0F)
-		return
-	}
-	var graphicsColor byte
-	if v.gdSequencer&0x80 == 0 {
-		graphicsColor = v.background0
-	} else {
-		graphicsColor = byte(v.videoBuffer >> 8) // foreground color nibble
-	}
-	v.gdSequencer <<= 1 // this pixel is now shifted out
-	if v.mainBorder {
-		graphicsColor = v.borderColor
-	}
-	WritePixelToBuffer(v.dot, v.rasterLine, graphicsColor&0x0F)
+	// fg is 0xFF when the sequencer's MSB (this dot's graphics bit) is
+	// set and 0x00 otherwise, and border is 0xFF while either border
+	// flip-flop is set, so both choices are mask merges rather than
+	// branches on a materialised bool. See the borderMask comment.
+	fg := uint8(int8(v.gdSequencer) >> 7)
+	color := v.background0&^fg | uint8(v.videoBuffer>>8)&fg // foreground color nibble
+	border := v.mainBorder | v.verticalBorder
+	color = color&^border | v.borderColor&border
+	// The sequencer shifts this pixel out, except inside the vertical
+	// border where it is not displayed at all: the shift count is 1 when
+	// verticalBorder is clear and 0 when it is set.
+	v.gdSequencer <<= 1 &^ v.verticalBorder
+	WritePixelToBuffer(v.dot, v.rasterLine, color&0x0F)
 }
 
 // dotclock7 handles the cycle's 7th dot, the first of the two dots that
@@ -555,46 +557,44 @@ func (v *VICII) dotclock7() {
 	if v.dot == rightComp38 {
 		// "1. If the X coordinate reaches the right comparison value, the
 		// main border flip flop is set."
-		if (v.control2>>3)&1 == 0 {
-			v.mainBorder = true
+		if v.control2&csel == 0 {
+			v.mainBorder = borderMask
 		}
 	}
 	if v.dot == leftComp38 {
-		if (v.control2>>3)&1 == 0 {
+		if v.control2&csel == 0 {
 			// "4./5. If the X coordinate reaches the left comparison value
 			// and the Y coordinate reaches the bottom/top one, set/reset
 			// (if DEN) the vertical border flip flop."
 			rsel := (v.control1 >> 3) & 1
 			if v.rasterLine == bottomComp[rsel] {
-				v.verticalBorder = true
+				v.verticalBorder = borderMask
 			}
 			if v.rasterLine == topComp[rsel] && v.control1&0x10 != 0 {
-				v.verticalBorder = false
+				v.verticalBorder = 0
 			}
 			// "6. If the X coordinate reaches the left comparison value and
 			// the vertical border flip flop is not set, the main flip flop
 			// is reset."
-			if !v.verticalBorder {
-				v.mainBorder = false
+			if v.verticalBorder == 0 {
+				v.mainBorder = 0
 			}
 		}
 	}
 
-	if v.verticalBorder {
-		WritePixelToBuffer(v.dot, v.rasterLine, v.borderColor&0x0F)
-		return
-	}
-	var graphicsColor byte
-	if v.gdSequencer&0x80 == 0 {
-		graphicsColor = v.background0
-	} else {
-		graphicsColor = byte(v.videoBuffer >> 8) // foreground color nibble
-	}
-	v.gdSequencer <<= 1 // this pixel is now shifted out
-	if v.mainBorder {
-		graphicsColor = v.borderColor
-	}
-	WritePixelToBuffer(v.dot, v.rasterLine, graphicsColor&0x0F)
+	// fg is 0xFF when the sequencer's MSB (this dot's graphics bit) is
+	// set and 0x00 otherwise, and border is 0xFF while either border
+	// flip-flop is set, so both choices are mask merges rather than
+	// branches on a materialised bool. See the borderMask comment.
+	fg := uint8(int8(v.gdSequencer) >> 7)
+	color := v.background0&^fg | uint8(v.videoBuffer>>8)&fg // foreground color nibble
+	border := v.mainBorder | v.verticalBorder
+	color = color&^border | v.borderColor&border
+	// The sequencer shifts this pixel out, except inside the vertical
+	// border where it is not displayed at all: the shift count is 1 when
+	// verticalBorder is clear and 0 when it is set.
+	v.gdSequencer <<= 1 &^ v.verticalBorder
+	WritePixelToBuffer(v.dot, v.rasterLine, color&0x0F)
 }
 
 // dotclock0 handles the cycle's 8th (and a line's or frame's last) dot:
@@ -622,21 +622,21 @@ func (v *VICII) dotclock0() {
 	}
 
 	if v.dot == rightComp40 {
-		if (v.control2>>3)&1 == 1 {
-			v.mainBorder = true
+		if v.control2&csel != 0 {
+			v.mainBorder = borderMask
 		}
 	}
 	if v.dot == leftComp40 {
-		if (v.control2>>3)&1 == 1 {
+		if v.control2&csel != 0 {
 			rsel := (v.control1 >> 3) & 1
 			if v.rasterLine == bottomComp[rsel] {
-				v.verticalBorder = true
+				v.verticalBorder = borderMask
 			}
 			if v.rasterLine == topComp[rsel] && v.control1&0x10 != 0 {
-				v.verticalBorder = false
+				v.verticalBorder = 0
 			}
-			if !v.verticalBorder {
-				v.mainBorder = false
+			if v.verticalBorder == 0 {
+				v.mainBorder = 0
 			}
 		}
 	}
@@ -647,21 +647,19 @@ func (v *VICII) dotclock0() {
 		v.videoBuffer = v.videoBufferPending
 	}
 
-	if v.verticalBorder {
-		WritePixelToBuffer(v.dot, v.rasterLine, v.borderColor&0x0F)
-		return
-	}
-	var graphicsColor byte
-	if v.gdSequencer&0x80 == 0 {
-		graphicsColor = v.background0
-	} else {
-		graphicsColor = byte(v.videoBuffer >> 8) // foreground color nibble
-	}
-	v.gdSequencer <<= 1 // this pixel is now shifted out
-	if v.mainBorder {
-		graphicsColor = v.borderColor
-	}
-	WritePixelToBuffer(v.dot, v.rasterLine, graphicsColor&0x0F)
+	// fg is 0xFF when the sequencer's MSB (this dot's graphics bit) is
+	// set and 0x00 otherwise, and border is 0xFF while either border
+	// flip-flop is set, so both choices are mask merges rather than
+	// branches on a materialised bool. See the borderMask comment.
+	fg := uint8(int8(v.gdSequencer) >> 7)
+	color := v.background0&^fg | uint8(v.videoBuffer>>8)&fg // foreground color nibble
+	border := v.mainBorder | v.verticalBorder
+	color = color&^border | v.borderColor&border
+	// The sequencer shifts this pixel out, except inside the vertical
+	// border where it is not displayed at all: the shift count is 1 when
+	// verticalBorder is clear and 0 when it is set.
+	v.gdSequencer <<= 1 &^ v.verticalBorder
+	WritePixelToBuffer(v.dot, v.rasterLine, color&0x0F)
 }
 
 // phi0low runs on the first dot of every 8-dot cycle: while the VIC-II is
@@ -688,11 +686,11 @@ func (v *VICII) phi0low() {
 	// (section 3.5).
 	if v.rasterLine == badLineRasterStart {
 		if v.control1&0x10 != 0 {
-			v.denLatch = true
+			v.denLatch = 1
 		}
 		if slot == 52 { // article cycle 63, the line's last
 			v.allowBadLine = v.denLatch
-			v.denLatch = false
+			v.denLatch = 0
 		}
 	}
 
@@ -700,14 +698,16 @@ func (v *VICII) phi0low() {
 	// raster within $30-$F7, its lower 3 bits matching YSCROLL, and DEN
 	// having been set at some point during raster line $30.
 	yscroll := v.control1 & 0x07
-	badLine := v.rasterLine >= badLineRasterStart && v.rasterLine <= badLineRasterEnd &&
-		uint8(v.rasterLine)&0x07 == yscroll && v.allowBadLine
+	var badLine uint8
+	if v.rasterLine >= badLineRasterStart && v.rasterLine <= badLineRasterEnd &&
+		uint8(v.rasterLine)&0x07 == yscroll {
+		badLine = v.allowBadLine
+	}
 	v.badLine = badLine
 	// "The transition from idle to display state occurs as soon as there
-	// is a Bad Line Condition" (section 3.7.1).
-	if badLine {
-		v.idle = false
-	}
+	// is a Bad Line Condition" (section 3.7.1): clearing idle by masking
+	// keeps the flag arithmetic and needs no branch.
+	v.idle &^= badLine
 
 	switch slot {
 	case 1, 2, 3: // article cycles 12-14
@@ -720,7 +720,7 @@ func (v *VICII) phi0low() {
 
 	// cycleIsCAccess: pulls BA low for the duration of a Bad Line's
 	// c-accesses, article cycles 12-54.
-	v.BA = !(slot >= 1 && slot <= 43 && badLine)
+	v.BA = !(slot >= 1 && slot <= 43 && badLine != 0)
 	// g-access reads the video matrix entry stored by the c-access one
 	// cycle earlier (c-access runs in the second phase of cycles 15-54;
 	// g-access, in the first phase, can only see data from a strictly
@@ -735,9 +735,9 @@ func (v *VICII) phi0low() {
 func (v *VICII) cycleSetVicCounter() {
 	v.VC = v.VCBase
 	v.VMLI = 0
-	if v.badLine {
-		v.RC = 0
-	}
+	// badLine is 1 on a Bad Line, so badLine-1 is a zero mask then and an
+	// all-ones (keep) mask otherwise.
+	v.RC &= v.badLine - 1
 }
 
 // cycleGAccess reads one row of character data (standard text mode only
@@ -753,11 +753,11 @@ func (v *VICII) cycleGAccess() {
 	v.gdPending = plaVICLoad(addr)
 
 	// "VC and VMLI are incremented after each g-access in display state"
-	// (section 3.7.2, rule 4): idle state g-accesses don't advance them.
-	if !v.idle {
-		v.VC++
-		v.VMLI++
-	}
+	// (section 3.7.2, rule 4): idle state g-accesses don't advance them,
+	// so the increment is idle inverted, 1 in display state and 0 in idle.
+	advance := v.idle ^ 1
+	v.VC += uint16(advance)
+	v.VMLI += advance
 }
 
 // cycleGotoIdle checks for the end of a character row, on the first phase
@@ -766,12 +766,10 @@ func (v *VICII) cycleGAccess() {
 // still (or again, per section 3.7.3.9's edge case) in display state.
 func (v *VICII) cycleGotoIdle() {
 	if v.RC == 7 {
-		v.idle = true
+		v.idle = 1
 		v.VCBase = v.VC
 	}
-	if !v.idle {
-		v.RC++
-	}
+	v.RC += v.idle ^ 1
 }
 
 // cycleBorderComp sets/resets the vertical border flip-flop from the Y
@@ -780,10 +778,10 @@ func (v *VICII) cycleGotoIdle() {
 func (v *VICII) cycleBorderComp() {
 	rsel := (v.control1 >> 3) & 1
 	if v.rasterLine == bottomComp[rsel] {
-		v.verticalBorder = true
+		v.verticalBorder = borderMask
 	}
 	if v.rasterLine == topComp[rsel] && v.control1&0x10 != 0 {
-		v.verticalBorder = false
+		v.verticalBorder = 0
 	}
 }
 
@@ -805,7 +803,7 @@ func (v *VICII) phi0high() {
 // cycleCAccess reads one character pointer + color entry from the video
 // matrix into the current row's buffer, during a Bad Line (section 3.7.2).
 func (v *VICII) cycleCAccess() {
-	if !v.badLine {
+	if v.badLine == 0 {
 		return
 	}
 	vm := (uint16(v.memPointers) >> 4) & 0x0F

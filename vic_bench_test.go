@@ -25,6 +25,11 @@ func loadTestProgram() {
 	}
 	copy(ram[0x0800:], prog)
 	cpu.PC = 0x0800
+	// Reset() doesn't clear the CPU's microcode state, so a benchmark run
+	// that stops mid-instruction would otherwise resume at 0x0800 in a
+	// non-T0 state and decode a data byte as an opcode.
+	cpu.TState = 0
+	cpu.Interrupt = 0
 }
 
 // BenchmarkStepDot measures the cost of VIC.StepDot() calls (which also
@@ -54,5 +59,20 @@ func BenchmarkTickPhi2(b *testing.B) {
 	b.ResetTimer()
 	for range b.N {
 		cpu.TickPhi2()
+	}
+}
+
+// BenchmarkStepFrame measures the unrolled per-frame path (stepCycle and
+// its eight dotclock functions), which is what the frontends actually
+// call once per displayed frame.
+func BenchmarkStepFrame(b *testing.B) {
+	WritePixelToBuffer = func(x, y uint16, colorIndex byte) {}
+	Reset()
+	loadTestProgram()
+	vic.control1 = 0x1B // DEN=1, RSEL=1: display enabled, normal window
+
+	b.ResetTimer()
+	for range b.N {
+		vic.StepFrame()
 	}
 }

@@ -140,7 +140,7 @@ func TestVICResetIsIdle(t *testing.T) {
 	v.VC = 123
 	v.Reset()
 
-	if !v.idle {
+	if v.idle == 0 {
 		t.Errorf("idle = false, want true after Reset")
 	}
 	if v.RC != 0 || v.VC != 0 || v.VCBase != 0 || v.VMLI != 0 {
@@ -190,7 +190,7 @@ func TestVICStaysIdleWithoutDEN(t *testing.T) {
 		stepFrame(v)
 	}
 
-	if !v.idle {
+	if v.idle == 0 {
 		t.Errorf("idle = false, want true (DEN was never set, so no Bad Line should ever occur)")
 	}
 	if v.RC != 0 {
@@ -248,7 +248,7 @@ func TestVICBadLineEntersDisplayState(t *testing.T) {
 	for v.rasterLine != 0x32 || v.dot != 0 {
 		v.StepDot()
 	}
-	if !v.idle {
+	if v.idle == 0 {
 		t.Fatalf("idle = false before raster $33, want true")
 	}
 
@@ -259,7 +259,7 @@ func TestVICBadLineEntersDisplayState(t *testing.T) {
 	stepLine() // process raster $33
 	rcSeen := map[uint8]bool{}
 	for range 25 * 8 {
-		if v.idle {
+		if v.idle != 0 {
 			t.Fatalf("idle = true at raster=%d, want false (Bad Lines recur every 8 lines through $30-$F7)", v.rasterLine)
 		}
 		if v.RC > 7 {
@@ -280,7 +280,7 @@ func TestVICBadLineEntersDisplayState(t *testing.T) {
 	for v.rasterLine <= badLineRasterEnd {
 		v.StepDot()
 	}
-	if !v.idle {
+	if v.idle == 0 {
 		t.Errorf("idle = false past raster $F7, want true (no more Bad Lines can occur)")
 	}
 }
