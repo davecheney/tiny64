@@ -10,7 +10,6 @@ import "testing"
 // at real X coordinate $18 (24) on the left and $158 (344) on the right.
 func TestVICBorderPlacement(t *testing.T) {
 	v := &VICII{}
-	const w = DotsPerLine
 	clearFrameBufferRGBA()
 	v.Reset()
 
@@ -35,7 +34,7 @@ func TestVICBorderPlacement(t *testing.T) {
 	// c-accesses have long since populated the video matrix buffer.
 	firstNonBorder := -1
 	lastNonBorder := -1
-	for x := range w {
+	for x := range DotsPerLine {
 		if frameBufferPixelRGBA(uint16(x), 100)[3] == 0 {
 			continue
 		}
@@ -46,7 +45,7 @@ func TestVICBorderPlacement(t *testing.T) {
 			lastNonBorder = x
 		}
 	}
-	t.Logf("row 100: first non-border pixel at displayX=%d, last at displayX=%d (row width=%d)", firstNonBorder, lastNonBorder, w)
+	t.Logf("row 100: first non-border pixel at displayX=%d, last at displayX=%d (row width=%d)", firstNonBorder, lastNonBorder, DotsPerLine)
 
 	// Expected: left border/display transition at leftComp (CSEL=1), right
 	// at rightComp (CSEL=1); dot is the display column directly.
