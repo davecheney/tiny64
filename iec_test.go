@@ -153,15 +153,37 @@ func TestAttachIECDoesNotWriteThroughSnapshots(t *testing.T) {
 	}
 }
 
-// countingPeripheral records how many times the bus clocked it.
+// countingPeripheral records how many times the bus clocked it, and where
+// the beam stood each time.
+//
+// The count alone only says the bus was clocked often enough; it does not
+// say it was clocked at the right moments. A path that clocked every
+// device twice on half the cycles would have the same total as one that
+// clocked it once on each. The fingerprint folds the beam position of
+// every tick, in order, into a single value, so two paths agree on it only
+// if they clocked the bus the same number of times, in the same order, at
+// the same point in the frame.
 type countingPeripheral struct {
-	addr  uint8
-	ticks int
+	addr        uint8
+	ticks       int
+	fingerprint uint64
 }
 
-func (*countingPeripheral) iecCLKOut() bool     { return false }
-func (*countingPeripheral) iecDATAOut() bool    { return false }
-func (c *countingPeripheral) iecTick()          { c.ticks++ }
+func (*countingPeripheral) iecCLKOut() bool  { return false }
+func (*countingPeripheral) iecDATAOut() bool { return false }
+
+func (c *countingPeripheral) iecTick() {
+	c.ticks++
+	// FNV-1a over the beam position, which is order sensitive: the same
+	// set of positions visited in a different order hashes differently.
+	for _, b := range []byte{
+		byte(vic.dot), byte(vic.dot >> 8),
+		byte(vic.rasterLine), byte(vic.rasterLine >> 8),
+	} {
+		c.fingerprint = (c.fingerprint ^ uint64(b)) * 1099511628211
+	}
+}
+
 func (c *countingPeripheral) iecAddress() uint8 { return c.addr }
 
 // Every path that advances a frame has to clock the bus, and there is more
@@ -176,7 +198,50 @@ func (c *countingPeripheral) iecAddress() uint8 { return c.addr }
 // front ends, which are the callers that use StepFrame, silently stop
 // clocking every device attached. A drive would simply never respond, with
 // no failure anywhere to say why.
+//
+// Presence is not enough to pin that down, though, and this test used to
+// check no more than that: a path that clocked the bus once per frame
+// would have satisfied it. What the drive actually depends on is cadence
+// and phase - one tick per bus cycle, taken at the same point in the cycle
+// - because the 1541 counts bus clocks to time its own serial handshake.
+// So each path is held to an exact CyclesPerFrame ticks, and the two are
+// required to agree on a fingerprint of where the beam stood at every one
+// of them. The fingerprints are compared against each other rather than
+// against a constant: the property worth guarding is that the two front
+// ends clock the bus identically, and a hardcoded hash would say nothing
+// about that to whoever has to change it later.
+//
+// What comparing the two paths with each other cannot see is a divergence
+// between build configurations. Both front ends compile the same way under
+// gc, so a change that alters when the dotclocks run only under TinyGo
+// would leave the two fingerprints agreeing with each other while the
+// TinyGo build differed from both. There is nothing to catch here today -
+// every dot of every cycle runs unconditionally, and nothing on the bus or
+// CPU path sits inside dotclock1 through dotclock7 anyway - so this is a
+// limit on the reach of the guard, not a defect it is failing to report.
+// It matters only for a future change that makes the dotclocks conditional
+// on the build and then moves something that must run every cycle into
+// one. Closing it needs a second, build-tagged test taking the same
+// fingerprint under the TinyGo constraints and comparing it with this one.
 func TestBusIsClockedOnEveryFramePath(t *testing.T) {
+	// clockedFrame runs one frame through the given path with a counting
+	// device on the bus, and reports how that path clocked it.
+	clockedFrame := func(t *testing.T, run func(v *VICII)) *countingPeripheral {
+		t.Helper()
+		// newMachine, not saveBus alone: stepping the VIC means
+		// running the CPU, and it will execute whatever a previous
+		// test left in RAM unless the machine is reset first. It also
+		// restores the bus on cleanup, so nothing stays attached.
+		newMachine(t)
+
+		dev := &countingPeripheral{addr: 9, fingerprint: 14695981039346656037}
+		attachIEC(dev)
+		run(&vic)
+		return dev
+	}
+
+	fingerprints := map[string]uint64{}
+	frameOK := true
 	for _, tc := range []struct {
 		name string
 		run  func(v *VICII)
@@ -184,19 +249,24 @@ func TestBusIsClockedOnEveryFramePath(t *testing.T) {
 		{"StepFrame", func(v *VICII) { v.StepFrame() }},
 		{"FinishFrame", func(v *VICII) { v.FinishFrame() }},
 	} {
-		t.Run(tc.name, func(t *testing.T) {
-			// newMachine, not saveBus alone: stepping the VIC means
-			// running the CPU, and it will execute whatever a previous
-			// test left in RAM unless the machine is reset first.
-			newMachine(t)
-
-			dev := &countingPeripheral{addr: 9}
-			attachIEC(dev)
-			tc.run(&vic)
+		ok := t.Run(tc.name, func(t *testing.T) {
+			dev := clockedFrame(t, tc.run)
 
 			if dev.ticks == 0 {
 				t.Fatalf("%s never clocked the bus: every attached device would stop running, and no other test would say so", tc.name)
 			}
+			if dev.ticks != CyclesPerFrame {
+				t.Errorf("%s clocked the bus %d times in a frame, want CyclesPerFrame (%d): the bus runs at the CPU's Phi2, so a device sees exactly one tick per bus cycle", tc.name, dev.ticks, CyclesPerFrame)
+			}
+			fingerprints[tc.name] = dev.fingerprint
 		})
+		frameOK = frameOK && ok
+	}
+
+	if !frameOK {
+		return // the fingerprints of a wrong frame say nothing useful
+	}
+	if a, b := fingerprints["StepFrame"], fingerprints["FinishFrame"]; a != b {
+		t.Errorf("StepFrame clocked the bus at beam positions fingerprinting %#x, FinishFrame at %#x: the two paths agree on how many ticks a frame takes but not on when they happen, so a device timed off the bus behaves differently depending on which front end drives it", a, b)
 	}
 }
