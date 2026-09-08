@@ -20,46 +20,14 @@ const (
 	ScreenWidth  = tiny64.VisibleDotsPerLine
 	ScreenHeight = tiny64.VisibleLines
 	Scale        = 2
-
-	// The buffer is full raster height, not ScreenHeight: that costs a few
-	// unused rows but means a pixel write needs neither an offset nor a
-	// bounds check, since the VIC only emits x < ScreenWidth and y is
-	// always a valid raster line. Draw slices the vblank rows back off.
-	bufferHeight = tiny64.RasterLinesPerFrame
-	vblankBytes  = tiny64.FirstVisibleLine * ScreenWidth * 4
 )
 
-// C64Palette is the C64 PAL color palette (RGBA format).
-var C64Palette = [16][4]byte{
-	{0x00, 0x00, 0x00, 0xff}, // 0: Black
-	{0xff, 0xff, 0xff, 0xff}, // 1: White
-	{0x88, 0x00, 0x00, 0xff}, // 2: Red
-	{0xaa, 0xff, 0xee, 0xff}, // 3: Cyan
-	{0xcc, 0x44, 0xcc, 0xff}, // 4: Purple
-	{0x00, 0xcc, 0x55, 0xff}, // 5: Green
-	{0x00, 0x00, 0xaa, 0xff}, // 6: Blue
-	{0xee, 0xee, 0x77, 0xff}, // 7: Yellow
-	{0xdd, 0x88, 0x55, 0xff}, // 8: Orange
-	{0x66, 0x44, 0x00, 0xff}, // 9: Brown
-	{0xff, 0x77, 0x77, 0xff}, // 10: Light Red
-	{0x33, 0x33, 0x33, 0xff}, // 11: Dark Gray
-	{0x77, 0x77, 0x77, 0xff}, // 12: Medium Gray
-	{0xaa, 0xff, 0x66, 0xff}, // 13: Light Green
-	{0x00, 0x88, 0xff, 0xff}, // 14: Light Blue
-	{0xbb, 0xbb, 0xbb, 0xff}, // 15: Light Gray
-}
-
 type emulator struct {
-	// Raw linear pixel data (4 bytes per pixel: R, G, B, A)
-	frameBuffer []byte
-
 	frames int
 }
 
 func newEmulator() *emulator {
-	return &emulator{
-		frameBuffer: make([]byte, ScreenWidth*bufferHeight*4),
-	}
+	return &emulator{}
 }
 
 // Update is called once per frame.
@@ -76,17 +44,11 @@ func (e *emulator) Update() error {
 	return nil
 }
 
-// writePixelToBuffer maps a C64 color index (0-15) directly into the flat RGBA slice.
-func (e *emulator) writePixelToBuffer(x, y uint16, colorIndex byte) {
-	idx := (int(y)*ScreenWidth + int(x)) * 4
-	copy(e.frameBuffer[idx:idx+4], C64Palette[colorIndex&0xF][:])
-}
-
 // Draw blits the calculated frame buffer array straight onto the GPU texture.
 func (e *emulator) Draw(screen *ebiten.Image) {
 	// Blit the raw CPU bytes directly onto the Ebitengine screen texture.
 	// This uses highly optimized native OS calls under the hood (Metal on macOS).
-	screen.WritePixels(e.frameBuffer[vblankBytes : vblankBytes+ScreenHeight*ScreenWidth*4])
+	screen.WritePixels(tiny64.FrameBufferRGBA())
 }
 
 func (e *emulator) Layout(outsideWidth, outsideHeight int) (int, int) {
@@ -104,8 +66,6 @@ func Run(title string, insertCart func()) error {
 	defer func() {
 		fmt.Println("emulated frames:", emu.frames)
 	}()
-
-	tiny64.WritePixelToBuffer = emu.writePixelToBuffer
 
 	ram := tiny64.Ram()
 	for i := range ram {
