@@ -223,26 +223,38 @@ func TestDriveAttachedBeforeReset(t *testing.T) {
 // byte, holding CLOCK or DATA. What rescues it is ATN, which aborts
 // whatever a device is doing - the same mechanism a real 1541 relies on,
 // since it has no other way of hearing about a reset either.
+//
+// The reset is delayed by a varying number of cycles, for two reasons at
+// once: it lands at a different point in the byte the device is sending,
+// and it lands at a different point in the instruction the CPU is
+// executing. Resetting mid-instruction is its own hazard (see
+// TestResetMidInstructionReboots), and a single fixed offset would only
+// ever exercise whichever combination it happened to hit.
 func TestDriveRecoversFromResetMidTransfer(t *testing.T) {
-	m := newMachine(t)
-	useDrive(t, virtualDriveDisk(t, "HELLO", helloPRG))
+	for _, delay := range []int{0, 1, 2, 3, 5, 7, 11, 13, 17, 19, 23, 29} {
+		t.Run(fmt.Sprintf("delay%d", delay), func(t *testing.T) {
+			m := newMachine(t)
+			useDrive(t, virtualDriveDisk(t, "HELLO", helloPRG))
 
-	m.waitForLine(5, "READY.")
-	m.typeLine(`LOAD"HELLO",8`)
-	m.waitForLine(9, "LOADING")
+			m.waitForLine(5, "READY.")
+			m.typeLine(`LOAD"HELLO",8`)
+			m.waitForLine(9, "LOADING")
+			m.run(delay)
 
-	// Mid-transfer: the device is driving the bus right now.
-	if virtualDrive.state == iecIdle {
-		t.Fatalf("test is not exercising anything: device already idle")
-	}
-	m.reset(5, "READY.")
+			// Mid-transfer: the device is driving the bus right now.
+			if virtualDrive.state == iecIdle {
+				t.Fatalf("test is not exercising anything: device already idle")
+			}
+			m.reset(5, "READY.")
 
-	m.typeLine(`LOAD"HELLO",8`)
-	m.waitForLine(8, "SEARCHING FOR HELLO")
-	m.waitForLine(10, "READY.")
+			m.typeLine(`LOAD"HELLO",8`)
+			m.waitForLine(8, "SEARCHING FOR HELLO")
+			m.waitForLine(10, "READY.")
 
-	end := int(ram[0x2D]) | int(ram[0x2E])<<8
-	if got, want := ram[0x0801:end], helloPRG[2:]; !bytes.Equal(got, want) {
-		t.Errorf("loaded %v after reset, want %v", got, want)
+			end := int(ram[0x2D]) | int(ram[0x2E])<<8
+			if got, want := ram[0x0801:end], helloPRG[2:]; !bytes.Equal(got, want) {
+				t.Errorf("loaded %v after reset, want %v", got, want)
+			}
+		})
 	}
 }
