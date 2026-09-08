@@ -154,6 +154,49 @@ func TestLoadFile(t *testing.T) {
 	}
 }
 
+// TestSaveAndReload writes a program to disk from BASIC and reads it back.
+// SAVE exercises a different path from either of the other write tests:
+// the KERNAL sends the file over the bus, the DOS finds free blocks in the
+// BAM, writes the data and directory sectors itself, and the track only
+// becomes part of the D64 again when it is decoded back out of GCR. The
+// KERNAL prints SAVING whatever happens, so the test is the reload.
+func TestSaveAndReload(t *testing.T) {
+	m := newMachine(t)
+	InsertDisk(testDisk("TEST DISK", "42"))
+	t.Cleanup(func() { InsertDisk(nil) })
+
+	m.waitForLine(5, "READY.")
+	m.typeLine("10 PRINT 1")
+	m.typeLine(`SAVE"NEW",8`)
+	m.run(20_000_000)
+
+	// The directory entry has to be a closed PRG, or the DOS wrote
+	// something it will refuse to read back.
+	DiskImage() // flush the track still under the head
+	dir := diskReadSector(18, 1)
+	if dir == nil {
+		t.Fatal("no directory sector on track 18")
+	}
+	if got, want := dir[2], uint8(0x82); got != want {
+		t.Errorf("directory entry type = $%02X, want $%02X (closed PRG)", got, want)
+	}
+	if got, want := string(dir[5:8]), "NEW"; got != want {
+		t.Errorf("directory entry name = %q, want %q", got, want)
+	}
+
+	// Wipe the program out of memory, so a successful LIST can only have
+	// come off the disk.
+	m.typeLine("NEW")
+	m.typeLine(`LOAD"NEW",8`)
+	m.run(3_000_000)
+	m.typeLine("LIST")
+	m.run(400_000)
+
+	if got, want := screenLine(21), "10 PRINT 1"; got != want {
+		t.Errorf("reloaded program listed as %q, want %q", got, want)
+	}
+}
+
 // TestDiskInsertedBeforeReset covers the order the front ends use: both
 // cmd/c64 and cmd/c64cli read the image named by -disk and insert it
 // before resetting the machine, where every other test here resets first
