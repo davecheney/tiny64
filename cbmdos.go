@@ -379,7 +379,10 @@ func (d *cbmDOS) directory(pattern string) []byte {
 		text = append(text, '"')
 		text = append(text, e.nameString()...)
 		text = append(text, '"')
-		for pad := len(e.nameString()); pad < 17; pad++ {
+		// The name field is sixteen columns wide. The seventeenth is the
+		// flag appended below, which is a space for a properly closed
+		// file and an asterisk for one the drive never closed.
+		for pad := len(e.nameString()); pad < 16; pad++ {
 			text = append(text, ' ')
 		}
 		if !e.closed() {

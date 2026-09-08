@@ -3,6 +3,7 @@ package tiny64
 import (
 	"bytes"
 	"fmt"
+	"strings"
 	"testing"
 )
 
@@ -256,5 +257,78 @@ func TestDriveRecoversFromResetMidTransfer(t *testing.T) {
 				t.Errorf("loaded %v after reset, want %v", got, want)
 			}
 		})
+	}
+}
+
+// TestDrivesAgreeOnDirectoryText compares the directory the generic drive
+// synthesises against the one the 1541 produces, on the same image, in
+// the same machine, byte for byte on the screen.
+//
+// The 1541 is the oracle here, and not merely because it came first: the
+// text it puts on the screen is formatted by the DOS ROM itself, so it is
+// the real drive's output by construction. The generic drive
+// reimplements that formatting in Go, so it is the side that can drift.
+// This test is the cheapest possible check on the whole DOS layer,
+// because anything the ROM does that the Go does not is a screen diff.
+//
+// The names are deliberately sixteen characters, the width of the name
+// field, because that is the length that pins the column after it: the
+// padding loop runs zero times and only the closed-file flag is left, so
+// an off-by-one in the padding cannot hide behind a short name.
+func TestDrivesAgreeOnDirectoryText(t *testing.T) {
+	saveMachine(t)
+	disk := FormatDisk("COMPARE DISK", "01")
+	diskImage = disk
+	for _, name := range []string{
+		"04.LAST NIGHT 30", // exactly sixteen, the pinning case
+		"A",                // one, the longest padding run
+		"MIDDLING NAME",
+	} {
+		if code := diskWriteFile(name, ftypePRG, helloPRG); code != 0 {
+			t.Fatalf("writing %q: DOS error %d", name, code)
+		}
+	}
+
+	// The directory is listed twice over: once by each drive, into a
+	// fresh machine, so neither run can see what the other left behind.
+	read := func(t *testing.T, virtual bool) []string {
+		m := newMachine(t)
+		InsertDisk(disk)
+		if virtual {
+			AttachDrive(false)
+			AttachVirtualDrive(8)
+		}
+		m.waitForLine(5, "READY.")
+		m.typeLine(`LOAD"$",8`)
+		m.waitForLine(10, "READY.")
+		m.typeLine("LIST")
+
+		// LIST prints the directory a line at a time, so the screen is
+		// only complete once BASIC is back at the prompt. Reading before
+		// that catches a half-drawn listing, which compares as a
+		// difference between the drives when it is really a difference
+		// in how long each took to answer.
+		m.waitForLine(18, "READY.")
+
+		var out []string
+		for row := 13; row <= 17; row++ {
+			out = append(out, screenLine(row))
+		}
+		return out
+	}
+
+	var real, virt []string
+	t.Run("1541", func(t *testing.T) { real = read(t, false) })
+	t.Run("virtual", func(t *testing.T) { virt = read(t, true) })
+
+	for i := range real {
+		if real[i] != virt[i] {
+			t.Errorf("directory line %d differs:\n1541    %q\nvirtual %q", i, real[i], virt[i])
+		}
+	}
+	// Two blank screens compare equal, so the oracle has to be shown to
+	// have said something before its agreement means anything.
+	if len(real) == 0 || !strings.Contains(real[0], "COMPARE DISK") {
+		t.Fatalf("the 1541 listed no directory header, so the comparison proved nothing: %q", real)
 	}
 }
