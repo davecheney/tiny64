@@ -328,3 +328,71 @@ func testFileContents(name string) []byte {
 	}
 	return body
 }
+
+// TestLoadFileWithSyncLikeData loads a file whose GCR image contains a
+// byte of $FF that is not a SYNC mark.
+//
+// GCR's longest run of one bits is eight - $5 encodes to 01111 and $E to
+// 11110 - so data can produce a whole $FF byte whenever such a run lands
+// on a byte boundary. A SYNC is ten or more ones, which data cannot make.
+// A drive that tests for $FF a byte at a time rather than counting bits
+// mistakes those bytes for SYNC and withholds them from the DOS, which
+// loses one byte out of the block and fails its checksum. The symptom is
+// a file that stops part way through and a LOAD that then hangs forever,
+// because the drive gives up while the C64 is still waiting for bytes.
+//
+// The contents are chosen to put $5 and $E next to each other over and
+// over: an alternating 05 E0 puts the low nibble of an $05 immediately
+// before the high nibble of an $E0, which is 01111 followed by 11110.
+func TestLoadFileWithSyncLikeData(t *testing.T) {
+	body := []byte{0x00, 0xC0} // load address $C000
+	for i := len(body); i < 254; i++ {
+		if i%2 == 0 {
+			body = append(body, 0x05)
+		} else {
+			body = append(body, 0xE0)
+		}
+	}
+
+	img := testDisk("TEST DISK", "42", "SYNCBUG")
+	block := make([]byte, 256)
+	block[0], block[1] = 0, uint8(len(body)+1)
+	copy(block[2:], body)
+	copy(img[trackOffset(17):], block)
+
+	m := newMachine(t)
+	InsertDisk(img)
+	t.Cleanup(func() { InsertDisk(nil) })
+
+	// Without a lone $FF in the track there is nothing here to get wrong,
+	// so check the contents really do provoke it before trusting the load.
+	track := diskEncodeTrack(17)
+	lone := 0
+	for i, b := range track {
+		if b != 0xFF {
+			continue
+		}
+		if track[(i+len(track)-1)%len(track)] != 0xFF && track[(i+1)%len(track)] != 0xFF {
+			lone++
+		}
+	}
+	if lone == 0 {
+		t.Fatal("no isolated $FF in the encoded track, so this test cannot fail")
+	}
+
+	m.waitForLine(5, "READY.")
+	m.typeLine(`LOAD"SYNCBUG",8,1`)
+	m.run(8_000_000)
+
+	if got := screenLine(10); got != "READY." {
+		t.Fatalf("screen row 10 = %q, want %q - the load did not finish", got, "READY.")
+	}
+	addr, want := 0xC000, body[2:]
+	if got := ram[addr : addr+len(want)]; !bytes.Equal(got, want) {
+		for i := range want {
+			if got[i] != want[i] {
+				t.Fatalf("byte %d of %d differs: RAM $%04X = %02X, disk = %02X", i, len(want), addr+i, got[i], want[i])
+			}
+		}
+	}
+}
