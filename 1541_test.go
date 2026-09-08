@@ -2,6 +2,7 @@ package tiny64
 
 import (
 	"bytes"
+	"fmt"
 	"testing"
 )
 
@@ -111,6 +112,48 @@ func TestLoadDirectory(t *testing.T) {
 	}
 }
 
+// TestLoadFile loads an actual program file rather than the directory,
+// and checks every byte of it arrives. A bit-banged transfer that drops a
+// bit still looks like it worked - the KERNAL prints LOADING either way -
+// so the only real test is comparing what landed in RAM against what is
+// on the disk.
+//
+// The load is repeated at a range of raster phases because the C64's
+// receive loop is level-triggered and a Bad Line can stall it for the
+// better part of a bit time; a transfer that only works at one phase
+// works by luck.
+func TestLoadFile(t *testing.T) {
+	for _, skew := range []int{0, 13, 34, 55, 89, 144} {
+		t.Run(fmt.Sprintf("skew%d", skew), func(t *testing.T) {
+			m := newMachine(t)
+			InsertDisk(testDisk("TEST DISK", "42", "HELLO"))
+			t.Cleanup(func() { InsertDisk(nil) })
+
+			m.waitForLine(5, "READY.")
+			m.run(skew)
+			m.typeLine(`LOAD"HELLO",8,1`)
+			m.run(4_000_000)
+
+			if got := screenLine(9); got != "LOADING" {
+				t.Fatalf("screen row 9 = %q, want %q", got, "LOADING")
+			}
+
+			// A ,8,1 load puts the file at the address in its first two
+			// bytes rather than at the start of BASIC.
+			want := testFileContents("HELLO")
+			addr := int(want[0]) | int(want[1])<<8
+			body := want[2:]
+			if got := ram[addr : addr+len(body)]; !bytes.Equal(got, body) {
+				for i := range body {
+					if got[i] != body[i] {
+						t.Fatalf("byte %d of %d differs: RAM $%04X = %02X, disk = %02X", i, len(body), addr+i, got[i], body[i])
+					}
+				}
+			}
+		})
+	}
+}
+
 // TestFormatDisk lets the drive's own DOS format a blank disk, which is
 // the only way to be sure the write path really works: the DOS lays down
 // every sector header and data block itself, reads them back to verify,
@@ -155,6 +198,8 @@ func TestFormatDisk(t *testing.T) {
 // a closed PRG entry for each file, so tests that only want to read a
 // directory do not have to spend ninety seconds of drive time formatting
 // one first. TestFormatDisk covers the drive doing it for real.
+//
+// Each file gets one data block on track 17, holding testFileContents.
 func testDisk(name, id string, files ...string) []byte {
 	img := NewDisk()
 
@@ -189,9 +234,27 @@ func testDisk(name, id string, files ...string) []byte {
 			dir[e+5+j] = 0xA0
 		}
 		copy(dir[e+5:e+21], f)
-		dir[e+30], dir[e+31] = 1, 0 // one block long
+		dir[e+3], dir[e+4] = 17, uint8(i) // its one data block
+		dir[e+30], dir[e+31] = 1, 0       // one block long
+
+		block := make([]byte, 256)
+		body := testFileContents(f)
+		block[0], block[1] = 0, uint8(len(body)+1) // last block, and how much of it is used
+		copy(block[2:], body)
+		copy(img[trackOffset(17)+i*256:], block)
 	}
 	copy(img[trackOffset(18)+256:], dir)
 
 	return img
+}
+
+// testFileContents returns the bytes testDisk stores for a file: a PRG
+// load address of $C000 followed by a run of values derived from the name,
+// so a test can tell one file's contents from another's.
+func testFileContents(name string) []byte {
+	body := []byte{0x00, 0xC0} // load address $C000, little-endian
+	for i := range 64 {
+		body = append(body, byte(i)^name[i%len(name)])
+	}
+	return body
 }
