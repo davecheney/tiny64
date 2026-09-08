@@ -557,24 +557,22 @@ func (v *VICII) dotclock7() {
 		// main border flip flop is set."
 		v.mainBorder = true
 	}
-	if v.dot == leftComp38 {
-		if v.control2&csel == 0 {
-			// "4./5. If the X coordinate reaches the left comparison value
-			// and the Y coordinate reaches the bottom/top one, set/reset
-			// (if DEN) the vertical border flip flop."
-			rsel := (v.control1 >> 3) & 1
-			if v.rasterLine == bottomComp[rsel] {
-				v.verticalBorder = true
-			}
-			if v.rasterLine == topComp[rsel] && v.control1&0x10 != 0 {
-				v.verticalBorder = false
-			}
-			// "6. If the X coordinate reaches the left comparison value and
-			// the vertical border flip flop is not set, the main flip flop
-			// is reset."
-			if !v.verticalBorder {
-				v.mainBorder = false
-			}
+	if v.dot == leftComp38 && v.control2&csel == 0 {
+		// "4./5. If the X coordinate reaches the left comparison value
+		// and the Y coordinate reaches the bottom/top one, set/reset
+		// (if DEN) the vertical border flip flop."
+		rsel := (v.control1 >> 3) & 1
+		if v.rasterLine == bottomComp[rsel] {
+			v.verticalBorder = true
+		}
+		if v.rasterLine == topComp[rsel] && v.control1&0x10 != 0 {
+			v.verticalBorder = false
+		}
+		// "6. If the X coordinate reaches the left comparison value and
+		// the vertical border flip flop is not set, the main flip flop
+		// is reset."
+		if !v.verticalBorder {
+			v.mainBorder = false
 		}
 	}
 
@@ -622,18 +620,16 @@ func (v *VICII) dotclock0() {
 	if v.dot == rightComp40 && v.control2&csel != 0 {
 		v.mainBorder = true
 	}
-	if v.dot == leftComp40 {
-		if v.control2&csel != 0 {
-			rsel := (v.control1 >> 3) & 1
-			if v.rasterLine == bottomComp[rsel] {
-				v.verticalBorder = true
-			}
-			if v.rasterLine == topComp[rsel] && v.control1&0x10 != 0 {
-				v.verticalBorder = false
-			}
-			if !v.verticalBorder {
-				v.mainBorder = false
-			}
+	if v.dot == leftComp40 && v.control2&csel != 0 {
+		rsel := (v.control1 >> 3) & 1
+		if v.rasterLine == bottomComp[rsel] {
+			v.verticalBorder = true
+		}
+		if v.rasterLine == topComp[rsel] && v.control1&0x10 != 0 {
+			v.verticalBorder = false
+		}
+		if !v.verticalBorder {
+			v.mainBorder = false
 		}
 	}
 
