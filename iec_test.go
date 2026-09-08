@@ -215,14 +215,28 @@ func (c *countingPeripheral) iecAddress() uint8 { return c.addr }
 // between build configurations. Both front ends compile the same way under
 // gc, so a change that alters when the dotclocks run only under TinyGo
 // would leave the two fingerprints agreeing with each other while the
-// TinyGo build differed from both. There is nothing to catch here today -
-// every dot of every cycle runs unconditionally, and nothing on the bus or
-// CPU path sits inside dotclock1 through dotclock7 anyway - so this is a
-// limit on the reach of the guard, not a defect it is failing to report.
-// It matters only for a future change that makes the dotclocks conditional
-// on the build and then moves something that must run every cycle into
-// one. Closing it needs a second, build-tagged test taking the same
-// fingerprint under the TinyGo constraints and comparing it with this one.
+// TinyGo build differed from both.
+//
+// That reaches less far than it sounds, though, and it is worth being
+// exact about where the edge is, because believing this guard is blinder
+// than it is invites someone to treat a real failure as out of scope.
+// Work that must run every cycle escaping the every-cycle path is caught
+// here, even when the escape is only reachable on another build. Should
+// the dotclocks ever become conditional - skipped while the beam is
+// outside the rendering window, say - and something on the bus or CPU
+// path be moved inside them, the count assertion above fails under gc on
+// the spot: a frame's ticks drop to the number of cycles that survived
+// the condition, and the fingerprints are never reached. That was
+// measured against such a change rather than assumed.
+//
+// What survives is narrower and differently shaped: a divergence that
+// depends on the two builds' windows differing, rather than on anything
+// being skipped. Work correct across one build's bounds but not the
+// other's, or chip state gated at a crop boundary that only one build
+// has, changes no tick count and moves no tick - so a frame looks
+// identical from the bus. Closing that needs a second, build-tagged test
+// taking the same fingerprint under the TinyGo constraints and comparing
+// it with this one.
 func TestBusIsClockedOnEveryFramePath(t *testing.T) {
 	// clockedFrame runs one frame through the given path with a counting
 	// device on the bus, and reports how that path clocked it.
