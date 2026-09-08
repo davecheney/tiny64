@@ -154,6 +154,33 @@ func TestLoadFile(t *testing.T) {
 	}
 }
 
+// TestDiskInsertedBeforeReset covers the order the front ends use: both
+// cmd/c64 and cmd/c64cli read the image named by -disk and insert it
+// before resetting the machine, where every other test here resets first
+// and inserts afterwards. Inserting is what plugs the drive in, so the
+// two orders put the reset and the attach the other way round.
+func TestDiskInsertedBeforeReset(t *testing.T) {
+	saveMachine(t)
+	for i := range ram {
+		ram[i] = 0xAA // stand-in for the power-on noise the front ends write
+	}
+
+	InsertDisk(testDisk("TEST DISK", "42", "HELLO"))
+	t.Cleanup(func() { InsertDisk(nil) })
+	Reset()
+
+	m := &machine{t: t}
+	m.waitForLine(5, "READY.")
+	m.typeLine(`LOAD"$",8`)
+	m.run(3_000_000)
+	m.typeLine("LIST")
+	m.run(400_000)
+
+	if got, want := screenLine(13), `0 "TEST DISK       " 42 2A`; got != want {
+		t.Errorf("screen row 13 = %q, want %q", got, want)
+	}
+}
+
 // TestFormatDisk lets the drive's own DOS format a blank disk, which is
 // the only way to be sure the write path really works: the DOS lays down
 // every sector header and data block itself, reads them back to verify,

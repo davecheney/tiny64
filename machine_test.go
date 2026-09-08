@@ -140,6 +140,22 @@ func keyFor(r rune) (shift bool, key Key, ok bool) {
 		return false, KeyColon, true
 	case ';':
 		return false, KeySemicolon, true
+	case '+':
+		return false, KeyPlus, true
+	case '-':
+		return false, KeyMinus, true
+	case '.':
+		return false, KeyPeriod, true
+	case '/':
+		return false, KeySlash, true
+	case '*':
+		return false, KeyAsterisk, true
+	case '=':
+		return false, KeyEquals, true
+	case '@':
+		return false, KeyAt, true
+	case '#':
+		return true, Key3, true
 	case '$':
 		return true, Key4, true
 	case '"':
