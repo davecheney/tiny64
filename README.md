@@ -22,9 +22,18 @@ tiny64 emulates:
   bus between the two machines - so `LOAD"$",8` reads a real D64, and the
   DOS can format a blank one for itself
 
+There is also a second, much smaller drive that speaks the same wire
+protocol without modelling any of the 1541's internals: `AttachVirtualDrive`
+puts a device on the bus that handles the serial handshake cycle by cycle
+but implements CBM DOS in Go against a D64 image. It has no drive CPU to
+step and no GCR to decode, so it costs almost nothing to run, and the
+unmodified KERNAL cannot tell the difference - but it cannot run anything
+that talks to the drive's own processor.
+
 A drive is only plugged in when something asks for one, with
 `AttachDrive`, or by inserting a disk: `cmd/c64` and `cmd/c64cli` both
-take a `-disk FILE` flag naming a 35-track D64 image.
+take a `-disk FILE` flag naming a 35-track D64 image. Only one drive can
+answer for a given address, so attaching one replaces the other.
 
 It is deliberately small: the core package has no dependency on any
 graphics library, so it can run headless (for testing) or under
@@ -35,7 +44,7 @@ Raspberry Pi Pico.
 ## Layout
 
 - the repository root is the core emulator package (CPU, VIC-II, CIA,
-  1541, bus/PLA)
+  1541, the generic IEC drive, bus/PLA)
 - `rom/` embeds the ROM images the emulator needs to boot
 - `cmd/internal/desktop/` is the shared Ebitengine frontend used by the desktop
   commands
