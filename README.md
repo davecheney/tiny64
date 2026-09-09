@@ -59,7 +59,7 @@ Raspberry Pi Pico.
   commands
 - `cmd/c64` is the desktop C64 emulator
 - `cmd/c64cli` runs the emulator headless, for testing and debugging
-- `cmd/tiny64` is the TinyGo build target for embedded hardware
+- `cmd/gopher-badge64` is the TinyGo build target for embedded hardware
 - `cmd/drivec` is a standalone 1541 drive/IEC bus test harness
 - `cmd/deadtest` and `cmd/destestmax` run C64 diagnostic cartridges
 
