@@ -91,6 +91,25 @@ func TestDriveLoadsFileThroughKERNAL(t *testing.T) {
 	}
 }
 
+// TestDriveLoadsCompactPRGThroughKERNAL covers the low-RAM generic-drive
+// mode used by TinyGo targets. It must use the same IEC and KERNAL load path
+// as the D64-backed drive despite holding only the requested program.
+func TestDriveLoadsCompactPRGThroughKERNAL(t *testing.T) {
+	m := newMachine(t)
+	AttachVirtualPRG(8, "HELLO", helloPRG)
+
+	m.waitForLine(5, "READY.")
+	m.typeLine(`LOAD"HELLO",8`)
+	m.waitForLine(8, "SEARCHING FOR HELLO")
+	m.waitForLine(9, "LOADING")
+	m.waitForLine(10, "READY.")
+
+	end := int(ram[0x2D]) | int(ram[0x2E])<<8
+	if got, want := ram[0x0801:end], helloPRG[2:]; !bytes.Equal(got, want) {
+		t.Errorf("loaded %v, want %v", got, want)
+	}
+}
+
 // TestDriveReportsFileNotFound checks the failure path, which is not an
 // error code on the wire at all: the drive simply lets go of both lines
 // after the turnaround and lets the KERNAL time out.

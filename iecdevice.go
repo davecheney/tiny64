@@ -160,6 +160,23 @@ func AttachVirtualDrive(address uint8) {
 	attachIEC(&virtualDrive)
 }
 
+// AttachVirtualPRG puts a read-only generic drive on the IEC bus at address
+// serving name as a PRG. It avoids the 175KB D64 allocation needed by
+// AttachVirtualDrive, making it suitable for TinyGo targets with tight RAM.
+//
+// data must include the PRG's two-byte load address and must not be modified
+// while the drive is attached.
+func AttachVirtualPRG(address uint8, name string, data []byte) {
+	virtualDrive = iecDevice{address: address}
+	virtualDrive.dos.reset()
+	virtualDrive.dos.files = []virtualFile{{
+		name: name,
+		typ:  ftypePRG,
+		data: data,
+	}}
+	attachIEC(&virtualDrive)
+}
+
 // DetachVirtualDrive removes the generic drive from the IEC bus.
 func DetachVirtualDrive() {
 	detachIEC(&virtualDrive)
