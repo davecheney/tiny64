@@ -50,9 +50,13 @@ const (
 	demoWaitForPrompt demoStage = iota
 	demoLoading
 	demoWaitForProgram
+	demoListing
+	demoWaitAfterList
 	demoRunning
 	demoDone
 )
+
+const listingCycles = 1_000_000
 
 // demoLoader types LOAD and RUN with human-length keyboard transitions. It
 // gates RUN on the actual tokenized program in RAM instead of a wall-clock
@@ -129,6 +133,22 @@ func (d *demoLoader) tick() {
 		}
 	case demoWaitForProgram:
 		if mazeLoaded() && basicPrompt() {
+			d.start([]keyStroke{
+				{key: tiny64.KeyL},
+				{key: tiny64.KeyI},
+				{key: tiny64.KeyS},
+				{key: tiny64.KeyT},
+				{key: tiny64.KeyReturn},
+			})
+			d.stage = demoListing
+		}
+	case demoListing:
+		if d.typeKeys() {
+			d.deadline = tiny64.GetCPU().Clock + listingCycles
+			d.stage = demoWaitAfterList
+		}
+	case demoWaitAfterList:
+		if tiny64.GetCPU().Clock >= d.deadline {
 			d.start(runMaze)
 			d.stage = demoRunning
 		}

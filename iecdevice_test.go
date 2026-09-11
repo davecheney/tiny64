@@ -129,6 +129,50 @@ func TestDriveRunsCompactPRGThroughKERNAL(t *testing.T) {
 	m.waitForLine(12, "X")
 }
 
+func TestDriveListsAndRunsCompactPRGThroughKERNAL(t *testing.T) {
+	m := newMachine(t)
+	prg := []byte{
+		0x01, 0x08, // load address $0801
+		0x0B, 0x08, // address of the end-of-program marker
+		0x0A, 0x00, // line 10
+		0x99, ' ', '"', 'X', '"',
+		0x00,       // end of line 10
+		0x00, 0x00, // end of program
+	}
+	AttachVirtualPRG(8, "RUNME", prg)
+
+	m.waitForLine(5, "READY.")
+	m.typeLine(`LOAD"RUNME",8`)
+	m.waitForLine(10, "READY.")
+	m.typeLine("LIST")
+	m.waitForLine(13, `10 PRINT "X"`)
+	m.waitForLine(14, "READY.")
+	m.typeLine("RUN")
+	m.waitForLine(16, "X")
+}
+
+func TestDriveRunsMazePRGThroughKERNAL(t *testing.T) {
+	m := newMachine(t)
+	prg := []byte{
+		0x01, 0x08, // load address $0801
+		0x1D, 0x08, // address of the end-of-program marker
+		0x0A, 0x00, // line 10
+		0x99, ' ', 0xC7, '(', '2', '0', '5', '.', '5', '+', 0xC8, '(', '1', ')', ')', ';', ' ', ':', ' ', 0x89, ' ', '1', '0',
+		0x00,       // end of line 10
+		0x00, 0x00, // end of program
+	}
+	AttachVirtualPRG(8, "MAZE", prg)
+
+	m.waitForLine(5, "READY.")
+	m.typeLine(`LOAD"MAZE",8`)
+	m.waitForLine(10, "READY.")
+	m.typeLine("RUN")
+	m.run(1_000_000)
+	if screenHas("?SYNTAX ERROR IN 10") {
+		t.Fatal("maze program reported a syntax error")
+	}
+}
+
 // TestDriveReportsFileNotFound checks the failure path, which is not an
 // error code on the wire at all: the drive simply lets go of both lines
 // after the turnaround and lets the KERNAL time out.
