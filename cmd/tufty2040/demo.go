@@ -17,16 +17,16 @@ type keyStroke struct {
 
 // mazePRG is the classic one-line Commodore 64 maze:
 //
-//	10 PRINT CHR$(205.5+RND(1)); : GOTO 10
+//	10 PRINT CHR$(205.5+RND(1));:GOTO 10
 //
 // It prints alternating diagonal glyphs indefinitely. The program is kept as
 // tokenized BASIC so it is loaded through the KERNAL rather than injected
 // directly into the C64's memory.
 var mazePRG = []byte{
 	0x01, 0x08, // load address $0801
-	0x1D, 0x08, // address of the end-of-program marker
+	0x1B, 0x08, // address of the end-of-program marker
 	0x0A, 0x00, // line 10
-	0x99, ' ', 0xC7, '(', '2', '0', '5', '.', '5', '+', 0xC8, '(', '1', ')', ')', ';', ' ', ':', ' ', 0x89, ' ', '1', '0',
+	0x99, ' ', 0xC7, '(', '2', '0', '5', '.', '5', 0xAA, 0xBB, '(', '1', ')', ')', ';', ':', 0x89, ' ', '1', '0',
 	0x00,       // end of line 10
 	0x00, 0x00, // end of program
 }
@@ -36,7 +36,7 @@ var loadMaze = []keyStroke{
 	{key: tiny64.Key2, shift: true},
 	{key: tiny64.KeyM}, {key: tiny64.KeyA}, {key: tiny64.KeyZ}, {key: tiny64.KeyE},
 	{key: tiny64.Key2, shift: true},
-	{key: tiny64.KeyComma}, {key: tiny64.Key8}, {key: tiny64.KeyComma}, {key: tiny64.Key1},
+	{key: tiny64.KeyComma}, {key: tiny64.Key8},
 	{key: tiny64.KeyReturn},
 }
 
