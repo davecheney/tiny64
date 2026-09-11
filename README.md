@@ -59,9 +59,21 @@ Raspberry Pi Pico.
   commands
 - `cmd/c64` is the desktop C64 emulator
 - `cmd/c64cli` runs the emulator headless, for testing and debugging
-- `cmd/gopher-badge64` is the TinyGo build target for embedded hardware
+- `cmd/gopher-badge64` is the TinyGo build target for the Gopher Badge
+- `cmd/tufty2040` is the TinyGo build target for the Pimoroni Tufty 2040,
+  using its parallel ST7789 display through PIO/DMA
 - `cmd/drivec` is a standalone 1541 drive/IEC bus test harness
 - `cmd/deadtest` and `cmd/destestmax` run C64 diagnostic cartridges
+
+Tufty 2040 builds should leave TinyGo's default scheduler and optimization
+level in place unless re-measuring on hardware; scheduler or `-opt` overrides
+can break or regress the build.
+
+    tinygo build -target=tufty2040 -o out.uf2 ./cmd/tufty2040
+
+The Tufty target starts the PIO/DMA panel transfer asynchronously and waits for
+it immediately before queuing the next transfer, so most of the display write
+overlaps the following emulated frame on the same core.
 
 ## Status
 
