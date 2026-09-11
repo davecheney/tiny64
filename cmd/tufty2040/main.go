@@ -56,7 +56,56 @@ func configureDisplay() (*parallelST7789, error) {
 	return display, nil
 }
 
+func configureButtons() {
+	for _, pin := range []machine.Pin{
+		machine.BUTTON_A,
+		machine.BUTTON_B,
+		machine.BUTTON_C,
+		machine.BUTTON_UP,
+		machine.BUTTON_DOWN,
+	} {
+		pin.Configure(machine.PinConfig{Mode: machine.PinInputPulldown})
+	}
+}
+
+type buttonState struct {
+	a, b, c bool
+}
+
+func (s *buttonState) poll(demo *demoLoader) {
+	a := machine.BUTTON_A.Get()
+	if a && !s.a {
+		// Button A edge: Cold Reset / Restart entire demo
+		ram := tiny64.Ram()
+		for i := range ram {
+			ram[i] = byte(rand.Uint())
+		}
+		tiny64.Keys().ReleaseAll()
+		tiny64.Reset()
+		demo.reset()
+	}
+	s.a = a
+
+	b := machine.BUTTON_B.Get()
+	if b && !s.b {
+		// Button B edge: RUN/STOP + RESTORE (C64 Warm Reset)
+		tiny64.Keys().Press(tiny64.KeyRunStop)
+		tiny64.Keys().Restore()
+	} else if !b && s.b {
+		tiny64.Keys().Release(tiny64.KeyRunStop)
+	}
+	s.b = b
+
+	c := machine.BUTTON_C.Get()
+	if c && !s.c {
+		// Button C edge: RESTORE alone (NMI pulse)
+		tiny64.Keys().Restore()
+	}
+	s.c = c
+}
+
 func main() {
+	configureButtons()
 	display, err := configureDisplay()
 	if err != nil {
 		panic(err.Error())
@@ -71,8 +120,10 @@ func main() {
 	tiny64.Reset()
 
 	var demo demoLoader
+	var buttons buttonState
 	var emulateTime, waitTime, startDrawTime time.Duration
 	for frame := 0; ; frame++ {
+		buttons.poll(&demo)
 		if frame%50 == 0 && frame > 0 {
 			fmt.Printf("frame %d: emulate=%v wait=%v start=%v (avg over 50 frames)\n",
 				frame, emulateTime/50, waitTime/50, startDrawTime/50)
