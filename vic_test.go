@@ -57,22 +57,22 @@ func TestVICStepFrameMatchesStepDot(t *testing.T) {
 		wantVIC, wantCPU, wantPixels := run(startVIC, func() {
 			switch phase {
 			case 0:
-				vic.dotclock1()
+				vic.dotclock0()
 			case 1:
-				vic.dotclock2()
+				vic.dotclock1()
 			case 2:
-				vic.dotclock3()
+				vic.dotclock2()
 			case 3:
-				vic.dotclock4()
+				vic.dotclock3()
 				vic.phi0low()
 			case 4:
-				vic.dotclock5()
+				vic.dotclock4()
 			case 5:
-				vic.dotclock6()
+				vic.dotclock5()
 			case 6:
-				vic.dotclock7()
+				vic.dotclock6()
 			case 7:
-				vic.dotclock0()
+				vic.dotclock7()
 				vic.phi0high()
 				cpu.TickPhi2()
 			}
@@ -81,7 +81,7 @@ func TestVICStepFrameMatchesStepDot(t *testing.T) {
 		if !reflect.DeepEqual(gotVIC, wantVIC) ||
 			!reflect.DeepEqual(gotCPU, wantCPU) ||
 			!reflect.DeepEqual(gotPixels, wantPixels) {
-			t.Errorf("StepDot from phase %d did not match dotclock%d and its bus action", phase, (phase+1)&7)
+			t.Errorf("StepDot from phase %d did not match dotclock%d and its bus action", phase, phase)
 		}
 	}
 
@@ -201,7 +201,7 @@ func TestVICFinishFrameAdvancesToNextFrameBoundary(t *testing.T) {
 
 	v.dot = 123
 	v.rasterLine = 45
-	// Moving the beam directly bypasses dotclock0's line wrap, which is
+	// Moving the beam directly bypasses dotclock7's line wrap, which is
 	// what normally keeps the cached visibility flags in step with rasterLine.
 	v.syncLineVisibility()
 	v.FinishFrame()
