@@ -55,6 +55,24 @@ func TestVICStepFrameMatchesStepDot(t *testing.T) {
 
 		gotVIC, gotCPU, gotPixels := run(startVIC, func() { vic.StepDot() })
 		wantVIC, wantCPU, wantPixels := run(startVIC, func() {
+			// dotclock1 through dotclock7 no longer test visibility
+			// themselves - their caller owns it - so a bare call is not
+			// the equivalent operation. Apply the caller's half of the
+			// contract here too, exactly as StepDot and stepCycle do.
+			// dotclock0 is exempt: it always runs, because its line wrap
+			// is what changes the answer. dotclock7 runs on the weaker
+			// condition, because its border comparators are chip state.
+			paint := vic.dotInWindow()
+			if phase == 6 {
+				paint = vic.lineVisible && vic.dotInRenderDots()
+			}
+			if !paint && phase != 7 {
+				vic.dot++
+				if phase == 3 {
+					vic.phi0low()
+				}
+				return
+			}
 			switch phase {
 			case 0:
 				vic.dotclock1()
