@@ -23,21 +23,35 @@ const (
 	// change emulated behaviour, only which border pixels a frontend is
 	// handed.
 	//
-	// So it is chosen for convenience. A bus cycle starts at a dot
-	// divisible by DotsPerCycle and paints the next eight, the last of
-	// them by dotclock0, which stepCycle always calls. Making this
-	// congruent to 1 modulo DotsPerCycle means the seven dots dotclock1
-	// through dotclock7 paint are always either all inside the window or
-	// all outside it, never split, which is what lets stepCycle test
-	// horizontal blanking once per cycle instead of once per dot.
+	// So the right edge is a policy choice, not a hardware constant.
+	// There is no dot at which the chip stops producing colour and no
+	// register that marks one: it is simply where we decide to stop
+	// painting and let stepCycle short-circuit the dotclocks. Only two
+	// things constrain it.
 	//
-	// The VIC Article does not settle on one figure anyway: rebasing its
+	// It must be greater than rightComp40 (368), the right edge of the
+	// 40-column display window, or actual display content would be
+	// clipped. And it must be cycle-aligned - congruent to 0 or 1 modulo
+	// DotsPerCycle - so that no group of seven dots straddles the edge,
+	// since a bus cycle starts at a dot divisible by DotsPerCycle and
+	// dotclock1 through dotclock7 paint the next seven contiguously while
+	// dotclock0, which always runs and tests itself, paints the eighth.
+	// That is what lets stepCycle ask the question once per cycle instead
+	// of once per dot.
+	//
+	// Every dot beyond 367 is flat borderColor, since sprites are
+	// unimplemented and nothing else can paint there, so all legal choices
+	// show an identical picture differing only in how much border
+	// surrounds it. 401 keeps 33 dots of right border against the 48 dots
+	// of left border that dot 0 implies, so the picture is not
+	// horizontally centred in the window - a frontend's problem to solve
+	// if it cares.
+	//
+	// The VIC Article is not a useful authority here. Rebasing its
 	// section 3.9 table, whose X=480 is our dot 0 and whose last visible
-	// X=380 is our dot 404, suggests 405, while its own summary column
-	// says 403. 401 sits inside that range, and the dots it gives up are
-	// right border - the 40-column window ends at rightComp40 (368) and
-	// sprites are unimplemented, so only flat borderColor can appear
-	// beyond it.
+	// X=380 is our dot 404, gives 405, while its own summary column says
+	// 403 - which is what one expects of a figure that was never a
+	// boundary in the first place.
 	VisibleDotsPerLine = 401
 
 	// VisibleDotsPerLine must stay congruent to 1 modulo DotsPerCycle, or
