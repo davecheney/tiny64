@@ -66,7 +66,7 @@ type VICII struct {
 	// raster line. lineDrawable further narrows that to the lines the
 	// active pixel sink actually stores. Vertical blanking and the render
 	// window are properties of the line, not of the dot, and rasterLine is
-	// only ever written by dotclock0's line wrap, so every dot on a line
+	// only ever written by dotclock7's line wrap, so every dot on a line
 	// gives the same answer. Caching turns each dotclock's test into a
 	// single byte load instead of reloading rasterLine and redoing range
 	// compares - which LLVM cannot hoist for us, since the pixel sink call
@@ -177,7 +177,7 @@ func (v *VICII) Reset() {
 
 // syncLineVisibility recomputes the cached line visibility flags from rasterLine.
 // It must be called whenever rasterLine is changed by anything other than
-// dotclock0's line wrap, which updates the flags itself.
+// dotclock7's line wrap, which updates the flags itself.
 func (v *VICII) syncLineVisibility() {
 	v.lineVisible = v.rasterLine < firstVBlankLine && v.rasterLine > lastVBlankLine
 	v.lineDrawable = v.rasterLine >= renderFirstLine && v.rasterLine < renderLineAfter
@@ -254,29 +254,29 @@ func (v *VICII) StepDot() {
 	// phase is derived from the current beam position so StepDot remains
 	// correct when called from any point within a bus cycle.
 	//
-	// dotclock1 through dotclock7 carry no vblank test of their own: their
+	// dotclock0 through dotclock6 carry no vblank test of their own: their
 	// caller owns it, because stepCycle can answer it once per cycle for
-	// all of them at a time. dotclock0 still tests itself, because its
+	// all of them at a time. dotclock7 still tests itself, because its
 	// line wrap is what changes the answer. On a blanked line there is
 	// nothing to paint, so the beam just advances.
 	if v.lineVisible || v.dot&7 == 7 {
 		switch v.dot & 7 {
 		case 0:
-			v.dotclock1()
-		case 1:
-			v.dotclock2()
-		case 2:
-			v.dotclock3()
-		case 3:
-			v.dotclock4()
-		case 4:
-			v.dotclock5()
-		case 5:
-			v.dotclock6()
-		case 6:
-			v.dotclock7()
-		case 7:
 			v.dotclock0()
+		case 1:
+			v.dotclock1()
+		case 2:
+			v.dotclock2()
+		case 3:
+			v.dotclock3()
+		case 4:
+			v.dotclock4()
+		case 5:
+			v.dotclock5()
+		case 6:
+			v.dotclock6()
+		case 7:
+			v.dotclock7()
 		}
 	} else {
 		v.dot++
@@ -353,33 +353,33 @@ func (v *VICII) StepFrame() {
 func (v *VICII) stepCycle() {
 	// One test covers the whole cycle. Vertical blanking is a property of
 	// the raster line, not of the dot, so it is the same answer for all
-	// eight dots; lineVisible caches it. dotclock1 through dotclock7
+	// eight dots; lineVisible caches it. dotclock0 through dotclock6
 	// therefore carry no vblank check of their own.
 	if v.lineDrawable {
+		v.dotclock0()
 		v.dotclock1()
 		v.dotclock2()
 		v.dotclock3()
-		v.dotclock4()
 	} else {
 		v.dot += 4
 	}
 	v.phi0low()
 	if v.lineDrawable {
+		v.dotclock4()
 		v.dotclock5()
 		v.dotclock6()
-		v.dotclock7()
 	} else if v.lineVisible {
 		v.dot += 2
-		v.dotclock7()
+		v.dotclock6()
 	} else {
 		v.dot += 3
 	}
-	// dotclock0 always runs, on blanked lines too: it owns the line wrap,
+	// dotclock7 always runs, on blanked lines too: it owns the line wrap,
 	// and the dot it paints is the first of the new line, which may have
 	// just become visible, so paint above cannot speak for it. Keeping it
 	// outside the branch also leaves it, phi0low, phi0high and TickPhi2
 	// with exactly one call site each.
-	v.dotclock0()
+	v.dotclock7()
 	v.phi0high()
 	cpu.TickPhi2()
 	iecTick()
@@ -411,19 +411,19 @@ func FinishFrame() {
 	vic.FinishFrame()
 }
 
-// dotclock1 through dotclock6 paint the interior dots of a bus cycle
-// (those that immediately follow phi0low's dot but precede phi0high's -
-// see stepCycle). Every check beyond the hblank test and the pixel paint
-// itself only ever triggers on one specific dot within a cycle:
+// dotclock0 through dotclock5 execute the interior phases of a bus cycle.
+// Each advances the beam to dots 1 through 6 respectively. Every check
+// beyond the hblank test and the pixel paint itself only ever triggers on
+// one specific dot within a cycle:
 //   - the line/frame wrap only happens advancing off dot 503 (the last
 //     dot of a line, DotsPerLine-1), which only the 8th dot of a cycle
-//     (dotclock0) can reach, since DotsPerLine is a multiple of
+//     (dotclock7) can reach, since DotsPerLine is a multiple of
 //     DotsPerCycle;
 //   - the border comparisons only match dots 48, 55, 359, and 368 (see
 //     leftComp/rightComp), all of which are ≡ 7 or 0 (mod 8) - border
 //     transitions only ever land on a character-cell boundary;
 //   - the g-access commit only runs when dot&7==0, true by definition
-//     only for the 8th dot.
+//     only when dotclock7 advances the beam to phase 0.
 //
 // So these six functions are byte-for-byte identical to each other: just
 // the beam advance, the hblank test, and the pixel paint. The vblank test
@@ -441,6 +441,34 @@ func FinishFrame() {
 // in stepCycle's comment. Note the trap: the shared version is *smaller*
 // in flash precisely because it failed to inline, so code size is not
 // evidence that it is faster.
+func (v *VICII) dotclock0() {
+	v.dot++
+
+	if v.dot >= VisibleDotsPerLine {
+		return
+	}
+	if !v.lineDrawable || v.dot < renderFirstDot || v.dot >= renderDotAfter {
+		return
+	}
+
+	if v.verticalBorder {
+		writePixelToBuffer(v.dot, v.rasterLine, v.borderColor&0x0F)
+		return
+	}
+	var graphicsColor byte
+	if v.gdSequencer&0x80 == 0 {
+		graphicsColor = v.background0
+	} else {
+		graphicsColor = byte(v.videoBuffer >> 8) // foreground color nibble
+	}
+	v.gdSequencer <<= 1 // this pixel is now shifted out
+	if v.mainBorder {
+		graphicsColor = v.borderColor
+	}
+	writePixelToBuffer(v.dot, v.rasterLine, graphicsColor&0x0F)
+}
+
+// dotclock1 is dotclock0 for cycle phase 1 - see dotclock0's comment.
 func (v *VICII) dotclock1() {
 	v.dot++
 
@@ -468,7 +496,7 @@ func (v *VICII) dotclock1() {
 	writePixelToBuffer(v.dot, v.rasterLine, graphicsColor&0x0F)
 }
 
-// dotclock2 is dotclock1 for the cycle's 2nd dot - see dotclock1's comment.
+// dotclock2 is dotclock0 for cycle phase 2 - see dotclock0's comment.
 func (v *VICII) dotclock2() {
 	v.dot++
 
@@ -496,7 +524,8 @@ func (v *VICII) dotclock2() {
 	writePixelToBuffer(v.dot, v.rasterLine, graphicsColor&0x0F)
 }
 
-// dotclock3 is dotclock1 for the cycle's 3rd dot - see dotclock1's comment.
+// dotclock3 is dotclock0 for cycle phase 3 - see dotclock0's
+// comment. phi0low runs immediately after this call (see stepCycle).
 func (v *VICII) dotclock3() {
 	v.dot++
 
@@ -524,8 +553,7 @@ func (v *VICII) dotclock3() {
 	writePixelToBuffer(v.dot, v.rasterLine, graphicsColor&0x0F)
 }
 
-// dotclock4 is dotclock1 for the cycle's 4th dot - see dotclock1's
-// comment. phi0low runs immediately after this call (see stepCycle).
+// dotclock4 is dotclock0 for cycle phase 4 - see dotclock0's comment.
 func (v *VICII) dotclock4() {
 	v.dot++
 
@@ -553,7 +581,7 @@ func (v *VICII) dotclock4() {
 	writePixelToBuffer(v.dot, v.rasterLine, graphicsColor&0x0F)
 }
 
-// dotclock5 is dotclock1 for the cycle's 5th dot - see dotclock1's comment.
+// dotclock5 is dotclock0 for cycle phase 5 - see dotclock0's comment.
 func (v *VICII) dotclock5() {
 	v.dot++
 
@@ -581,42 +609,14 @@ func (v *VICII) dotclock5() {
 	writePixelToBuffer(v.dot, v.rasterLine, graphicsColor&0x0F)
 }
 
-// dotclock6 is dotclock1 for the cycle's 6th dot - see dotclock1's comment.
-func (v *VICII) dotclock6() {
-	v.dot++
-
-	if v.dot >= VisibleDotsPerLine {
-		return
-	}
-	if !v.lineDrawable || v.dot < renderFirstDot || v.dot >= renderDotAfter {
-		return
-	}
-
-	if v.verticalBorder {
-		writePixelToBuffer(v.dot, v.rasterLine, v.borderColor&0x0F)
-		return
-	}
-	var graphicsColor byte
-	if v.gdSequencer&0x80 == 0 {
-		graphicsColor = v.background0
-	} else {
-		graphicsColor = byte(v.videoBuffer >> 8) // foreground color nibble
-	}
-	v.gdSequencer <<= 1 // this pixel is now shifted out
-	if v.mainBorder {
-		graphicsColor = v.borderColor
-	}
-	writePixelToBuffer(v.dot, v.rasterLine, graphicsColor&0x0F)
-}
-
-// dotclock7 handles the cycle's 7th dot, the first of the two dots that
-// can carry a border transition (see dotclock1's comment): dot values
+// dotclock6 handles cycle phase 6; its beam advance reaches phase 7, the
+// first of the two phases that can carry a border transition. Dot values
 // ≡7 (mod 8) are the only ones that can equal rightComp[0] (359) or
 // leftComp[0] (55), so this only needs to check those two, not the
-// switch over all four comparison values. Like dotclock1
-// through dotclock6, the line/frame wrap and the g-access commit can't
+// switch over all four comparison values. Like dotclock0
+// through dotclock5, the line/frame wrap and the g-access commit can't
 // trigger here, so they're omitted too.
-func (v *VICII) dotclock7() {
+func (v *VICII) dotclock6() {
 	v.dot++
 
 	if v.dot >= VisibleDotsPerLine {
@@ -667,14 +667,11 @@ func (v *VICII) dotclock7() {
 	writePixelToBuffer(v.dot, v.rasterLine, graphicsColor&0x0F)
 }
 
-// dotclock0 handles the cycle's 8th (and a line's or frame's last) dot:
-// the only dot that can push the beam off the end of a line (and, once
-// every RasterLinesPerFrame lines, off the end of a frame too), the only
-// one that can equal rightComp[1] (368) or leftComp[1] (48) - the other
-// half of the border comparisons dotclock7 doesn't check - and, since
-// dot&7==0 is true here by definition, the one that always evaluates the
-// g-access commit.
-func (v *VICII) dotclock0() {
+// dotclock7 handles cycle phase 7. Its beam advance reaches phase 0, so it
+// alone can push the beam off the end of a line (and, once every
+// RasterLinesPerFrame lines, off the end of a frame), match rightComp[1]
+// (368) or leftComp[1] (48), and evaluate the g-access commit.
+func (v *VICII) dotclock7() {
 	v.dot++
 	if v.dot >= DotsPerLine {
 		v.dot = 0
@@ -816,8 +813,8 @@ func (v *VICII) cycleSetVicCounter() {
 // cycleGAccess reads one row of character data (standard text mode only
 // for now), and advances VC/VMLI (section 3.7.2/3.7.3.1). The fetched
 // byte isn't displayed immediately: it's latched in gdPending and
-// committed to gdSequencer/videoBuffer by dotclock0 on the next
-// character-cell boundary, 4 dots after this cycle's own dot&7==4.
+// committed to gdSequencer/videoBuffer when dotclock7 advances the beam to
+// the next character-cell boundary, 4 dots after this cycle's own dot&7==4.
 func (v *VICII) cycleGAccess() {
 	v.videoBufferPending = v.videoMatrixColor[v.VMLI]
 
