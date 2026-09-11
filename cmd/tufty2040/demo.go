@@ -24,10 +24,11 @@ type keyStroke struct {
 // directly into the C64's memory.
 var mazePRG = []byte{
 	0x01, 0x08, // load address $0801
-	0x00, 0x00, // no following BASIC line
+	0x1D, 0x08, // address of the end-of-program marker
 	0x0A, 0x00, // line 10
 	0x99, ' ', 0xC7, '(', '2', '0', '5', '.', '5', '+', 0xC8, '(', '1', ')', ')', ';', ' ', ':', ' ', 0x89, ' ', '1', '0',
-	0x00,
+	0x00,       // end of line 10
+	0x00, 0x00, // end of program
 }
 
 var loadMaze = []keyStroke{
@@ -94,8 +95,20 @@ func (d *demoLoader) typeKeys() bool {
 }
 
 func basicPrompt() bool {
-	const prompt = 0x0400 + 5*40
-	return bytes.Equal(tiny64.Ram()[prompt:prompt+6], []byte{0x12, 0x05, 0x01, 0x04, 0x19, '.'})
+	const (
+		screen = 0x0400
+		cols   = 40
+		rows   = 25
+	)
+	prompt := []byte{0x12, 0x05, 0x01, 0x04, 0x19, '.'} // READY.
+	ram := tiny64.Ram()
+	for row := range rows {
+		start := screen + row*cols
+		if bytes.Equal(ram[start:start+len(prompt)], prompt) {
+			return true
+		}
+	}
+	return false
 }
 
 func mazeLoaded() bool {
@@ -115,7 +128,7 @@ func (d *demoLoader) tick() {
 			d.stage = demoWaitForProgram
 		}
 	case demoWaitForProgram:
-		if mazeLoaded() {
+		if mazeLoaded() && basicPrompt() {
 			d.start(runMaze)
 			d.stage = demoRunning
 		}

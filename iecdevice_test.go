@@ -110,6 +110,25 @@ func TestDriveLoadsCompactPRGThroughKERNAL(t *testing.T) {
 	}
 }
 
+func TestDriveRunsCompactPRGThroughKERNAL(t *testing.T) {
+	m := newMachine(t)
+	prg := []byte{
+		0x01, 0x08, // load address $0801
+		0x0B, 0x08, // address of the end-of-program marker
+		0x0A, 0x00, // line 10
+		0x99, ' ', '"', 'X', '"',
+		0x00,       // end of line 10
+		0x00, 0x00, // end of program
+	}
+	AttachVirtualPRG(8, "RUNME", prg)
+
+	m.waitForLine(5, "READY.")
+	m.typeLine(`LOAD"RUNME",8`)
+	m.waitForLine(10, "READY.")
+	m.typeLine("RUN")
+	m.waitForLine(12, "X")
+}
+
 // TestDriveReportsFileNotFound checks the failure path, which is not an
 // error code on the wire at all: the drive simply lets go of both lines
 // after the turnaround and lets the KERNAL time out.
