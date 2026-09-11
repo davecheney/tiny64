@@ -75,6 +75,13 @@ The Tufty target starts the PIO/DMA panel transfer asynchronously and waits for
 it immediately before queuing the next transfer, so most of the display write
 overlaps the following emulated frame on the same core.
 
+It also attaches a compact, read-only generic IEC device at address 8. After
+the KERNAL reaches the BASIC prompt, the target loads and runs the classic
+one-line `PRINT CHR$(205.5+RND(1)); : GOTO 10` maze demo through the normal
+IEC and KERNAL `LOAD` path. The compact device serves the PRG directly rather
+than allocating a full 175KB D64 image, which would not fit alongside the
+Tufty's 320x240 framebuffer in RP2040 RAM.
+
 ## Status
 
 This is a work in progress. See `docs/` for the reference material used

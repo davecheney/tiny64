@@ -15,6 +15,11 @@ import "strings"
 type cbmDOS struct {
 	ch [16]cbmChannel
 
+	// files, when non-nil, is a compact read-only file set instead of the
+	// D64-backed filesystem. It lets a TinyGo target expose a small demo
+	// program without consuming RAM for an entire disk image.
+	files []virtualFile
+
 	// The secondary address currently being serviced, split into what it
 	// asked for ($6x data, $Ex close, $Fx open) and which channel.
 	mode    uint8
@@ -53,6 +58,12 @@ type cbmChannel struct {
 	write []byte
 	name  string
 	typ   uint8
+}
+
+type virtualFile struct {
+	name string
+	typ  uint8
+	data []byte
 }
 
 // reset returns the DOS to power-on state: no channels open, status
@@ -200,6 +211,23 @@ func (d *cbmDOS) open(channel uint8, name string) {
 	}
 	if base == "" {
 		d.setError(34, 0, 0) // SYNTAX ERROR (no file given)
+		return
+	}
+
+	if d.files != nil {
+		if write {
+			d.setError(26, 0, 0) // WRITE PROTECT ON
+			return
+		}
+		for _, file := range d.files {
+			if (typ == ftypeDEL || typ == file.typ) && cbmMatch(base, file.name) {
+				c.open = true
+				c.read = file.data
+				d.setError(0, 0, 0)
+				return
+			}
+		}
+		d.setError(62, 0, 0) // FILE NOT FOUND
 		return
 	}
 

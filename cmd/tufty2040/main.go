@@ -67,8 +67,10 @@ func main() {
 	for i := range ram {
 		ram[i] = byte(rand.Uint())
 	}
+	tiny64.AttachVirtualPRG(8, "MAZE", mazePRG)
 	tiny64.Reset()
 
+	var demo demoLoader
 	var emulateTime, waitTime, startDrawTime time.Duration
 	for frame := 0; ; frame++ {
 		if frame%50 == 0 && frame > 0 {
@@ -80,6 +82,7 @@ func main() {
 		start := time.Now()
 		tiny64.StepFrame()
 		emulateTime += time.Since(start)
+		demo.tick()
 
 		start = time.Now()
 		display.waitDisplay()
