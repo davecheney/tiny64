@@ -73,6 +73,10 @@ func main() {
 	for i := range ram {
 		ram[i] = byte(rand.Uint())
 	}
+	colorRAM := tiny64.ColorRam()
+	for i := range colorRAM {
+		colorRAM[i] = byte(rand.Uint() & 0x0F)
+	}
 
 	if *destestmax {
 		tiny64.GetBus().Insert(rom.DiagCart, true, false, true, false)

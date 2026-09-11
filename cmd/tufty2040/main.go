@@ -80,6 +80,10 @@ func (s *buttonState) poll(demo *demoLoader) {
 		for i := range ram {
 			ram[i] = byte(rand.Uint())
 		}
+		colorRAM := tiny64.ColorRam()
+		for i := range colorRAM {
+			colorRAM[i] = byte(rand.Uint() & 0x0F)
+		}
 		tiny64.Keys().ReleaseAll()
 		tiny64.Reset()
 		demo.reset()
@@ -115,6 +119,10 @@ func main() {
 	ram := tiny64.Ram()
 	for i := range ram {
 		ram[i] = byte(rand.Uint())
+	}
+	colorRAM := tiny64.ColorRam()
+	for i := range colorRAM {
+		colorRAM[i] = byte(rand.Uint() & 0x0F)
 	}
 	tiny64.AttachVirtualPRG(8, "MAZE", mazePRG)
 	tiny64.Reset()
