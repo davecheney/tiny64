@@ -63,14 +63,17 @@ type VICII struct {
 	// TinyGo can use compact fixed-offset accesses.
 	//
 	// lineVisible caches "rasterLine is outside vblank" for the current
-	// raster line. Vertical blanking is a property of the line, not of the
-	// dot, and rasterLine is only ever written by dotclock0's line wrap, so
-	// every dot on a line gives the same answer. Caching it turns each
-	// dotclock's vblank test into a single byte load instead of reloading
-	// rasterLine and redoing the range compare - which LLVM cannot hoist
-	// for us, since the pixel sink call may alias this struct and forces a
-	// reload after every paint. Kept in sync by syncLineVisible.
+	// raster line. lineDrawable further narrows that to the lines the
+	// active pixel sink actually stores. Vertical blanking and the render
+	// window are properties of the line, not of the dot, and rasterLine is
+	// only ever written by dotclock0's line wrap, so every dot on a line
+	// gives the same answer. Caching turns each dotclock's test into a
+	// single byte load instead of reloading rasterLine and redoing range
+	// compares - which LLVM cannot hoist for us, since the pixel sink call
+	// may alias this struct and forces a reload after every paint. Kept in
+	// sync by syncLineVisibility.
 	lineVisible    bool
+	lineDrawable   bool
 	mainBorder     bool
 	verticalBorder bool
 	gdSequencer    uint8
@@ -169,14 +172,15 @@ func (v *VICII) Reset() {
 	v.allowBadLine = false
 	v.denLatch = false
 	v.idle = true
-	v.syncLineVisible()
+	v.syncLineVisibility()
 }
 
-// syncLineVisible recomputes the cached lineVisible flag from rasterLine.
+// syncLineVisibility recomputes the cached line visibility flags from rasterLine.
 // It must be called whenever rasterLine is changed by anything other than
-// dotclock0's line wrap, which updates the flag itself.
-func (v *VICII) syncLineVisible() {
+// dotclock0's line wrap, which updates the flags itself.
+func (v *VICII) syncLineVisibility() {
 	v.lineVisible = v.rasterLine < firstVBlankLine && v.rasterLine > lastVBlankLine
+	v.lineDrawable = v.rasterLine >= renderFirstLine && v.rasterLine < renderLineAfter
 }
 
 func (v *VICII) WriteRegister(addr uint16, value uint8) {
@@ -351,7 +355,7 @@ func (v *VICII) stepCycle() {
 	// the raster line, not of the dot, so it is the same answer for all
 	// eight dots; lineVisible caches it. dotclock1 through dotclock7
 	// therefore carry no vblank check of their own.
-	if v.lineVisible {
+	if v.lineDrawable {
 		v.dotclock1()
 		v.dotclock2()
 		v.dotclock3()
@@ -360,9 +364,12 @@ func (v *VICII) stepCycle() {
 		v.dot += 4
 	}
 	v.phi0low()
-	if v.lineVisible {
+	if v.lineDrawable {
 		v.dotclock5()
 		v.dotclock6()
+		v.dotclock7()
+	} else if v.lineVisible {
+		v.dot += 2
 		v.dotclock7()
 	} else {
 		v.dot += 3
@@ -440,6 +447,9 @@ func (v *VICII) dotclock1() {
 	if v.dot >= VisibleDotsPerLine {
 		return
 	}
+	if !v.lineDrawable || v.dot < renderFirstDot || v.dot >= renderDotAfter {
+		return
+	}
 
 	if v.verticalBorder {
 		writePixelToBuffer(v.dot, v.rasterLine, v.borderColor&0x0F)
@@ -465,6 +475,9 @@ func (v *VICII) dotclock2() {
 	if v.dot >= VisibleDotsPerLine {
 		return
 	}
+	if !v.lineDrawable || v.dot < renderFirstDot || v.dot >= renderDotAfter {
+		return
+	}
 
 	if v.verticalBorder {
 		writePixelToBuffer(v.dot, v.rasterLine, v.borderColor&0x0F)
@@ -488,6 +501,9 @@ func (v *VICII) dotclock3() {
 	v.dot++
 
 	if v.dot >= VisibleDotsPerLine {
+		return
+	}
+	if !v.lineDrawable || v.dot < renderFirstDot || v.dot >= renderDotAfter {
 		return
 	}
 
@@ -516,6 +532,9 @@ func (v *VICII) dotclock4() {
 	if v.dot >= VisibleDotsPerLine {
 		return
 	}
+	if !v.lineDrawable || v.dot < renderFirstDot || v.dot >= renderDotAfter {
+		return
+	}
 
 	if v.verticalBorder {
 		writePixelToBuffer(v.dot, v.rasterLine, v.borderColor&0x0F)
@@ -541,6 +560,9 @@ func (v *VICII) dotclock5() {
 	if v.dot >= VisibleDotsPerLine {
 		return
 	}
+	if !v.lineDrawable || v.dot < renderFirstDot || v.dot >= renderDotAfter {
+		return
+	}
 
 	if v.verticalBorder {
 		writePixelToBuffer(v.dot, v.rasterLine, v.borderColor&0x0F)
@@ -564,6 +586,9 @@ func (v *VICII) dotclock6() {
 	v.dot++
 
 	if v.dot >= VisibleDotsPerLine {
+		return
+	}
+	if !v.lineDrawable || v.dot < renderFirstDot || v.dot >= renderDotAfter {
 		return
 	}
 
@@ -621,6 +646,9 @@ func (v *VICII) dotclock7() {
 			v.mainBorder = false
 		}
 	}
+	if !v.lineDrawable || v.dot < renderFirstDot || v.dot >= renderDotAfter {
+		return
+	}
 
 	if v.verticalBorder {
 		writePixelToBuffer(v.dot, v.rasterLine, v.borderColor&0x0F)
@@ -655,8 +683,9 @@ func (v *VICII) dotclock0() {
 			v.rasterLine = 0
 		}
 		// The only place rasterLine changes in the hot path, so the only
-		// place the cached vblank answer can go stale.
+		// place the cached visibility answers can go stale.
 		v.lineVisible = v.rasterLine < firstVBlankLine && v.rasterLine > lastVBlankLine
+		v.lineDrawable = v.rasterLine >= renderFirstLine && v.rasterLine < renderLineAfter
 	}
 
 	if !v.lineVisible {
@@ -686,6 +715,9 @@ func (v *VICII) dotclock0() {
 	if slot := v.dot / 8; slot >= 6 && slot <= 45 {
 		v.gdSequencer = v.gdPending
 		v.videoBuffer = v.videoBufferPending
+	}
+	if !v.lineDrawable || v.dot < renderFirstDot || v.dot >= renderDotAfter {
+		return
 	}
 
 	if v.verticalBorder {

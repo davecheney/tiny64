@@ -23,7 +23,8 @@ var (
 
 // FrameBufferRGB565BE returns the 320x240 cropped frame in RGB565BE byte order.
 func FrameBufferRGB565BE() []byte {
-	return unsafe.Slice((*byte)(unsafe.Pointer(&frameBufferRGB565BE[0])), len(frameBufferRGB565BE)*2)
+	fb := frameBufferRGB565BE[:]
+	return unsafe.Slice((*byte)(unsafe.Pointer(&fb[0])), len(fb)*2)
 }
 
 func writePixelToBuffer(x, y uint16, colorIndex byte) {
