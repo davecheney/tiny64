@@ -120,6 +120,14 @@ func mazeLoaded() bool {
 	return bytes.Equal(tiny64.Ram()[0x0801:0x0801+len(program)], program)
 }
 
+func (d *demoLoader) reset() {
+	d.stage = demoWaitForPrompt
+	d.keys = nil
+	d.keyIndex = 0
+	d.pressed = false
+	d.deadline = 0
+}
+
 func (d *demoLoader) tick() {
 	switch d.stage {
 	case demoWaitForPrompt:
