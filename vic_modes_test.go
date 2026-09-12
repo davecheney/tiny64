@@ -79,3 +79,50 @@ func TestVICXScrollDelaysGraphicsReload(t *testing.T) {
 			v.gdSequencer, v.videoBuffer, v.dot)
 	}
 }
+
+func TestVICSideBorderOpen40To38Trick(t *testing.T) {
+	v := &VICII{}
+	v.Reset()
+	v.rasterLine = 100
+	v.control1 = 0x1B // DEN=1, RSEL=1, YSCROLL=3
+	v.control2 = 0x08 // CSEL=1 (40 columns)
+	v.syncLineVisibility()
+
+	// Advance beam to rightComp38 (dot 359).
+	// In 40-col mode, dot 359 does NOT latch mainBorder.
+	for v.dot != rightComp38-1 {
+		v.StepDot()
+	}
+	v.StepDot() // now at dot 359
+	if v.mainBorder {
+		t.Fatalf("mainBorder=true at dot 359 in 40-column mode, want false")
+	}
+
+	// Switch CSEL to 0 (38 columns) right after dot 359, before dot 368.
+	v.WriteRegister(0xD016, 0x00) // CSEL=0
+
+	// Advance to rightComp40 (dot 368).
+	// Since CSEL is now 0, the 40-column border comparison at dot 368 is bypassed!
+	for v.dot != rightComp40-1 {
+		v.StepDot()
+	}
+	v.StepDot() // now at dot 368
+	if v.mainBorder {
+		t.Fatalf("mainBorder=true at dot 368 with CSEL=0 trick, want false (side border opened)")
+	}
+
+	// In 40-column mode without the trick, dot 368 would have latched mainBorder.
+	vNormal := &VICII{}
+	vNormal.Reset()
+	vNormal.rasterLine = 100
+	vNormal.control1 = 0x1B
+	vNormal.control2 = 0x08 // CSEL=1
+	vNormal.syncLineVisibility()
+
+	for vNormal.dot != rightComp40 {
+		vNormal.StepDot()
+	}
+	if !vNormal.mainBorder {
+		t.Fatalf("mainBorder=false at dot 368 in normal 40-column mode, want true")
+	}
+}
