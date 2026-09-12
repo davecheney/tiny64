@@ -64,7 +64,8 @@ func main() {
 	cycles := flag.Int64("cycles", 0, "stop after this many CPU cycles (0 = run forever)")
 	destestmax := flag.Bool("destestmax", false, "insert the DiSTestMAX MAX-mode cartridge before reset")
 	deadtest := flag.Bool("deadtest", false, "insert the Dead Test MAX-mode cartridge before reset")
-	disk := flag.String("disk", "", "insert this D64 disk image into drive 8")
+	disk := flag.String("disk", "", "insert this D64 disk image or PRG file into drive 8")
+	prg := flag.String("prg", "", "insert this PRG file into drive 8 (formatted on a virtual disk)")
 	drive := flag.String("drive", "1541", "drive to answer for device 8: \"1541\" emulates the drive's CPU and GCR, \"virtual\" implements CBM DOS directly")
 	flag.Parse()
 
@@ -84,13 +85,14 @@ func main() {
 	if *deadtest {
 		tiny64.GetBus().Insert(rom.DeadTest, true, false, true, false)
 	}
-	if *disk != "" {
-		image, err := os.ReadFile(*disk)
+	targetFile := *disk
+	if targetFile == "" {
+		targetFile = *prg
+	}
+	if targetFile != "" {
+		image, err := tiny64.ReadDiskOrPRG(targetFile)
 		if err != nil {
 			log.Fatal(err)
-		}
-		if len(image) != tiny64.D64Size {
-			log.Fatalf("%s is %d bytes, not a %d byte 35-track D64", *disk, len(image), tiny64.D64Size)
 		}
 		// Inserting a disk plugs a 1541 into the serial bus, if there
 		// wasn't one there already.
