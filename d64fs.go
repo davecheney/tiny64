@@ -1,5 +1,12 @@
 package tiny64
 
+import (
+	"fmt"
+	"os"
+	"path/filepath"
+	"strings"
+)
+
 // The CBM DOS filesystem, as it sits inside a D64 image. None of this is
 // how a 1541 does it - a 1541 works in GCR bitstreams and its DOS chases
 // track/sector links through a 2K RAM buffer - but the on-disk structures
@@ -439,4 +446,56 @@ func FormatDisk(name, id string) []byte {
 	diskWriteSector(dirTrack, dirFirstSec, dir[:])
 
 	return image
+}
+
+// ReadDiskOrPRG loads a D64 disk image file or a PRG file from path.
+// If path points to a PRG file (or any file other than a 174848-byte D64 image),
+// it creates a formatted 35-track D64 image containing the PRG file.
+func ReadDiskOrPRG(path string) ([]byte, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, err
+	}
+	if len(data) == D64Size {
+		return data, nil
+	}
+	if strings.EqualFold(filepath.Ext(path), ".prg") || len(data) < D64Size {
+		return MakeD64FromPRG(path, data)
+	}
+	return nil, fmt.Errorf("%s is %d bytes, not a %d byte 35-track D64 or PRG file", path, len(data), D64Size)
+}
+
+// MakeD64FromPRG creates a formatted 35-track D64 disk image containing
+// the given PRG file data. filename is cleaned to a CBM DOS name (up to 16
+// characters).
+func MakeD64FromPRG(filename string, prgData []byte) ([]byte, error) {
+	cbmName := cleanCBMFilename(filename)
+	disk := FormatDisk("TINY64", "2A")
+
+	saved := diskImage
+	diskImage = disk
+	defer func() { diskImage = saved }()
+
+	errCode := diskWriteFile(cbmName, ftypePRG, prgData)
+	if errCode != 0 {
+		return nil, fmt.Errorf("failed to write PRG file %q to disk image: CBM DOS error %d", cbmName, errCode)
+	}
+
+	return disk, nil
+}
+
+func cleanCBMFilename(filename string) string {
+	base := filepath.Base(filename)
+	ext := filepath.Ext(base)
+	if strings.EqualFold(ext, ".prg") {
+		base = base[:len(base)-len(ext)]
+	}
+	base = strings.ToUpper(base)
+	if len(base) > 16 {
+		base = base[:16]
+	}
+	if base == "" {
+		base = "PROGRAM"
+	}
+	return base
 }
