@@ -316,7 +316,7 @@ func (d *cbmDOS) command(cmd string) {
 		if i := strings.Index(arg, ","); i >= 0 {
 			name, id = arg[:i], arg[i+1:]
 		}
-		InsertDisk(FormatDisk(name, id))
+		replaceDisk(FormatDisk(name, id))
 		d.setError(0, 0, 0)
 	case 'U': // U: / UJ - reset the drive
 		d.reset()

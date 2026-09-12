@@ -29,6 +29,13 @@ func InsertDisk(data []byte) {
 	if data != nil && !driveAttached {
 		AttachDrive(true) // a disk needs something to put it in
 	}
+	replaceDisk(data)
+}
+
+// replaceDisk changes the media without changing which IEC device owns it.
+// The generic drive uses this for its NEW command; calling InsertDisk there
+// would attach a 1541 in the middle of the command-channel transaction.
+func replaceDisk(data []byte) {
 	driveFlushTrack()
 	diskImage = data
 	driveTrackData = nil
