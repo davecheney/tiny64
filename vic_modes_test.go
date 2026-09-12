@@ -86,9 +86,14 @@ func TestVICSideBorderOpen40To38Trick(t *testing.T) {
 	v.rasterLine = 100
 	v.control1 = 0x1B // DEN=1, RSEL=1, YSCROLL=3
 	v.control2 = 0x08 // CSEL=1 (40 columns)
+	// Raster 100 is inside the display window, so the vertical border
+	// flip-flop has already been cleared by the top comparison. Reset()
+	// seeds it set because raster 0 is in the upper border.
+	v.verticalBorder = false
 	v.syncLineVisibility()
 
-	// Advance beam to rightComp38 (dot 359).
+	// Advance beam to rightComp38 (dot 359). The left comparison at dot 48
+	// clears the main border flip-flop on the way.
 	// In 40-col mode, dot 359 does NOT latch mainBorder.
 	for v.dot != rightComp38-1 {
 		v.StepDot()
@@ -117,6 +122,7 @@ func TestVICSideBorderOpen40To38Trick(t *testing.T) {
 	vNormal.rasterLine = 100
 	vNormal.control1 = 0x1B
 	vNormal.control2 = 0x08 // CSEL=1
+	vNormal.verticalBorder = false
 	vNormal.syncLineVisibility()
 
 	for vNormal.dot != rightComp40 {
@@ -133,6 +139,8 @@ func TestVICSideBorderOpen38To40Trick(t *testing.T) {
 	v.rasterLine = 100
 	v.control1 = 0x1B // DEN=1, RSEL=1, YSCROLL=3
 	v.control2 = 0x00 // CSEL=0 (38 columns)
+	// Inside the display window the vertical border flip-flop is clear.
+	v.verticalBorder = false
 	v.syncLineVisibility()
 
 	// In 38-column mode, switch to 40-column before dot 359

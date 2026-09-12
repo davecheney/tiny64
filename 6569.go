@@ -171,8 +171,12 @@ func (v *VICII) Reset() {
 	v.rasterLine = 0
 	v.BA = true
 	v.AEC = true
-	v.mainBorder = false
-	v.verticalBorder = false
+	// Raster line 0 is inside the upper border, which the border unit only
+	// leaves at the top comparison on line $33/$37. Both flip-flops
+	// therefore have to start set, or the first frame paints graphics over
+	// the whole upper border until that comparison arrives.
+	v.mainBorder = true
+	v.verticalBorder = true
 	v.gdSequencer = 0
 	v.graphicsMode = modeStandardText
 	v.multicolor = false
@@ -347,6 +351,19 @@ func (v *VICII) nextGraphicsColor() byte {
 	}
 }
 
+// paintGraphicsPixel emits one pixel through the border unit.
+//
+// Section 3.9 of the VIC Article is explicit that the *main* border
+// flip-flop alone decides whether border colour reaches the screen; the
+// vertical border flip-flop is internal state that only feeds rules 4/5
+// and 6. Gating output on the vertical flip-flop instead breaks every
+// trick that opens a border, and - because it skips nextGraphicsColor -
+// stalls the graphics sequencer for the whole of the upper and lower
+// border, desynchronising the shift register against the g-accesses.
+//
+// nextGraphicsColor is therefore called unconditionally: the sequencer
+// keeps shifting behind a closed border exactly as the hardware does, and
+// only the colour that is written is replaced.
 func (v *VICII) paintGraphicsPixel() {
 	graphicsColor := v.nextGraphicsColor()
 	if v.mainBorder {
@@ -606,10 +623,6 @@ func (v *VICII) dotclock0() {
 		return
 	}
 
-	if v.verticalBorder {
-		writePixelToBuffer(v.dot, v.rasterLine, v.borderColor&0x0F)
-		return
-	}
 	v.paintGraphicsPixel()
 }
 
@@ -625,10 +638,6 @@ func (v *VICII) dotclock1() {
 		return
 	}
 
-	if v.verticalBorder {
-		writePixelToBuffer(v.dot, v.rasterLine, v.borderColor&0x0F)
-		return
-	}
 	v.paintGraphicsPixel()
 }
 
@@ -644,10 +653,6 @@ func (v *VICII) dotclock2() {
 		return
 	}
 
-	if v.verticalBorder {
-		writePixelToBuffer(v.dot, v.rasterLine, v.borderColor&0x0F)
-		return
-	}
 	v.paintGraphicsPixel()
 }
 
@@ -664,10 +669,6 @@ func (v *VICII) dotclock3() {
 		return
 	}
 
-	if v.verticalBorder {
-		writePixelToBuffer(v.dot, v.rasterLine, v.borderColor&0x0F)
-		return
-	}
 	v.paintGraphicsPixel()
 }
 
@@ -683,10 +684,6 @@ func (v *VICII) dotclock4() {
 		return
 	}
 
-	if v.verticalBorder {
-		writePixelToBuffer(v.dot, v.rasterLine, v.borderColor&0x0F)
-		return
-	}
 	v.paintGraphicsPixel()
 }
 
@@ -702,10 +699,6 @@ func (v *VICII) dotclock5() {
 		return
 	}
 
-	if v.verticalBorder {
-		writePixelToBuffer(v.dot, v.rasterLine, v.borderColor&0x0F)
-		return
-	}
 	v.paintGraphicsPixel()
 }
 
@@ -743,10 +736,6 @@ func (v *VICII) dotclock6() {
 		return
 	}
 
-	if v.verticalBorder {
-		writePixelToBuffer(v.dot, v.rasterLine, v.borderColor&0x0F)
-		return
-	}
 	v.paintGraphicsPixel()
 }
 
@@ -797,10 +786,6 @@ func (v *VICII) dotclock7() {
 		return
 	}
 
-	if v.verticalBorder {
-		writePixelToBuffer(v.dot, v.rasterLine, v.borderColor&0x0F)
-		return
-	}
 	v.paintGraphicsPixel()
 }
 
