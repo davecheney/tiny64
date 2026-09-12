@@ -23,6 +23,7 @@ func saveMachine(t *testing.T) {
 	savedDriveCPU, savedVIA1, savedVIA2 := driveCPU, via1, via2
 	savedDriveRAM, savedDisk := driveRAM, diskImage
 	savedDriveAttached := driveAttached
+	savedDOSWedge := dosWedge
 	// The bus is its own state, not a shadow of driveAttached: a peripheral
 	// can sit on it without setting that flag at all. Snapshot the slice
 	// header and its contents, since a test may replace an entry.
@@ -36,6 +37,7 @@ func saveMachine(t *testing.T) {
 		InsertDisk(savedDisk)
 		driveResetDisk()
 		driveAttached = savedDriveAttached
+		dosWedge = savedDOSWedge
 		// Last, because InsertDisk above attaches a 1541 of its own.
 		iecBus = savedBus
 	})
@@ -164,12 +166,20 @@ func keyFor(r rune) (shift bool, key Key, ok bool) {
 		return true, Key3, true
 	case '$':
 		return true, Key4, true
+	case '%':
+		return true, Key5, true
 	case '"':
 		return true, Key2, true
+	case '>':
+		return true, KeyPeriod, true
 	case '(':
 		return true, Key8, true
 	case ')':
 		return true, Key9, true
+	case '↑':
+		return false, KeyUpArrow, true
+	case '←':
+		return false, KeyLeftArrow, true
 	}
 	return false, 0, false
 }

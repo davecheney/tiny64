@@ -13,6 +13,7 @@ func main() {
 	disk := flag.String("disk", "", "insert this D64 disk image or PRG file into drive 8")
 	prg := flag.String("prg", "", "insert this PRG file into drive 8 (formatted on a virtual disk)")
 	drive := flag.String("drive", "1541", "drive to answer for device 8: \"1541\" emulates the drive's CPU and GCR, \"virtual\" implements CBM DOS directly")
+	wedge := flag.Bool("wedge", false, "enable the resident DOS wedge at the BASIC prompt")
 	flag.Parse()
 
 	targetFile := *disk
@@ -36,6 +37,9 @@ func main() {
 	}
 
 	if err := desktop.Run("c64", func() {
+		if *wedge {
+			tiny64.EnableDOSWedge()
+		}
 		if image != nil {
 			// Inserting a disk plugs a 1541 into the serial bus, if there
 			// wasn't one there already.
