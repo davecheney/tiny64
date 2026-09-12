@@ -74,6 +74,29 @@ BASIC program lines are deliberately left to BASIC rather than intercepted by a
 CHRGET hook, so wedge tokens in a numbered line retain normal BASIC syntax
 behaviour instead of becoming hidden disk operations.
 
+## Inspecting programs
+
+`cmd/prg` decodes a `.prg` file - a two byte little endian load address
+followed by the bytes loaded there - without running the emulator. With no
+flags it prints a header, then works out what the payload is: a BASIC V2
+program loaded at `$0801` is listed, and if that program is a `SYS` stub
+with machine code behind it the machine code is disassembled too. Anything
+else is disassembled from its load address.
+
+    go run ./cmd/prg maze.prg               # header, then a BASIC listing
+    go run ./cmd/prg -v game.prg            # addresses in decimal as well
+    go run ./cmd/prg -hex sprites.prg       # hex dump instead
+    go run ./cmd/prg -disasm -start '$C000' -end '$C0FF' code.prg
+
+A `.prg` stored inside a D64 image can be inspected in place, naming the
+file the way CBM DOS does, wildcards and all:
+
+    go run ./cmd/prg -d64 demo.d64 -list    # the disk directory
+    go run ./cmd/prg -d64 demo.d64 'MA*'
+
+The disassembler covers all 256 opcodes, including the undocumented ones,
+which are printed with a leading `*`.
+
 It is deliberately small: the core package has no dependency on any
 graphics library, so it can run headless (for testing) or under
 [Ebitengine](https://ebitengine.org/) for a desktop GUI. There is also a
@@ -93,6 +116,9 @@ Raspberry Pi Pico.
 - `cmd/tufty2040` is the TinyGo build target for the Pimoroni Tufty 2040,
   using its parallel ST7789 display through PIO/DMA
 - `cmd/drivec` is a standalone 1541 drive/IEC bus test harness
+- `cmd/prg` inspects `.prg` files: header, BASIC listing, disassembly
+- `cmd/internal/prg` and `cmd/internal/disasm` are the PRG decoder and the
+  6502 disassembler behind it
 - `cmd/deadtest` and `cmd/destestmax` run C64 diagnostic cartridges
 
 Tufty 2040 builds should leave TinyGo's default scheduler and optimization
