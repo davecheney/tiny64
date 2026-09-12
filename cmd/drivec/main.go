@@ -128,8 +128,8 @@ func attach(path string) error {
 	if err != nil {
 		return err
 	}
-	if len(data) != tiny64.D64Size {
-		return fmt.Errorf("%s is %d bytes, want a %d byte D64", path, len(data), tiny64.D64Size)
+	if len(data) != tiny64.D64Size && len(data) != tiny64.D64Size40 {
+		return fmt.Errorf("%s is %d bytes, want a %d byte (35-track) or %d byte (40-track) D64", path, len(data), tiny64.D64Size, tiny64.D64Size40)
 	}
 	tiny64.InsertDisk(data)
 	diskPath = path

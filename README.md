@@ -32,7 +32,7 @@ that talks to the drive's own processor.
 
 A drive is only plugged in when something asks for one, with
 `AttachDrive`, or by inserting a disk: `cmd/c64` and `cmd/c64cli` both
-take a `-disk FILE` flag naming a 35-track D64 image, and a `-drive` flag
+take a `-disk FILE` flag naming a 35-track or 40-track D64 image, and a `-drive` flag
 choosing which drive answers for device 8 — `1541` (the default) or
 `virtual`. Only one drive can answer for a given address, so attaching one
 replaces the other.

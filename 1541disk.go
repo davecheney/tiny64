@@ -107,8 +107,8 @@ func via2StorePRB(val uint8) {
 		if driveHalfTrack < 2 {
 			driveHalfTrack = 2
 		}
-		if driveHalfTrack > 70 { // (35-1)*2+2, the highest valid half-track
-			driveHalfTrack = 70
+		if driveHalfTrack > 80 { // (40-1)*2+2, the highest valid half-track
+			driveHalfTrack = 80
 		}
 		driveTrackData = nil // force regeneration for the new track
 	}
