@@ -126,3 +126,67 @@ func TestVICSideBorderOpen40To38Trick(t *testing.T) {
 		t.Fatalf("mainBorder=false at dot 368 in normal 40-column mode, want true")
 	}
 }
+
+func TestVICSideBorderOpen38To40Trick(t *testing.T) {
+	v := &VICII{}
+	v.Reset()
+	v.rasterLine = 100
+	v.control1 = 0x1B // DEN=1, RSEL=1, YSCROLL=3
+	v.control2 = 0x00 // CSEL=0 (38 columns)
+	v.syncLineVisibility()
+
+	// In 38-column mode, switch to 40-column before dot 359
+	v.WriteRegister(0xD016, 0x08) // CSEL=1 (40 cols)
+
+	// Step to dot 359. Since CSEL=1, dot 359 won't trigger mainBorder.
+	for v.dot != rightComp38 {
+		v.StepDot()
+	}
+	if v.mainBorder {
+		t.Fatalf("mainBorder=true at dot 359 with CSEL=1, want false")
+	}
+
+	// Switch back to CSEL=0 before dot 368.
+	v.WriteRegister(0xD016, 0x00) // CSEL=0 (38 cols)
+
+	// Step to dot 368. Since CSEL=0, dot 368 won't trigger mainBorder either.
+	for v.dot != rightComp40 {
+		v.StepDot()
+	}
+	if v.mainBorder {
+		t.Fatalf("mainBorder=true at dot 368 with CSEL=0, want false (side border opened)")
+	}
+}
+
+func TestVICVerticalBorderOpenTopBottomTricks(t *testing.T) {
+	// Rule 3: Top border compare ($33 for RSEL=1) clears verticalBorder if DEN=1
+	v := &VICII{}
+	v.Reset()
+	v.control1 = 0x1B // DEN=1, RSEL=1 ($33)
+	v.verticalBorder = true
+	v.rasterLine = 0x33
+	v.cycleBorderComp()
+	if v.verticalBorder {
+		t.Errorf("verticalBorder=true at raster $33 with DEN=1, want false")
+	}
+
+	// Rule 3: If DEN=0 at line $33, verticalBorder is not cleared
+	v.Reset()
+	v.control1 = 0x0B // DEN=0, RSEL=1 ($33)
+	v.verticalBorder = true
+	v.rasterLine = 0x33
+	v.cycleBorderComp()
+	if !v.verticalBorder {
+		t.Errorf("verticalBorder=false at raster $33 with DEN=0, want true")
+	}
+
+	// Rule 2: Bottom border compare ($FA for RSEL=1) sets verticalBorder unconditionally
+	v.Reset()
+	v.control1 = 0x1B // DEN=1, RSEL=1 ($FA)
+	v.verticalBorder = false
+	v.rasterLine = 0xFB // bottomComp[1]
+	v.cycleBorderComp()
+	if !v.verticalBorder {
+		t.Errorf("verticalBorder=false at bottom border line $FB, want true")
+	}
+}
