@@ -59,9 +59,9 @@ func plaStore(addr uint16, val uint8) {
 
 // plaVICLoad reads addr through the VIC-II's own view of memory (used for
 // its c-access/g-access fetches): it ignores the CPU's LORAM/HIRAM/CHAREN
-// banking entirely, but the character generator ROM is still hard-wired
-// into view at $1000-$1FFF (and $9000-$9FFF in banks not selected via
-// CIA2, which isn't implemented yet, so only bank 0 is modeled). A
+// banking entirely. CIA2 Port A bits 0-1 select one of four 16K video
+// banks through an inverter. The character generator ROM is hard-wired
+// only at $1000-$1FFF in bank 0 and $9000-$9FFF in bank 2. A
 // cartridge wired for MAX mode also overrides the top 4K of every 16K
 // quadrant ($3000, $7000, $B000, $F000) with its ROMH image, via a
 // dedicated hardware path separate from the CPU's $E000-$FFFF ROMH window
@@ -70,11 +70,17 @@ func plaStore(addr uint16, val uint8) {
 // 13 address pins, so the offset it presents is always addr&0x1FFF,
 // regardless of which window asserted its chip-select.
 func plaVICLoad(addr uint16) uint8 {
+	// CIA2's two bank-select lines are inverted. The port pins float high
+	// when configured as inputs, just as the real pull-ups do.
+	bank := uint16(^effective(cia2.PRA, cia2.DDRA)&0x03) << 14
+	addr = bank | addr&0x3FFF
 	if cartridge.ultimax() && cartridge.ROMH && addr&0x3000 == 0x3000 {
 		return cartridge.ROM[addr&0x1FFF]
 	}
-	if addr >= 0x1000 && addr <= 0x1FFF {
-		return rom.Character[addr-0x1000]
+	// Character ROM is only mapped for VIC character generator accesses
+	// in text mode (BMM=0). In bitmap mode (BMM=1), VIC always reads RAM.
+	if vic.control1&0x20 == 0 && (addr >= 0x1000 && addr <= 0x1FFF || addr >= 0x9000 && addr <= 0x9FFF) {
+		return rom.Character[addr&0x0FFF]
 	}
 	return ram[addr]
 }

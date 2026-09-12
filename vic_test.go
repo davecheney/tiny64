@@ -159,6 +159,14 @@ func TestVICRegisterStorage(t *testing.T) {
 			if got := v.ReadRegister(0xD000 + reg); got != 0 {
 				t.Errorf("live raster register = $%02X, want $00", got)
 			}
+		case 0x19:
+			if got, want := v.ReadRegister(0xD000+reg), uint8(0x70); got != want {
+				t.Errorf("register $%02X = $%02X, want $%02X", reg, got, want)
+			}
+		case 0x1A:
+			if got, want := v.ReadRegister(0xD000+reg), uint8(0xFB); got != want {
+				t.Errorf("register $%02X = $%02X, want $%02X", reg, got, want)
+			}
 		default:
 			if got, want := v.ReadRegister(0xD000+reg), uint8(reg+1); got != want {
 				t.Errorf("register $%02X = $%02X, want $%02X", reg, got, want)
@@ -335,5 +343,71 @@ func TestVICVideoMatrixAddress(t *testing.T) {
 	const videoMatrixSize = 1000 // 40 columns * 25 rows
 	if maxVC > videoMatrixSize {
 		t.Errorf("VC reached %d during a frame, want <= %d (video matrix is only 1000 entries)", maxVC, videoMatrixSize)
+	}
+}
+
+func TestVICRasterIRQ(t *testing.T) {
+	v := &VICII{}
+	v.Reset()
+
+	// Set raster compare target to line 50.
+	v.WriteRegister(0xD012, 50)
+	// Enable raster IRQ ($D01A bit 0).
+	v.WriteRegister(0xD01A, 0x01)
+
+	// Step lines until line 50 is reached.
+	for v.rasterLine != 50 {
+		v.StepDot()
+	}
+
+	if !v.IRQ {
+		t.Errorf("v.IRQ = false at line 50, want true")
+	}
+	if got := v.ReadRegister(0xD019); got != 0xF1 {
+		t.Errorf("ReadRegister($D019) = $%02X, want $F1", got)
+	}
+
+	// Acknowledge IRQ by writing 1 to bit 0 of $D019.
+	v.WriteRegister(0xD019, 0x01)
+
+	if v.IRQ {
+		t.Errorf("v.IRQ = true after acknowledge, want false")
+	}
+	if got := v.ReadRegister(0xD019); got != 0x70 {
+		t.Errorf("ReadRegister($D019) = $%02X, want $70", got)
+	}
+}
+
+func TestVICRasterIRQReachesCPU(t *testing.T) {
+	saveMachine(t)
+
+	ram = [65536]byte{}
+	bus = Bus{}
+	cpu = CPU{}
+	cpu.PortDDR = 0xFF // plain RAM everywhere, so IRQ vector is test-controlled
+	cpu.SP = 0xFF
+	cia1 = CIA{}
+	cia2 = CIA{}
+	keyboard = Keyboard{}
+	vic = VICII{}
+	vic.Reset()
+
+	copy(ram[0x0200:], []uint8{0x4C, 0x00, 0x02}) // JMP $0200
+	copy(ram[0x0400:], []uint8{
+		0xE6, 0x10, // INC $10
+		0x40, // RTI
+	})
+	ram[0xFFFE], ram[0xFFFF] = 0x00, 0x04
+	cpu.PC = 0x0200
+
+	vic.WriteRegister(0xD012, 2)
+	vic.WriteRegister(0xD01A, 0x01)
+
+	for i := 0; i < DotsPerLine*4 && ram[0x0010] == 0; i++ {
+		vic.StepDot()
+	}
+
+	if ram[0x0010] == 0 {
+		t.Fatal("CPU did not service VIC raster IRQ")
 	}
 }
