@@ -35,6 +35,12 @@ const (
 
 	csel = 0x08 // $D016 bit 3: Column Select (CSEL)
 
+	modeStandardText     = 0
+	modeMulticolorText   = 1
+	modeStandardBitmap   = 2
+	modeMulticolorBitmap = 3
+	modeECMText          = 4
+
 	// Bad Line Condition raster range (section 3.5 of the VIC Article).
 	badLineRasterStart = 0x30
 	badLineRasterEnd   = 0xF7
@@ -77,6 +83,9 @@ type VICII struct {
 	mainBorder     bool
 	verticalBorder bool
 	gdSequencer    uint8
+	graphicsMode   uint8
+	multicolor     bool
+	multicolorHalf bool
 	borderColor    uint8
 	background0    uint8
 	control1       uint8
@@ -128,6 +137,11 @@ type VICII struct {
 	register17      uint8
 	registers19To1F [0x07]uint8
 	registers22To2E [0x0D]uint8
+
+	rasterCompare   uint16
+	interruptStatus uint8
+	interruptEnable uint8
+	IRQ             bool
 }
 
 var vic VICII
@@ -160,6 +174,9 @@ func (v *VICII) Reset() {
 	v.mainBorder = false
 	v.verticalBorder = false
 	v.gdSequencer = 0
+	v.graphicsMode = modeStandardText
+	v.multicolor = false
+	v.multicolorHalf = false
 	v.videoBuffer = 0
 	v.gdPending = 0
 	v.videoBufferPending = 0
@@ -172,7 +189,22 @@ func (v *VICII) Reset() {
 	v.allowBadLine = false
 	v.denLatch = false
 	v.idle = true
+	v.rasterCompare = 0
+	v.interruptStatus = 0
+	v.interruptEnable = 0
+	v.IRQ = false
 	v.syncLineVisibility()
+}
+
+func (v *VICII) checkRasterIRQ() {
+	if v.rasterLine == v.rasterCompare {
+		v.interruptStatus |= 0x01
+		v.updateIRQ()
+	}
+}
+
+func (v *VICII) updateIRQ() {
+	v.IRQ = (v.interruptStatus & v.interruptEnable & 0x0F) != 0
 }
 
 // syncLineVisibility recomputes the cached line visibility flags from rasterLine.
@@ -190,6 +222,9 @@ func (v *VICII) WriteRegister(addr uint16, value uint8) {
 		v.registers00To10[reg] = value
 	case reg == regControl1:
 		v.control1 = value
+		v.rasterCompare = (v.rasterCompare & 0xFF) | (uint16(value&0x80) << 1)
+	case reg == 0x12:
+		v.rasterCompare = (v.rasterCompare & 0x100) | uint16(value)
 	case reg < regControl2:
 		v.registers12To15[reg-0x12] = value
 	case reg == regControl2:
@@ -198,6 +233,12 @@ func (v *VICII) WriteRegister(addr uint16, value uint8) {
 		v.register17 = value
 	case reg == regMemPointers:
 		v.memPointers = value
+	case reg == 0x19:
+		v.interruptStatus &^= (value & 0x0F)
+		v.updateIRQ()
+	case reg == 0x1A:
+		v.interruptEnable = value & 0x0F
+		v.updateIRQ()
 	case reg < regBorderColor:
 		v.registers19To1F[reg-0x19] = value
 	case reg == regBorderColor:
@@ -209,11 +250,115 @@ func (v *VICII) WriteRegister(addr uint16, value uint8) {
 	}
 }
 
+func (v *VICII) backgroundColor(index uint8) uint8 {
+	switch index {
+	case 0:
+		return v.background0
+	case 1:
+		return v.registers22To2E[0]
+	case 2:
+		return v.registers22To2E[1]
+	case 3:
+		return v.registers22To2E[2]
+	default:
+		return 0
+	}
+}
+
+func (v *VICII) selectedGraphicsMode() uint8 {
+	return (v.control1>>4)&0x06 | (v.control2 >> 4 & 0x01)
+}
+
+func (v *VICII) loadGraphicsData() {
+	v.gdSequencer = v.gdPending
+	v.videoBuffer = v.videoBufferPending
+	v.graphicsMode = v.selectedGraphicsMode()
+	v.multicolor = v.graphicsMode == modeMulticolorBitmap ||
+		(v.graphicsMode == modeMulticolorText && v.videoBuffer&0x0800 != 0)
+	v.multicolorHalf = false
+}
+
+// advanceGraphicsData reloads the sequencer XSCROLL dots into each cell.
+// A g-access completes four dots before the unscrolled cell boundary.
+func (v *VICII) advanceGraphicsData() {
+	slot := v.dot / 8
+	if slot >= 6 && slot <= 45 && v.dot&0x07 == uint16(v.control2&0x07) {
+		v.loadGraphicsData()
+	}
+}
+
+func (v *VICII) nextGraphicsColor() byte {
+	if !v.multicolor {
+		bit := v.gdSequencer & 0x80
+		v.gdSequencer <<= 1
+		if bit == 0 {
+			if v.graphicsMode == modeECMText {
+				return v.backgroundColor(uint8(v.videoBuffer>>6) & 0x03)
+			}
+			if v.graphicsMode == modeStandardBitmap {
+				return byte(v.videoBuffer) & 0x0F
+			}
+			if v.graphicsMode > modeECMText {
+				return 0
+			}
+			return v.background0
+		}
+		switch v.graphicsMode {
+		case modeStandardText, modeMulticolorText, modeECMText:
+			return byte(v.videoBuffer>>8) & 0x0F
+		case modeStandardBitmap:
+			return byte(v.videoBuffer>>4) & 0x0F
+		default:
+			return 0
+		}
+	}
+
+	pair := v.gdSequencer >> 6
+	if v.multicolorHalf {
+		v.gdSequencer <<= 2
+	}
+	v.multicolorHalf = !v.multicolorHalf
+
+	switch v.graphicsMode {
+	case modeMulticolorText:
+		switch pair {
+		case 0:
+			return v.background0
+		case 1:
+			return v.backgroundColor(1)
+		case 2:
+			return v.backgroundColor(2)
+		default:
+			return byte(v.videoBuffer>>8) & 0x07
+		}
+	case modeMulticolorBitmap:
+		switch pair {
+		case 0:
+			return v.background0
+		case 1:
+			return byte(v.videoBuffer>>4) & 0x0F
+		case 2:
+			return byte(v.videoBuffer) & 0x0F
+		default:
+			return byte(v.videoBuffer>>8) & 0x0F
+		}
+	default:
+		return 0
+	}
+}
+
+func (v *VICII) paintGraphicsPixel() {
+	graphicsColor := v.nextGraphicsColor()
+	if v.mainBorder {
+		graphicsColor = v.borderColor
+	}
+	writePixelToBuffer(v.dot, v.rasterLine, graphicsColor&0x0F)
+}
+
 // ReadRegister reads a VIC-II register, mirrored every 64 bytes across
 // $D000-$D3FF. Registers beyond $D02E don't exist and read as all 1 bits.
 // $D012 (and bit 7 of $D011) are read-only mirrors of the live raster
-// line, distinct from whatever was last written there (the raster compare
-// target for IRQ generation, not yet implemented).
+// line, distinct from the writable raster IRQ compare latch.
 func (v *VICII) ReadRegister(addr uint16) uint8 {
 	reg := addr & 0x3F
 	switch reg {
@@ -225,6 +370,14 @@ func (v *VICII) ReadRegister(addr uint16) uint8 {
 			val |= 0x80
 		}
 		return val
+	case 0x19:
+		val := 0x70 | (v.interruptStatus & 0x0F)
+		if v.IRQ {
+			val |= 0x80
+		}
+		return val
+	case 0x1A:
+		return 0xF0 | (v.interruptEnable & 0x0F)
 	case regControl2:
 		return v.control2
 	case regMemPointers:
@@ -280,6 +433,7 @@ func (v *VICII) StepDot() {
 		}
 	} else {
 		v.dot++
+		v.advanceGraphicsData()
 	}
 
 	// Every 8 dots represents 1 full CPU cycle (Phi1 + Phi2). The
@@ -422,8 +576,8 @@ func FinishFrame() {
 //   - the border comparisons only match dots 48, 55, 359, and 368 (see
 //     leftComp/rightComp), all of which are ≡ 7 or 0 (mod 8) - border
 //     transitions only ever land on a character-cell boundary;
-//   - the g-access commit only runs when dot&7==0, true by definition
-//     only when dotclock7 advances the beam to phase 0.
+//   - the g-access result reloads on the XSCROLL-selected dot of a
+//     character cell, so every phase may need to check that condition.
 //
 // So these six functions are byte-for-byte identical to each other: just
 // the beam advance, the hblank test, and the pixel paint. The vblank test
@@ -443,6 +597,7 @@ func FinishFrame() {
 // evidence that it is faster.
 func (v *VICII) dotclock0() {
 	v.dot++
+	v.advanceGraphicsData()
 
 	if v.dot >= VisibleDotsPerLine {
 		return
@@ -455,22 +610,13 @@ func (v *VICII) dotclock0() {
 		writePixelToBuffer(v.dot, v.rasterLine, v.borderColor&0x0F)
 		return
 	}
-	var graphicsColor byte
-	if v.gdSequencer&0x80 == 0 {
-		graphicsColor = v.background0
-	} else {
-		graphicsColor = byte(v.videoBuffer >> 8) // foreground color nibble
-	}
-	v.gdSequencer <<= 1 // this pixel is now shifted out
-	if v.mainBorder {
-		graphicsColor = v.borderColor
-	}
-	writePixelToBuffer(v.dot, v.rasterLine, graphicsColor&0x0F)
+	v.paintGraphicsPixel()
 }
 
 // dotclock1 is dotclock0 for cycle phase 1 - see dotclock0's comment.
 func (v *VICII) dotclock1() {
 	v.dot++
+	v.advanceGraphicsData()
 
 	if v.dot >= VisibleDotsPerLine {
 		return
@@ -483,22 +629,13 @@ func (v *VICII) dotclock1() {
 		writePixelToBuffer(v.dot, v.rasterLine, v.borderColor&0x0F)
 		return
 	}
-	var graphicsColor byte
-	if v.gdSequencer&0x80 == 0 {
-		graphicsColor = v.background0
-	} else {
-		graphicsColor = byte(v.videoBuffer >> 8) // foreground color nibble
-	}
-	v.gdSequencer <<= 1 // this pixel is now shifted out
-	if v.mainBorder {
-		graphicsColor = v.borderColor
-	}
-	writePixelToBuffer(v.dot, v.rasterLine, graphicsColor&0x0F)
+	v.paintGraphicsPixel()
 }
 
 // dotclock2 is dotclock0 for cycle phase 2 - see dotclock0's comment.
 func (v *VICII) dotclock2() {
 	v.dot++
+	v.advanceGraphicsData()
 
 	if v.dot >= VisibleDotsPerLine {
 		return
@@ -511,23 +648,14 @@ func (v *VICII) dotclock2() {
 		writePixelToBuffer(v.dot, v.rasterLine, v.borderColor&0x0F)
 		return
 	}
-	var graphicsColor byte
-	if v.gdSequencer&0x80 == 0 {
-		graphicsColor = v.background0
-	} else {
-		graphicsColor = byte(v.videoBuffer >> 8) // foreground color nibble
-	}
-	v.gdSequencer <<= 1 // this pixel is now shifted out
-	if v.mainBorder {
-		graphicsColor = v.borderColor
-	}
-	writePixelToBuffer(v.dot, v.rasterLine, graphicsColor&0x0F)
+	v.paintGraphicsPixel()
 }
 
 // dotclock3 is dotclock0 for cycle phase 3 - see dotclock0's
 // comment. phi0low runs immediately after this call (see stepCycle).
 func (v *VICII) dotclock3() {
 	v.dot++
+	v.advanceGraphicsData()
 
 	if v.dot >= VisibleDotsPerLine {
 		return
@@ -540,22 +668,13 @@ func (v *VICII) dotclock3() {
 		writePixelToBuffer(v.dot, v.rasterLine, v.borderColor&0x0F)
 		return
 	}
-	var graphicsColor byte
-	if v.gdSequencer&0x80 == 0 {
-		graphicsColor = v.background0
-	} else {
-		graphicsColor = byte(v.videoBuffer >> 8) // foreground color nibble
-	}
-	v.gdSequencer <<= 1 // this pixel is now shifted out
-	if v.mainBorder {
-		graphicsColor = v.borderColor
-	}
-	writePixelToBuffer(v.dot, v.rasterLine, graphicsColor&0x0F)
+	v.paintGraphicsPixel()
 }
 
 // dotclock4 is dotclock0 for cycle phase 4 - see dotclock0's comment.
 func (v *VICII) dotclock4() {
 	v.dot++
+	v.advanceGraphicsData()
 
 	if v.dot >= VisibleDotsPerLine {
 		return
@@ -568,22 +687,13 @@ func (v *VICII) dotclock4() {
 		writePixelToBuffer(v.dot, v.rasterLine, v.borderColor&0x0F)
 		return
 	}
-	var graphicsColor byte
-	if v.gdSequencer&0x80 == 0 {
-		graphicsColor = v.background0
-	} else {
-		graphicsColor = byte(v.videoBuffer >> 8) // foreground color nibble
-	}
-	v.gdSequencer <<= 1 // this pixel is now shifted out
-	if v.mainBorder {
-		graphicsColor = v.borderColor
-	}
-	writePixelToBuffer(v.dot, v.rasterLine, graphicsColor&0x0F)
+	v.paintGraphicsPixel()
 }
 
 // dotclock5 is dotclock0 for cycle phase 5 - see dotclock0's comment.
 func (v *VICII) dotclock5() {
 	v.dot++
+	v.advanceGraphicsData()
 
 	if v.dot >= VisibleDotsPerLine {
 		return
@@ -596,42 +706,24 @@ func (v *VICII) dotclock5() {
 		writePixelToBuffer(v.dot, v.rasterLine, v.borderColor&0x0F)
 		return
 	}
-	var graphicsColor byte
-	if v.gdSequencer&0x80 == 0 {
-		graphicsColor = v.background0
-	} else {
-		graphicsColor = byte(v.videoBuffer >> 8) // foreground color nibble
-	}
-	v.gdSequencer <<= 1 // this pixel is now shifted out
-	if v.mainBorder {
-		graphicsColor = v.borderColor
-	}
-	writePixelToBuffer(v.dot, v.rasterLine, graphicsColor&0x0F)
+	v.paintGraphicsPixel()
 }
 
 // dotclock6 handles cycle phase 6; its beam advance reaches phase 7, the
 // first of the two phases that can carry a border transition. Dot values
 // ≡7 (mod 8) are the only ones that can equal rightComp[0] (359) or
 // leftComp[0] (55), so this only needs to check those two, not the
-// switch over all four comparison values. Like dotclock0
-// through dotclock5, the line/frame wrap and the g-access commit can't
-// trigger here, so they're omitted too.
+// dotclock6 handles cycle phase 6. Its beam advance reaches phase 6
+// (8N+7), where 38-column border comparisons (leftComp38=55,
+// rightComp38=359) occur.
 func (v *VICII) dotclock6() {
 	v.dot++
-
-	if v.dot >= VisibleDotsPerLine {
-		return
-	}
+	v.advanceGraphicsData()
 
 	if v.dot == rightComp38 && v.control2&csel == 0 {
-		// "1. If the X coordinate reaches the right comparison value, the
-		// main border flip flop is set."
 		v.mainBorder = true
 	}
 	if v.dot == leftComp38 && v.control2&csel == 0 {
-		// "4./5. If the X coordinate reaches the left comparison value
-		// and the Y coordinate reaches the bottom/top one, set/reset
-		// (if DEN) the vertical border flip flop."
 		rsel := (v.control1 >> 3) & 1
 		if v.rasterLine == bottomComp[rsel] {
 			v.verticalBorder = true
@@ -639,12 +731,13 @@ func (v *VICII) dotclock6() {
 		if v.rasterLine == topComp[rsel] && v.control1&0x10 != 0 {
 			v.verticalBorder = false
 		}
-		// "6. If the X coordinate reaches the left comparison value and
-		// the vertical border flip flop is not set, the main flip flop
-		// is reset."
 		if !v.verticalBorder {
 			v.mainBorder = false
 		}
+	}
+
+	if v.dot >= VisibleDotsPerLine {
+		return
 	}
 	if !v.lineDrawable || v.dot < renderFirstDot || v.dot >= renderDotAfter {
 		return
@@ -654,25 +747,15 @@ func (v *VICII) dotclock6() {
 		writePixelToBuffer(v.dot, v.rasterLine, v.borderColor&0x0F)
 		return
 	}
-	var graphicsColor byte
-	if v.gdSequencer&0x80 == 0 {
-		graphicsColor = v.background0
-	} else {
-		graphicsColor = byte(v.videoBuffer >> 8) // foreground color nibble
-	}
-	v.gdSequencer <<= 1 // this pixel is now shifted out
-	if v.mainBorder {
-		graphicsColor = v.borderColor
-	}
-	writePixelToBuffer(v.dot, v.rasterLine, graphicsColor&0x0F)
+	v.paintGraphicsPixel()
 }
 
-// dotclock7 handles cycle phase 7. Its beam advance reaches phase 0, so it
-// alone can push the beam off the end of a line (and, once every
-// RasterLinesPerFrame lines, off the end of a frame), match rightComp[1]
-// (368) or leftComp[1] (48), and evaluate the g-access commit.
+// dotclock7 handles cycle phase 7. Its beam advance reaches phase 7
+// (8N+8 = 0 mod 8), where line wrap and 40-column border comparisons
+// (leftComp40=48, rightComp40=368) occur.
 func (v *VICII) dotclock7() {
 	v.dot++
+	v.advanceGraphicsData()
 	if v.dot >= DotsPerLine {
 		v.dot = 0
 		v.rasterLine++
@@ -683,12 +766,10 @@ func (v *VICII) dotclock7() {
 		// place the cached visibility answers can go stale.
 		v.lineVisible = v.rasterLine < firstVBlankLine && v.rasterLine > lastVBlankLine
 		v.lineDrawable = v.rasterLine >= renderFirstLine && v.rasterLine < renderLineAfter
+		v.checkRasterIRQ()
 	}
 
 	if !v.lineVisible {
-		return
-	}
-	if v.dot >= VisibleDotsPerLine {
 		return
 	}
 
@@ -708,11 +789,10 @@ func (v *VICII) dotclock7() {
 		}
 	}
 
-	// dot&7==0 is always true here, so only the slot range needs checking.
-	if slot := v.dot / 8; slot >= 6 && slot <= 45 {
-		v.gdSequencer = v.gdPending
-		v.videoBuffer = v.videoBufferPending
+	if v.dot >= VisibleDotsPerLine {
+		return
 	}
+
 	if !v.lineDrawable || v.dot < renderFirstDot || v.dot >= renderDotAfter {
 		return
 	}
@@ -721,17 +801,7 @@ func (v *VICII) dotclock7() {
 		writePixelToBuffer(v.dot, v.rasterLine, v.borderColor&0x0F)
 		return
 	}
-	var graphicsColor byte
-	if v.gdSequencer&0x80 == 0 {
-		graphicsColor = v.background0
-	} else {
-		graphicsColor = byte(v.videoBuffer >> 8) // foreground color nibble
-	}
-	v.gdSequencer <<= 1 // this pixel is now shifted out
-	if v.mainBorder {
-		graphicsColor = v.borderColor
-	}
-	writePixelToBuffer(v.dot, v.rasterLine, graphicsColor&0x0F)
+	v.paintGraphicsPixel()
 }
 
 // phi0low runs on the first dot of every 8-dot cycle: while the VIC-II is
@@ -791,10 +861,7 @@ func (v *VICII) phi0low() {
 	// cycleIsCAccess: pulls BA low for the duration of a Bad Line's
 	// c-accesses, article cycles 12-54.
 	v.BA = !(slot >= 1 && slot <= 43 && badLine)
-	// g-access reads the video matrix entry stored by the c-access one
-	// cycle earlier (c-access runs in the second phase of cycles 15-54;
-	// g-access, in the first phase, can only see data from a strictly
-	// earlier cycle), so its range is shifted one cycle later: 16-55.
+
 	if slot >= 5 && slot <= 44 {
 		v.cycleGAccess()
 	}
@@ -810,24 +877,38 @@ func (v *VICII) cycleSetVicCounter() {
 	}
 }
 
-// cycleGAccess reads one row of character data (standard text mode only
-// for now), and advances VC/VMLI (section 3.7.2/3.7.3.1). The fetched
+// cycleGAccess reads one row of graphics data and advances VC/VMLI
+// (section 3.7.2/3.7.3). The fetched
 // byte isn't displayed immediately: it's latched in gdPending and
-// committed to gdSequencer/videoBuffer when dotclock7 advances the beam to
-// the next character-cell boundary, 4 dots after this cycle's own dot&7==4.
+// committed at the XSCROLL-selected dot of the next character cell, at
+// least 4 dots after this cycle's own dot&7==4.
 func (v *VICII) cycleGAccess() {
-	v.videoBufferPending = v.videoMatrixColor[v.VMLI]
+	if v.idle {
+		v.videoBufferPending = 0
+		v.gdPending = plaVICLoad(0x3FFF)
+		return
+	}
+
+	if v.VMLI < 40 {
+		v.videoBufferPending = v.videoMatrixColor[v.VMLI]
+	} else {
+		v.videoBufferPending = 0
+	}
 
 	cb := (uint16(v.memPointers) >> 1) & 0x07
-	addr := (cb << 11) + (v.videoBufferPending&0xFF)<<3 + uint16(v.RC)
+	var addr uint16
+	switch v.selectedGraphicsMode() {
+	case modeStandardBitmap, modeMulticolorBitmap:
+		addr = (cb&0x04)<<11 | v.VC<<3 | uint16(v.RC)
+	case modeECMText:
+		addr = cb<<11 | (v.videoBufferPending&0x3F)<<3 | uint16(v.RC)
+	default:
+		addr = cb<<11 | (v.videoBufferPending&0xFF)<<3 | uint16(v.RC)
+	}
 	v.gdPending = plaVICLoad(addr)
 
-	// "VC and VMLI are incremented after each g-access in display state"
-	// (section 3.7.2, rule 4): idle state g-accesses don't advance them.
-	if !v.idle {
-		v.VC++
-		v.VMLI++
-	}
+	v.VC++
+	v.VMLI++
 }
 
 // cycleGotoIdle checks for the end of a character row, on the first phase
@@ -863,8 +944,8 @@ func (v *VICII) cycleBorderComp() {
 func (v *VICII) phi0high() {
 	// slot as in phi0low, but 4 dots later, so its offset from the
 	// article's cycle numbering differs by one.
-	slot := v.dot / 8
-	if slot >= 5 && slot <= 44 {
+	slot := (v.dot - 1) / 8
+	if slot >= 4 && slot <= 43 && v.badLine {
 		v.cycleCAccess()
 	}
 
@@ -875,14 +956,13 @@ func (v *VICII) phi0high() {
 // cycleCAccess reads one character pointer + color entry from the video
 // matrix into the current row's buffer, during a Bad Line (section 3.7.2).
 func (v *VICII) cycleCAccess() {
-	if !v.badLine {
-		return
-	}
 	vm := (uint16(v.memPointers) >> 4) & 0x0F
 	char := plaVICLoad((vm << 10) + v.VC)
 	// Colour RAM is a dedicated 2114 chip wired directly to the VIC-II's
 	// colour bus, not part of the 64K address space the c-access above
 	// reads through, so it is read here independently of plaVICLoad.
 	color := colorRAM[v.VC]
-	v.videoMatrixColor[v.VMLI] = uint16(color)<<8 | uint16(char)
+	if v.VMLI < 40 {
+		v.videoMatrixColor[v.VMLI] = uint16(color)<<8 | uint16(char)
+	}
 }

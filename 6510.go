@@ -205,10 +205,11 @@ func (c *CPU) TickPhi2() {
 		}
 		c.nmiLine = nmi
 
-		if cia1.IRQ && !c.irqLine {
+		irq := cia1.IRQ || vic.IRQ
+		if irq && !c.irqLine {
 			c.irqAssertClock = c.Clock
 		}
-		c.irqLine = cia1.IRQ
+		c.irqLine = irq
 
 		switch {
 		case c.nmiLatch && c.Clock >= c.nmiLatchClock+2:
@@ -228,7 +229,7 @@ func (c *CPU) TickPhi2() {
 			c.Interrupt = 2
 			c.Opcode = 0x00
 			c.TState = 1
-		case cia1.IRQ && c.effectiveI == 0 && c.Clock >= c.irqAssertClock+2:
+		case irq && c.effectiveI == 0 && c.Clock >= c.irqAssertClock+2:
 			c.Interrupt = 1
 			c.Opcode = 0x00
 			c.TState = 1
