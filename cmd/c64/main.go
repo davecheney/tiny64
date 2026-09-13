@@ -32,7 +32,8 @@ func main() {
 		}
 	}
 	var cart tiny64.Cartridge
-	if *cartridgePath != "" {
+	hasCart := *cartridgePath != ""
+	if hasCart {
 		var err error
 		if cart, err = tiny64.ReadCartridge(*cartridgePath); err != nil {
 			log.Fatal(err)
@@ -45,7 +46,7 @@ func main() {
 	}
 
 	if err := desktop.Run("c64", func() {
-		if *cartridgePath != "" {
+		if hasCart {
 			tiny64.GetBus().InsertCartridge(cart)
 		}
 		if *wedge {

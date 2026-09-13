@@ -32,6 +32,8 @@ const (
 	crtHeaderMagic = "C64 CARTRIDGE   "
 	crtChipMagic   = "CHIP"
 
+	cartridgeBankSize = 0x2000
+
 	crtHardwareNormal  = 0
 	crtHardwareUltimax = 1
 )
@@ -67,7 +69,21 @@ func cartridgeLoad(rom []byte, addr uint16) uint8 {
 	}
 	// Real cartridge ROM chips expose only the address pins they have. A
 	// smaller image therefore naturally mirrors through the selected window.
+	if isPowerOfTwo(len(rom)) {
+		return rom[int(addr)&(len(rom)-1)]
+	}
 	return rom[int(addr)%len(rom)]
+}
+
+func splitROMLH(rom []byte) (roml, romh []byte) {
+	if len(rom) > cartridgeBankSize {
+		return rom[:cartridgeBankSize], rom[cartridgeBankSize:]
+	}
+	return rom, nil
+}
+
+func isPowerOfTwo(n int) bool {
+	return n > 0 && n&(n-1) == 0
 }
 
 // Insert plugs a cartridge into the expansion port. rom is the raw ROM
@@ -76,9 +92,8 @@ func cartridgeLoad(rom []byte, addr uint16) uint8 {
 // actually populated with a ROM chip on the PCB.
 func (b *Bus) Insert(rom []byte, game, exrom, romh, roml bool) {
 	cart := Cartridge{ROM: rom, Game: game, Exrom: exrom, ROMH: romh, ROML: roml}
-	if roml && romh && len(rom) > 0x2000 {
-		cart.ROMLData = rom[:0x2000]
-		cart.ROMHData = rom[0x2000:]
+	if roml && romh && len(rom) > cartridgeBankSize {
+		cart.ROMLData, cart.ROMHData = splitROMLH(rom)
 	} else {
 		if roml {
 			cart.ROMLData = rom
@@ -158,6 +173,9 @@ func ParseCRT(data []byte) (Cartridge, error) {
 		if size != packetLen-0x10 {
 			return Cartridge{}, fmt.Errorf("CRT CHIP packet at offset %d has image size %d but packet carries %d bytes", off, size, packetLen-0x10)
 		}
+		if !isPowerOfTwo(size) {
+			return Cartridge{}, fmt.Errorf("CRT CHIP packet at offset %d has non-power-of-two image size %d", off, size)
+		}
 		if chipType != 0 {
 			return Cartridge{}, fmt.Errorf("unsupported CRT CHIP type %d at offset %d", chipType, off)
 		}
@@ -168,13 +186,14 @@ func ParseCRT(data []byte) (Cartridge, error) {
 		chip := data[off+0x10 : off+packetLen]
 		switch start {
 		case 0x8000:
-			if size > 0x2000 {
+			if size > cartridgeBankSize {
 				// 16K normal CRT images can store both ROML and ROMH in one
 				// CHIP packet starting at $8000: the first 8K is ROML, the
 				// remainder is ROMH.
-				cart.ROMLData = append([]byte(nil), chip[:0x2000]...)
+				roml, romh := splitROMLH(chip)
+				cart.ROMLData = append([]byte(nil), roml...)
 				cart.ROML = true
-				cart.ROMHData = append([]byte(nil), chip[0x2000:]...)
+				cart.ROMHData = append([]byte(nil), romh...)
 				cart.ROMH = true
 			} else {
 				cart.ROMLData = append([]byte(nil), chip...)
