@@ -133,18 +133,18 @@ func (c *DriveCPU) TickPhi2() {
 	via2.Tick()
 	via2DiskTick(c)
 
+	irq := via1.IRQ || via2.IRQ
+	if irq && !c.irqLine {
+		c.irqAssertClock = c.Clock
+	}
+	c.irqLine = irq
+
 	switch c.TState {
 	// T0: Fetch the opcode, unless a pending IRQ takes over instead,
 	// serviced via BRK's microcode. The 1541's 6502 has no NMI line. Real
 	// hardware needs an asserted IRQ line to be stable for 2 cycles before
 	// it's recognized (see Clock/irqAssertClock).
 	case 0:
-		irq := via1.IRQ || via2.IRQ
-		if irq && !c.irqLine {
-			c.irqAssertClock = c.Clock
-		}
-		c.irqLine = irq
-
 		switch {
 		case irq && c.effectiveI == 0 && c.Clock >= c.irqAssertClock+2:
 			c.Interrupt = 1

@@ -167,6 +167,10 @@ func TestVICRegisterStorage(t *testing.T) {
 			if got, want := v.ReadRegister(0xD000+reg), uint8(0xFB); got != want {
 				t.Errorf("register $%02X = $%02X, want $%02X", reg, got, want)
 			}
+		case 0x1E, 0x1F:
+			if got := v.ReadRegister(0xD000 + reg); got != 0 {
+				t.Errorf("collision register $%02X = $%02X, want $00", reg, got)
+			}
 		default:
 			if got, want := v.ReadRegister(0xD000+reg), uint8(reg+1); got != want {
 				t.Errorf("register $%02X = $%02X, want $%02X", reg, got, want)
