@@ -998,6 +998,12 @@ func (v *VICII) dotclock7() {
 		// place the cached visibility answers can go stale.
 		v.lineVisible = v.rasterLine < firstVBlankLine && v.rasterLine > lastVBlankLine
 		v.lineDrawable = v.rasterLine >= renderFirstLine && v.rasterLine < renderLineAfter
+		if v.rasterLine != 0 {
+			v.checkRasterIRQ()
+		}
+	} else if v.rasterLine == 0 && v.dot == DotsPerCycle {
+		// Raster line 0 is compared in cycle 2; all other lines are
+		// compared in cycle 1.
 		v.checkRasterIRQ()
 	}
 

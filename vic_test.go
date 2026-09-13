@@ -429,6 +429,30 @@ func TestVICRasterIRQTriggersWhenCompareIsWrittenOnCurrentLine(t *testing.T) {
 	})
 }
 
+func TestVICRasterLineZeroIRQTriggersInCycleTwo(t *testing.T) {
+	v := &VICII{}
+	v.Reset()
+	v.rasterLine = RasterLinesPerFrame - 1
+	v.dot = DotsPerLine - 1
+
+	v.dotclock7()
+	if v.interruptStatus&0x01 != 0 {
+		t.Fatal("line-zero raster IRQ triggered in cycle 1")
+	}
+
+	for range DotsPerCycle - 1 {
+		v.StepDot()
+	}
+	if v.interruptStatus&0x01 != 0 {
+		t.Fatal("line-zero raster IRQ triggered before cycle 2")
+	}
+
+	v.StepDot()
+	if v.interruptStatus&0x01 == 0 {
+		t.Fatal("line-zero raster IRQ did not trigger in cycle 2")
+	}
+}
+
 func TestVICRasterIRQReachesCPU(t *testing.T) {
 	saveMachine(t)
 
