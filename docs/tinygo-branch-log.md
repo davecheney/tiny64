@@ -31,7 +31,7 @@ cycle-accurate VIC-II/6502-opcode push (the 9 commits below).
 | `4dafb37` | cmd/prg: add a .prg inspector and 6502 disassembler | **deferred** | New standalone `cmd/prg` tool; not drive/VIC/CPU-timing related, so it should backport cleanly, but not yet reviewed/picked. Low priority - a desktop-only debugging tool. |
 | `c26ae8f` | cmd/snapshot: add headless PNG renderer | **deferred** | New standalone `cmd/snapshot` tool. Desktop-only (image/png, no tinygo relevance); low priority, not yet reviewed. |
 | `e9f8ccc` | Implement VIC-II graphics modes and raster interrupts | **skip (for now)** | Core of the cycle-accurate VIC-II push. Large, and exactly the kind of change whose frame-time cost needs to be measured before it can be considered - not yet attempted. Revisit only if a specific mode/feature is needed and can be shown not to regress frame time. |
-| `ca2f6a2` | Support illegal NOP, LAX, and DCP opcodes in 6510 CPU | **skip (for now)** | Adds illegal-opcode support to the 6510 core the tinygo branch shares with main. Likely cheap (dispatch table additions), but not yet measured; revisit if a specific demo/cartridge needs it. |
+| `ca2f6a2` | Support illegal NOP, LAX, and DCP opcodes in 6510 CPU | **picked (full)** | Adds illegal NOP, LAX, and DCP opcodes to the 6510 CPU core. Applied cleanly. On-device measurement on Tufty 2040 at `-opt=2` confirmed no frame-time degradation (steady `emulate≈74.5ms/frame` across 450+ frames, matching baseline). |
 | `21ddeb5` | vic: add unit test for 40-to-38 column sideborder opening trick | **skip** | Test-only, for VIC-II behaviour (`e9f8ccc`) not present on this branch. Pointless without that commit. |
 | `f0470b4` | vic: add unit tests for 38-to-40 border opening and vertical border comparison rules | **skip** | Same as above - test-only, depends on `e9f8ccc`. |
 | `e9772f3` | vic: gate pixel output on the main border flip-flop only | **skip (for now)** | Depends on the VIC-II graphics-mode/border state added in `e9f8ccc`; nothing to backport onto until/unless that lands. |
@@ -98,6 +98,12 @@ via `git reset --hard` back to `43f319b` before ever being pushed, so
 Not backported. If revisited, it needs its own A/B on the Tufty 2040 (and
 ideally the Gopher Badge too, since this branch targets both) rather than
 assuming the Badge result transfers.
+
+## Flashing and Monitoring Workflow (Tufty 2040)
+
+- **Build & Flash**: `tinygo flash -target=tufty2040 -opt=2 ./cmd/tufty2040` (compiles and flashes in a single step).
+- **Bootloader Reset**: Opening USB CDC port at 1200 baud resets the RP2040 into bootloader mode (`/Volumes/RPI-RP2`).
+- **Serial Telemetry Monitoring**: Use `tinygo monitor` or read USB serial port (`/dev/cu.usbmodem1201` on macOS) at 115200 baud. Average `emulate=...ms` over 50-frame windows. Baseline is ~73-74ms/frame at `-opt=2`.
 
 ## Contributing back to main
 
