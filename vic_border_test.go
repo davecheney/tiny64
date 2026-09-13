@@ -65,6 +65,31 @@ func TestVICBorderPlacement(t *testing.T) {
 	}
 }
 
+func TestVICBorderColorWriteSamplesCurrentPhi2Span(t *testing.T) {
+	v := &VICII{}
+	v.Reset()
+	for dot := range v.rightBorder {
+		v.rightBorder[dot] = 0x02
+	}
+	v.dot = rightEdge40 + DotsPerCycle
+
+	v.WriteRegister(0xD020, 0x05)
+
+	for dot := uint16(rightEdge38); dot < rightEdge40; dot++ {
+		if got := v.rightBorder[dot-rightEdge38]; got != 0x02 {
+			t.Fatalf("right-border color at dot %d = %d, want previous color 2", dot, got)
+		}
+	}
+	for dot := uint16(rightEdge40); dot <= v.dot; dot++ {
+		if got := v.rightBorder[dot-rightEdge38]; got != 0x05 {
+			t.Fatalf("right-border color at dot %d = %d, want newly written color 5", dot, got)
+		}
+	}
+	if got := v.rightBorder[v.dot+1-rightEdge38]; got != 0x02 {
+		t.Fatalf("right-border color after current Phi2 span = %d, want previous color 2", got)
+	}
+}
+
 // TestVICGAccessPixelAlignment is a regression test for a 4-pixel g-access
 // pipeline delay bug: the graphics data sequencer was reloaded on the bus
 // cycle boundary (dot&7==4) rather than on the character-cell boundary
