@@ -53,3 +53,35 @@ func TestDiskReadSector(t *testing.T) {
 		t.Fatalf("diskReadSector(36,0) should be nil (track out of range)")
 	}
 }
+
+func TestMakeD64FromPRG(t *testing.T) {
+	saveMachine(t)
+
+	prgData := []byte{0x01, 0x08, 0x00, 0x00} // $0801 start address + dummy BASIC bytes
+	d64, err := MakeD64FromPRG("love.prg", prgData)
+	if err != nil {
+		t.Fatalf("MakeD64FromPRG failed: %v", err)
+	}
+	if len(d64) != D64Size {
+		t.Fatalf("len(d64) = %d, want %d", len(d64), D64Size)
+	}
+
+	InsertDisk(d64)
+	entries := diskDirectory()
+	if len(entries) != 1 {
+		t.Fatalf("len(diskDirectory()) = %d, want 1", len(entries))
+	}
+
+	if name := entries[0].nameString(); name != "LOVE" {
+		t.Errorf("entry name = %q, want %q", name, "LOVE")
+	}
+
+	if typ := entries[0].fileType(); typ != ftypePRG {
+		t.Errorf("entry type = %d, want ftypePRG (%d)", typ, ftypePRG)
+	}
+
+	readData := diskReadFile(entries[0])
+	if string(readData) != string(prgData) {
+		t.Errorf("diskReadFile = %v, want %v", readData, prgData)
+	}
+}
