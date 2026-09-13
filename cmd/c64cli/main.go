@@ -8,6 +8,7 @@ import (
 	"log"
 	"math/rand/v2"
 	"os"
+	"path/filepath"
 
 	"github.com/davecheney/tiny64"
 	"github.com/davecheney/tiny64/rom"
@@ -94,7 +95,7 @@ func main() {
 		targetFile = *prg
 	}
 	if targetFile != "" {
-		image, err := tiny64.ReadDiskOrPRG(targetFile)
+		image, err := tiny64.ReadDiskOrPRG(os.DirFS(filepath.Dir(targetFile)), filepath.Base(targetFile))
 		if err != nil {
 			log.Fatal(err)
 		}
