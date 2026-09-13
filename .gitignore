@@ -2,6 +2,7 @@
 !*/
 !.gitignore
 !*.go
+!*.crt
 !README.md
 !go.mod
 !go.sum

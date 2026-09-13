@@ -1,9 +1,12 @@
 package tiny64
 
 import (
+	"bytes"
 	"encoding/binary"
 	"strings"
 	"testing"
+
+	"github.com/davecheney/tiny64/rom"
 )
 
 func testCRT(t *testing.T, hardwareType uint16, exrom, game bool, chips ...[]byte) []byte {
@@ -81,6 +84,25 @@ func TestParseCRTNormal16KSingleChip(t *testing.T) {
 	}
 	if got := cart.romhLoad(0x1FFF); got != 0xBF {
 		t.Fatalf("cart.romhLoad(0x1fff) = %#02x, want 0xbf", got)
+	}
+}
+
+func TestEmbeddedDiSTestMAXCRT(t *testing.T) {
+	cart, err := ReadCartridge("rom/destest-max.crt")
+	if err != nil {
+		t.Fatalf("ReadCartridge failed: %v", err)
+	}
+	if cart.Name != "DISTEST MAX" {
+		t.Fatalf("cart.Name = %q, want DISTEST MAX", cart.Name)
+	}
+	if !cart.Game || cart.Exrom {
+		t.Fatalf("cart lines = game %v exrom %v, want Ultimax game true exrom false", cart.Game, cart.Exrom)
+	}
+	if cart.ROML || !cart.ROMH {
+		t.Fatalf("cart chips = roml %v romh %v, want only ROMH", cart.ROML, cart.ROMH)
+	}
+	if !bytes.Equal(cart.ROMHData, rom.DiagCart) {
+		t.Fatalf("CRT ROMH data does not match embedded DiSTestMAX ROM")
 	}
 }
 

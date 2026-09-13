@@ -40,6 +40,7 @@ replaces the other.
     go run ./cmd/c64 -disk demo.d64                  # the real 1541
     go run ./cmd/c64 -disk demo.d64 -drive=virtual   # the generic drive
     go run ./cmd/c64 -cartridge game.crt             # a CRT cartridge image
+    go run ./cmd/c64 -cartridge rom/destest-max.crt  # DiSTestMAX cartridge
 
 Both should behave identically for `LOAD"$",8`, `LOAD"NAME",8` and
 `SAVE`; the difference only shows for software that drives the 1541's own
@@ -120,7 +121,7 @@ Raspberry Pi Pico.
 - `cmd/prg` inspects `.prg` files: header, BASIC listing, disassembly
 - `cmd/internal/prg` and `cmd/internal/disasm` are the PRG decoder and the
   6502 disassembler behind it
-- `cmd/deadtest` and `cmd/destestmax` run C64 diagnostic cartridges
+- `cmd/deadtest` runs the built-in C64 Dead Test diagnostic cartridge
 
 Tufty 2040 builds should leave TinyGo's default scheduler and optimization
 level in place unless re-measuring on hardware; scheduler or `-opt` overrides
