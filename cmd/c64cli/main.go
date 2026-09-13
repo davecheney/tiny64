@@ -79,6 +79,11 @@ func main() {
 			explicitWedge = true
 		}
 	})
+	resolvedKernal, err := tiny64.ResolveKernalModeFlags(*kernal, *wedge, explicitKernal, explicitWedge)
+	if err != nil {
+		log.Fatal(err)
+	}
+	*kernal = resolvedKernal
 
 	// Fill RAM with random values to simulate power-on randomness.
 	ram := tiny64.Ram()
@@ -95,12 +100,6 @@ func main() {
 	}
 	if *deadtest {
 		tiny64.GetBus().Insert(rom.DeadTest, true, false, true, false)
-	}
-	if explicitKernal && explicitWedge && *kernal != "wedge" {
-		log.Fatal("conflicting flags: -wedge cannot be combined with -kernal stock")
-	}
-	if *wedge {
-		*kernal = "wedge"
 	}
 	if err := tiny64.SetKernalMode(*kernal); err != nil {
 		log.Fatal(err)

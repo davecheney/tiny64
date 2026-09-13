@@ -2,6 +2,7 @@ package tiny64
 
 import (
 	"fmt"
+	"sync"
 
 	"github.com/davecheney/tiny64/rom"
 )
@@ -15,6 +16,8 @@ const (
 
 var (
 	activeKernalMode = kernalModeStock
+	wedgeKernalROM   []byte
+	wedgeKernalOnce  sync.Once
 )
 
 func setKernalMode(mode kernalMode) {
@@ -35,7 +38,23 @@ func SetKernalMode(mode string) error {
 	return nil
 }
 
+// ResolveKernalModeFlags resolves -kernal and -wedge flag combinations.
+func ResolveKernalModeFlags(kernal string, wedge bool, explicitKernal, explicitWedge bool) (string, error) {
+	if explicitWedge && wedge && explicitKernal && kernal != "wedge" {
+		return "", fmt.Errorf("conflicting flags: -wedge cannot be combined with -kernal stock")
+	}
+	if wedge {
+		return "wedge", nil
+	}
+	return kernal, nil
+}
+
 func activeKernalROM() []byte {
-	_ = activeKernalMode
-	return rom.Kernal
+	if activeKernalMode != kernalModeWedge {
+		return rom.Kernal
+	}
+	wedgeKernalOnce.Do(func() {
+		wedgeKernalROM = append([]byte(nil), rom.Kernal...)
+	})
+	return wedgeKernalROM
 }
