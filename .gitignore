@@ -5,5 +5,6 @@
 !README.md
 !go.mod
 !go.sum
+!rom/doswedge.crt
 !.github/workflows/*.yml
 !.github/dependabot.yml
