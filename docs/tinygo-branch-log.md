@@ -19,22 +19,27 @@ that hardware model no longer exists on this branch.
 
 `78e8f0e` "Align dotclock names with cycle phases" — the last commit that
 was itself tinygo/hot-path focused, immediately before `main` started its
-cycle-accurate VIC-II/6502-opcode push (the 9 commits below).
+cycle-accurate VIC-II/6502-opcode push (the commits below).
 
-## Commits examined so far (`78e8f0e..main`, oldest first)
+## Commits examined (`78e8f0e..main`, oldest first)
 
 | commit | title | decision | notes |
 |---|---|---|---|
 | `fed7887` | Support auto-mounting PRG files into drive 8 | **picked (full)**, commit `77d5947` | Pure `d64fs.go` addition (`ReadDiskOrPRG`, `MakeD64FromPRG`) plus a `-prg` flag on `cmd/c64`/`cmd/c64cli`; drive-agnostic. Hand-resolved only for this branch's already-dropped `-drive` flag. |
 | `df32d90` | Add support for 40-track D64 images | **picked (partial)**, commit `2a93049` | Kept `D64Size40`, the 40-track `sectorsPerTrack`/`trackOffset` extension, and `ReadDiskOrPRG`'s 40-track acceptance + tests. Dropped the `1541disk.go`/`cmd/drivec` hunks (both deleted on this branch) and `TestDriveStepping40Track`, which exercised the real drive's VIA head-stepper (`via2StorePRB`/`driveHalfTrack`), also gone here. |
 | `e5ba18f` | Add DOS 5.1 wedge commands | **picked (full)**, commit `3abd2aa` | `doswedge.go` itself only touches BASIC RAM/screen and the DOS command channel — no 1541/VIA/GCR dependency, applied unchanged. Hand-resolved `Reset()` (dropped the deleted `ResetDrive()` call), `InsertDisk`/`replaceDisk` (dropped `driveFlushTrack()`), and `saveMachine`'s snapshot (dropped the deleted `driveCPU`/`via1`/`via2`/`driveRAM`/`driveAttached` fields, kept `virtualDriveAttached` + the new `dosWedge` snapshot). `-drive` flag stayed gone; `-wedge` was kept. |
-| `4dafb37` | cmd/prg: add a .prg inspector and 6502 disassembler | **deferred** | New standalone `cmd/prg` tool; not drive/VIC/CPU-timing related, so it should backport cleanly, but not yet reviewed/picked. Low priority - a desktop-only debugging tool. |
-| `c26ae8f` | cmd/snapshot: add headless PNG renderer | **deferred** | New standalone `cmd/snapshot` tool. Desktop-only (image/png, no tinygo relevance); low priority, not yet reviewed. |
-| `e9f8ccc` | Implement VIC-II graphics modes and raster interrupts | **skip (for now)** | Core of the cycle-accurate VIC-II push. Large, and exactly the kind of change whose frame-time cost needs to be measured before it can be considered - not yet attempted. Revisit only if a specific mode/feature is needed and can be shown not to regress frame time. |
+| `4dafb37` | cmd/prg: add a .prg inspector and 6502 disassembler | **picked (full)** | Standalone desktop debugging tool with no import path into either device firmware. Isolated backport passed `go test ./...` and `go build ./cmd/prg`; its README conflict was resolved without restoring the removed real-drive harness. |
+| `c26ae8f` | cmd/snapshot: add headless PNG renderer | **rejected** | Direct compatibility check fails: it calls `tiny64.AttachDrive`, absent with the branch's removed real 1541 emulation. Do not backport without a virtual-drive-specific implementation. |
+| `e9f8ccc` | Implement VIC-II graphics modes and raster interrupts | **rejected** | Applied cleanly in an isolated worktree; host tests and Tufty build passed, but a physical Tufty 2040 A/B at `-opt=2 -scheduler=none` regressed from a 74.77ms/frame baseline to 91.59-91.63ms/frame over five stable 50-frame windows. Baseline firmware was restored. |
 | `ca2f6a2` | Support illegal NOP, LAX, and DCP opcodes in 6510 CPU | **picked (full)** | Adds illegal NOP, LAX, and DCP opcodes to the 6510 CPU core. Applied cleanly. On-device measurement on Tufty 2040 at `-opt=2` confirmed no frame-time degradation (steady `emulate≈74.5ms/frame` across 450+ frames, matching baseline). |
-| `21ddeb5` | vic: add unit test for 40-to-38 column sideborder opening trick | **skip** | Test-only, for VIC-II behaviour (`e9f8ccc`) not present on this branch. Pointless without that commit. |
-| `f0470b4` | vic: add unit tests for 38-to-40 border opening and vertical border comparison rules | **skip** | Same as above - test-only, depends on `e9f8ccc`. |
-| `e9772f3` | vic: gate pixel output on the main border flip-flop only | **skip (for now)** | Depends on the VIC-II graphics-mode/border state added in `e9f8ccc`; nothing to backport onto until/unless that lands. |
+| `21ddeb5` | vic: add unit test for 40-to-38 column sideborder opening trick | **skip** | Isolated cherry-pick conflicts because `vic_modes_test.go` is created by the rejected `e9f8ccc`; test-only and inapplicable without it. |
+| `f0470b4` | vic: add unit tests for 38-to-40 border opening and vertical border comparison rules | **skip** | Isolated cherry-pick conflicts because it modifies `vic_modes_test.go`, created by rejected `e9f8ccc`. |
+| `e9772f3` | vic: gate pixel output on the main border flip-flop only | **skip** | Isolated cherry-pick conflicts in `6569.go` and `vic_modes_test.go`; depends on rejected `e9f8ccc` and its border state. |
+| `3ede1ec` | vic: implement sprites and sprite DMA bus cycle stealing | **skip** | Isolated cherry-pick conflicts in `6569.go` and test files; depends on the rejected graphics-mode/border sequence. |
+| `1fb80cd` | vic: latch sprite DMA per line instead of reading registers live | **skip** | Sprite-DMA correctness follow-up; `vic_sprites_test.go` and the required `3ede1ec` sprite base are absent. |
+| `49bb855` | vic: pin down the sprite DMA and BA behaviour with tests | **skip** | Test-only follow-up requiring the skipped `3ede1ec` sprite-DMA implementation. |
+| `f482449` | build: upgrade Ebitengine to 2.10.1 | **skip** | Ebitengine is used only by the desktop frontend and is absent from both TinyGo device dependency graphs. The update passed isolated desktop and device-build checks, but is not a TinyGo improvement and was reverted to keep this branch hardware-focused. |
+| `c19872c` | Fix VIC-II right-edge raster seam | **skip** | Isolated cherry-pick conflicts in `6569.go` and its test; the raster path is part of the rejected graphics-mode/sprite implementation. |
 
 ## Performance investigation: frame-time gap vs main's ~70ms target
 
@@ -43,12 +48,12 @@ backports above sit around emulate≈76-80ms/frame at TinyGo's default
 `-opt=z` (optimize for size), vs. main's stated cycle-accurate ~70ms
 target on the same class of hardware. Investigated two candidate causes:
 
-- **`-scheduler=none`**: valid on `cmd/tufty2040` (it has no goroutines;
-  `cmd/gopher-badge64` does, via its render goroutine, and needs
-  `-scheduler=cores`). Builds cleanly, ~1.3KB smaller flash, but no
-  measurable frame-time change on hardware. Not adopted as a default
-  since it buys nothing measurable and is a footgun if a goroutine is
-  ever added to `cmd/tufty2040`.
+- **Scheduler**: `cmd/tufty2040` has no goroutines, so its flash and
+  measurement commands use `-scheduler=none`. `cmd/gopher-badge64` has a
+  render goroutine and must use `-scheduler=cores`; these target-specific
+  settings must not be interchanged. `-scheduler=none` builds cleanly and
+  is ~1.3KB smaller on Tufty, though it did not independently improve
+  frame time in prior measurements.
 - **XIP (execute-in-place flash) cache pressure**: added permanent
   telemetry (`xip=H.HH% (hit/access accesses)` in the per-50-frame serial
   report on both `cmd/tufty2040` and `cmd/gopher-badge64`) reading the
@@ -101,9 +106,9 @@ assuming the Badge result transfers.
 
 ## Flashing and Monitoring Workflow (Tufty 2040)
 
-- **Build & Flash**: `tinygo flash -target=tufty2040 -opt=2 ./cmd/tufty2040` (compiles and flashes in a single step).
+- **Build & Flash**: `tinygo flash -target=tufty2040 -opt=2 -scheduler=none ./cmd/tufty2040` (compiles and flashes in a single step).
 - **Bootloader Reset**: Opening USB CDC port at 1200 baud resets the RP2040 into bootloader mode (`/Volumes/RPI-RP2`).
-- **Serial Telemetry Monitoring**: Use `tinygo monitor` or read USB serial port (`/dev/cu.usbmodem1201` on macOS) at 115200 baud. Average `emulate=...ms` over 50-frame windows. Baseline is ~73-74ms/frame at `-opt=2`.
+- **Serial Telemetry Monitoring**: Use `tinygo monitor` or read USB serial port (`/dev/cu.usbmodem1201` on macOS) at 115200 baud. Average `emulate=...ms` over 50-frame windows. Baseline is ~73-74ms/frame at `-opt=2 -scheduler=none`.
 
 ## Contributing back to main
 

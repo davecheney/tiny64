@@ -66,6 +66,29 @@ BASIC program lines are deliberately left to BASIC rather than intercepted by a
 CHRGET hook, so wedge tokens in a numbered line retain normal BASIC syntax
 behaviour instead of becoming hidden disk operations.
 
+## Inspecting programs
+
+`cmd/prg` decodes a `.prg` file - a two byte little endian load address
+followed by the bytes loaded there - without running the emulator. With no
+flags it prints a header, then works out what the payload is: a BASIC V2
+program loaded at `$0801` is listed, and if that program is a `SYS` stub
+with machine code behind it the machine code is disassembled too. Anything
+else is disassembled from its load address.
+
+    go run ./cmd/prg maze.prg               # header, then a BASIC listing
+    go run ./cmd/prg -v game.prg            # addresses in decimal as well
+    go run ./cmd/prg -hex sprites.prg       # hex dump instead
+    go run ./cmd/prg -disasm -start '$C000' -end '$C0FF' code.prg
+
+A `.prg` stored inside a D64 image can be inspected in place, naming the
+file the way CBM DOS does, wildcards and all:
+
+    go run ./cmd/prg -d64 demo.d64 -list    # the disk directory
+    go run ./cmd/prg -d64 demo.d64 'MA*'
+
+The disassembler covers all 256 opcodes, including the undocumented ones,
+which are printed with a leading `*`.
+
 It is deliberately small: the core package has no dependency on any
 graphics library, so it can run headless (for testing) or under
 [Ebitengine](https://ebitengine.org/) for a desktop GUI. There is also a
@@ -84,6 +107,9 @@ Raspberry Pi Pico.
 - `cmd/gopher-badge64` is the TinyGo build target for the Gopher Badge
 - `cmd/tufty2040` is the TinyGo build target for the Pimoroni Tufty 2040,
   using its parallel ST7789 display through PIO/DMA
+- `cmd/prg` inspects `.prg` files: header, BASIC listing, disassembly
+- `cmd/internal/prg` and `cmd/internal/disasm` are the PRG decoder and the
+  6502 disassembler behind it
 - `cmd/deadtest` and `cmd/destestmax` run C64 diagnostic cartridges
 
 Both `cmd/tufty2040` and `cmd/gopher-badge64` print a per-50-frame line to
@@ -100,11 +126,13 @@ emulate≈73-74ms/frame, a ~7% win, for roughly 45KB more flash (108KB →
 both optimization levels, ruling out flash-cache pressure as the
 difference; the win is from `-opt=2` generating faster code outright.
 `-opt=2` is therefore the recommended flag for on-device measurement
-unless flash space becomes tight enough to need `-opt=z` back. TinyGo's
-default scheduler should stay in place unless re-measuring on hardware;
-scheduler overrides can break or regress the build.
+unless flash space becomes tight enough to need `-opt=z` back. Tufty 2040
+measurements must use `-scheduler=none`: that target has no goroutines.
+The Gopher Badge target has a render goroutine and must instead use
+`-scheduler=cores`; scheduler settings are target-specific and must not be
+interchanged.
 
-    tinygo build -target=tufty2040 -o out.uf2 ./cmd/tufty2040
+    tinygo build -target=tufty2040 -opt=2 -scheduler=none -o out.uf2 ./cmd/tufty2040
 
 The Tufty target starts the PIO/DMA panel transfer asynchronously and waits for
 it immediately before queuing the next transfer, so most of the display write
