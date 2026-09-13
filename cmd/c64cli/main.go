@@ -66,6 +66,7 @@ func main() {
 	deadtest := flag.Bool("deadtest", false, "insert the Dead Test MAX-mode cartridge before reset")
 	disk := flag.String("disk", "", "insert this D64 disk image or PRG file into drive 8")
 	prg := flag.String("prg", "", "insert this PRG file into drive 8 (formatted on a virtual disk)")
+	wedge := flag.Bool("wedge", false, "enable the resident DOS wedge at the BASIC prompt")
 	flag.Parse()
 
 	// Fill RAM with random values to simulate power-on randomness.
@@ -83,6 +84,9 @@ func main() {
 	}
 	if *deadtest {
 		tiny64.GetBus().Insert(rom.DeadTest, true, false, true, false)
+	}
+	if *wedge {
+		tiny64.EnableDOSWedge()
 	}
 	targetFile := *disk
 	if targetFile == "" {

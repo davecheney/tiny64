@@ -12,6 +12,7 @@ import (
 func main() {
 	disk := flag.String("disk", "", "insert this D64 disk image or PRG file into drive 8")
 	prg := flag.String("prg", "", "insert this PRG file into drive 8 (formatted on a virtual disk)")
+	wedge := flag.Bool("wedge", false, "enable the resident DOS wedge at the BASIC prompt")
 	flag.Parse()
 
 	targetFile := *disk
@@ -30,6 +31,9 @@ func main() {
 	}
 
 	if err := desktop.Run("c64", func() {
+		if *wedge {
+			tiny64.EnableDOSWedge()
+		}
 		if image != nil {
 			// Inserting a disk plugs the virtual drive into the serial
 			// bus, if there wasn't one there already.

@@ -83,6 +83,7 @@ func (c *CPU) Status() uint8 {
 func Reset() {
 	cpu.Reset()
 	vic.Reset()
+	resetDOSWedge()
 }
 
 func (c *CPU) Reset() {
@@ -178,6 +179,7 @@ func (c *CPU) TickPhi2() {
 	// monostable is a timer, so it counts here with the CIAs. It isn't on
 	// the bus, so AEC is none of its business.
 	keyboard.tick()
+	tickDOSWedge()
 
 	// If VIC-II has pulled AEC low, the CPU is electronically
 	// disconnected from the bus. It stalls entirely.

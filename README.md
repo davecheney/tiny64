@@ -36,6 +36,36 @@ which attaches the virtual drive automatically.
 
     go run ./cmd/c64 -disk demo.d64
 
+The desktop and headless front ends also have an opt-in `-wedge` flag. It
+installs a small resident program at `$C000` after BASIC initializes, without
+requiring freezer hardware or a cartridge ROM:
+
+    go run ./cmd/c64 -disk demo.d64 -wedge
+    go run ./cmd/c64cli -disk demo.d64 -drive=virtual -wedge
+
+The wedge prints `DOS WEDGE ACTIVE` at the first prompt and accepts the
+historical direct-mode DOS Wedge / DOS Manager 5.1 shorthands:
+
+- `$` or `@$` loads and lists the directory without replacing the current BASIC
+  program; directory patterns such as `$:DEMO*` are also passed to the drive
+- `@` or `>` prints the drive status
+- `@S:NAME`, `>S:NAME`, `@N:DISK,ID`, and other `@`/`>` strings are sent to the
+  drive's command channel, then the resulting status is printed
+- `@#9` selects the active IEC device number for later wedge commands
+- `/NAME` expands to `LOAD"NAME",dev`
+- `↑NAME` expands to `LOAD"NAME",dev` and runs the program after the load
+  returns to the BASIC prompt
+- `%NAME` expands to `LOAD"NAME",dev,1` for machine-code programs
+- `←NAME` expands to `SAVE"NAME",dev`
+- `@Q` deactivates the wedge; `SYS 52224` reactivates the resident copy
+
+All disk traffic still uses the emulated KERNAL and IEC bus, so the normal
+load, save, directory, and command-channel messages remain visible. The wedge
+is disabled by default and is installed as a direct-mode prompt hook. Stored
+BASIC program lines are deliberately left to BASIC rather than intercepted by a
+CHRGET hook, so wedge tokens in a numbered line retain normal BASIC syntax
+behaviour instead of becoming hidden disk operations.
+
 It is deliberately small: the core package has no dependency on any
 graphics library, so it can run headless (for testing) or under
 [Ebitengine](https://ebitengine.org/) for a desktop GUI. There is also a
