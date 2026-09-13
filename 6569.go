@@ -344,6 +344,8 @@ func (v *VICII) sampleSideBorderAtWrite(control2 uint8) {
 				v.rightBorderAt = 0
 				v.rightBorderOpen = true
 			}
+		} else if csel == 0 {
+			v.rightBorderOpen = true
 		}
 	}
 }
@@ -369,9 +371,19 @@ func (v *VICII) finishSideBorder() {
 
 func (v *VICII) sampleGraphicsAtWrite(control2 uint8) {
 	slot := v.dot / 8
-	if slot >= 6 && slot <= 45 && v.dot&0x07 == uint16(control2&0x07) {
+	if slot >= 6 && slot <= 45 && v.dot&0x07 == graphicsReloadPhase(control2) {
 		v.loadGraphicsData()
 	}
+}
+
+func graphicsReloadPhase(control2 uint8) uint16 {
+	scroll := uint16(control2 & 0x07)
+	// Multicolor pixels span two dot clocks. The final odd scroll position
+	// completes its pair at phase 7 and reloads on the following boundary.
+	if control2&0x10 != 0 && scroll == 7 {
+		return 0
+	}
+	return scroll
 }
 
 func (v *VICII) loadGraphicsData() {
@@ -387,7 +399,7 @@ func (v *VICII) loadGraphicsData() {
 // A g-access completes four dots before the unscrolled cell boundary.
 func (v *VICII) advanceGraphicsData() {
 	slot := v.dot / 8
-	if slot >= 6 && slot <= 45 && v.dot&0x07 == uint16(v.control2&0x07) {
+	if slot >= 6 && slot <= 45 && v.dot&0x07 == graphicsReloadPhase(v.control2) {
 		v.loadGraphicsData()
 	}
 }
@@ -506,7 +518,7 @@ func (v *VICII) paintGraphicsPixel() {
 			x |= 0x100
 		}
 		expandX := (expandXReg & mask) != 0
-		startDot := 24 + x
+		startDot := (24 + x) % DotsPerLine
 		var px uint8
 		if !expandX {
 			if d < startDot || d >= startDot+24 {

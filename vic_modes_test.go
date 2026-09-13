@@ -108,6 +108,34 @@ func TestVICXScrollDelaysGraphicsReload(t *testing.T) {
 	}
 }
 
+func TestVICMulticolorXScrollSevenReloadsAtPairBoundary(t *testing.T) {
+	v := &VICII{
+		control2:           0x17,
+		gdPending:          0xFF,
+		videoBufferPending: 0x0100,
+	}
+
+	v.dot = 55
+	v.advanceGraphicsData()
+	if v.gdSequencer != 0 {
+		t.Fatalf("sequencer reloaded at dot %d in multicolor mode with XSCROLL=7", v.dot)
+	}
+
+	v.dot = 56
+	v.advanceGraphicsData()
+	if v.gdSequencer != 0xFF || v.videoBuffer != 0x0100 {
+		t.Fatalf("sequencer=%#02x buffer=%#04x at dot %d, want pending graphics data",
+			v.gdSequencer, v.videoBuffer, v.dot)
+	}
+
+	v = &VICII{control2: 7, gdPending: 0xA5}
+	v.dot = 55
+	v.advanceGraphicsData()
+	if v.gdSequencer != 0xA5 {
+		t.Fatal("standard-resolution XSCROLL=7 did not reload at dot 55")
+	}
+}
+
 func TestVICXScrollWriteReloadsAtCurrentDot(t *testing.T) {
 	v := &VICII{
 		dot:                48,
@@ -257,6 +285,9 @@ func TestVICSideBorderRMWWritesSkipRightComparisons(t *testing.T) {
 	}
 	if v.rightBorderAt != 0 {
 		t.Fatalf("rightBorderAt=%d after both comparisons were bypassed, want 0", v.rightBorderAt)
+	}
+	if !v.rightBorderOpen {
+		t.Fatal("right border was not marked open after both comparisons were bypassed")
 	}
 }
 
