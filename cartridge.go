@@ -11,11 +11,6 @@ import (
 // port. The zero value matches an empty port: /GAME and /EXROM float high
 // (unasserted), so the PLA falls back to normal CPU-port-driven banking.
 type Cartridge struct {
-	// ROM is a legacy single-chip ROM image, used only as a fallback when
-	// ROMLData/ROMHData are empty.
-	//
-	// Deprecated: use ROMLData and ROMHData.
-	ROM          []byte
 	ROMLData     []byte // bytes exposed through the /ROML chip-select, usually $8000-$9FFF
 	ROMHData     []byte // bytes exposed through the /ROMH chip-select, usually $A000-$BFFF or $E000-$FFFF
 	Name         string // cartridge name from the CRT header
@@ -48,19 +43,11 @@ func (c *Cartridge) ultimax() bool {
 }
 
 func (c *Cartridge) romlLoad(addr uint16) uint8 {
-	rom := c.ROMLData
-	if len(rom) == 0 {
-		rom = c.ROM
-	}
-	return cartridgeLoad(rom, addr)
+	return cartridgeLoad(c.ROMLData, addr)
 }
 
 func (c *Cartridge) romhLoad(addr uint16) uint8 {
-	rom := c.ROMHData
-	if len(rom) == 0 {
-		rom = c.ROM
-	}
-	return cartridgeLoad(rom, addr)
+	return cartridgeLoad(c.ROMHData, addr)
 }
 
 func cartridgeLoad(rom []byte, addr uint16) uint8 {
@@ -91,7 +78,7 @@ func isPowerOfTwo(n int) bool {
 // asserted); romh/roml indicate which of the cartridge's chip-selects are
 // actually populated with a ROM chip on the PCB.
 func (b *Bus) Insert(rom []byte, game, exrom, romh, roml bool) {
-	cart := Cartridge{ROM: rom, Game: game, Exrom: exrom, ROMH: romh, ROML: roml}
+	cart := Cartridge{Game: game, Exrom: exrom, ROMH: romh, ROML: roml}
 	if roml && romh {
 		cart.ROMLData, cart.ROMHData = splitROMLH(rom)
 		if cart.ROMHData == nil {

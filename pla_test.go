@@ -55,7 +55,7 @@ func TestPLAVICLoadUltimaxROMH(t *testing.T) {
 	for i := range cartROM {
 		cartROM[i] = byte(i)
 	}
-	cartridge = Cartridge{ROM: cartROM, Game: true, Exrom: false, ROMH: true}
+	cartridge = Cartridge{ROMHData: cartROM, Game: true, Exrom: false, ROMH: true}
 
 	for _, base := range []uint16{0x3000, 0x7000, 0xB000, 0xF000} {
 		for offset := 0; offset <= 0x0FFF; offset++ {
