@@ -240,9 +240,10 @@ func (c *CPU) TickPhi2() {
 			c.Interrupt = 2
 			c.Opcode = 0x00
 			c.TState = 1
-		// irqAssertClock is recorded on the first cycle that samples the
-		// asserted line, so +1 recognizes it on the second sampled cycle.
-		case irq && c.effectiveI == 0 && c.Clock >= c.irqAssertClock+1:
+		// IRQ is sampled at the end of Phi2. irqAssertClock records the
+		// first TickPhi2 that observed the line, two ticks before that
+		// assertion can affect the instruction-boundary poll.
+		case irq && c.effectiveI == 0 && c.Clock >= c.irqAssertClock+4:
 			c.Interrupt = 1
 			c.Opcode = 0x00
 			c.TState = 1
