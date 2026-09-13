@@ -85,7 +85,7 @@ func TestAttachIECReplacesByAddress(t *testing.T) {
 func TestAttachIECKeepsDistinctAddresses(t *testing.T) {
 	saveBus(t)
 
-	AttachVirtualDrive(8)                // virtual drive at 8
+	AttachVirtualDrive(8)               // virtual drive at 8
 	attachIEC(&stubPeripheral{addr: 9}) // second device at 9
 
 	if len(iecBus) != 2 {
@@ -105,7 +105,7 @@ func TestDetachIECDoesNotWriteThroughSnapshots(t *testing.T) {
 	AttachVirtualDrive(8)
 	snapshot := iecBus
 
-	DetachVirtualDrive()                 // detach, freeing slot 0 of the shared array
+	DetachVirtualDrive()                // detach, freeing slot 0 of the shared array
 	attachIEC(&stubPeripheral{addr: 8}) // attach, which used to reuse that slot
 
 	if _, ok := snapshot[0].(*iecDevice); !ok {
