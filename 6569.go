@@ -145,6 +145,15 @@ type VICII struct {
 
 	spriteSpriteCollision uint8
 	spriteDataCollision   uint8
+
+	// spriteDisplay is the set of sprites that will be drawn on the next
+	// raster line, and spriteShape their already-fetched pattern bytes.
+	// Both are latched during the sprite fetch block at the end of a line;
+	// see latchSpriteDisplay and latchSpriteShape.
+	spriteDisplay uint8
+	spriteExpFF   uint8
+	spriteRow     [8]uint8
+	spriteShape   [8][3]uint8
 }
 
 var vic VICII
@@ -202,6 +211,10 @@ func (v *VICII) Reset() {
 	v.IRQ = false
 	v.spriteSpriteCollision = 0
 	v.spriteDataCollision = 0
+	v.spriteDisplay = 0
+	v.spriteExpFF = 0
+	v.spriteRow = [8]uint8{}
+	v.spriteShape = [8][3]uint8{}
 	v.syncLineVisibility()
 }
 
@@ -373,9 +386,9 @@ func (v *VICII) nextGraphicsColor() (byte, bool) {
 // only the colour that is written is replaced.
 func (v *VICII) paintGraphicsPixel() {
 	graphicsColor, isForeground := v.nextGraphicsColor()
-	enableReg := v.registers12To15[3] // $D015
+	display := v.spriteDisplay
 
-	if enableReg == 0 {
+	if display == 0 {
 		if v.mainBorder {
 			graphicsColor = v.borderColor
 		}
@@ -385,12 +398,10 @@ func (v *VICII) paintGraphicsPixel() {
 
 	d := v.dot
 	r := v.rasterLine
-	expandYReg := v.register17            // $D017
 	expandXReg := v.registers19To1F[4]    // $D01D
 	multicolorReg := v.registers19To1F[3] // $D01C
 	priorityReg := v.registers19To1F[2]   // $D01B
 	msbReg := v.registers00To10[0x10]     // $D010
-	screenBase := (uint16(v.memPointers) >> 4) & 0x0F << 10
 
 	var (
 		hitCount             int
@@ -401,24 +412,8 @@ func (v *VICII) paintGraphicsPixel() {
 
 	for i := uint8(0); i < 8; i++ {
 		mask := uint8(1 << i)
-		if enableReg&mask == 0 {
+		if display&mask == 0 {
 			continue
-		}
-
-		// Vertical range check
-		y := uint16(v.registers00To10[i*2+1])
-		expandY := (expandYReg & mask) != 0
-		var py uint8
-		if !expandY {
-			if r < y || r >= y+21 {
-				continue
-			}
-			py = uint8(r - y)
-		} else {
-			if r < y || r >= y+42 {
-				continue
-			}
-			py = uint8((r - y) / 2)
 		}
 
 		// Horizontal range check
@@ -441,27 +436,20 @@ func (v *VICII) paintGraphicsPixel() {
 			px = uint8((d - startDot) / 2)
 		}
 
-		// Fetch sprite pattern byte
-		ptrAddr := screenBase + 0x03F8 + uint16(i)
-		ptr := plaVICSpriteLoad(ptrAddr)
-		dataAddr := uint16(ptr) * 64
+		shape := &v.spriteShape[i]
 
 		multicolor := (multicolorReg & mask) != 0
 		var color byte
 		if !multicolor {
-			byteOffset := px / 8
-			bitInByte := 7 - (px % 8)
-			b := plaVICSpriteLoad(dataAddr + uint16(py)*3 + uint16(byteOffset))
-			if (b>>bitInByte)&1 == 0 {
+			b := shape[px/8]
+			if (b>>(7-(px%8)))&1 == 0 {
 				continue
 			}
 			color = v.registers22To2E[5+i] & 0x0F
 		} else {
 			pairIdx := px / 2
-			byteOffset := pairIdx / 4
 			shift := (3 - (pairIdx % 4)) * 2
-			b := plaVICSpriteLoad(dataAddr + uint16(py)*3 + uint16(byteOffset))
-			pairVal := (b >> shift) & 0x03
+			pairVal := (shape[pairIdx/4] >> shift) & 0x03
 			switch pairVal {
 			case 0:
 				continue
@@ -998,6 +986,17 @@ func (v *VICII) phi0low() {
 	// Sprite DMA (section 3.6.3) additionally pulls BA low for five
 	// cycles per DMA-active sprite - two fetch cycles plus the same three
 	// cycle lead - in the fixed windows given by spriteBASlotMask.
+	//
+	// The sprite fetch block runs from slot 44 to the end of the line and
+	// feeds the next line's display window, so the display decision is
+	// latched here, before BA consults it, and each sprite's shape is
+	// fetched in its own window.
+	if slot == 44 {
+		v.latchSpriteDisplay()
+	}
+	if slot >= 47 && slot&1 == 1 {
+		v.latchSpriteShape(uint8((slot - 47) / 2))
+	}
 	v.BA = !(slot >= 1 && slot <= 43 && badLine) && !v.spriteDMAStall(slot)
 
 	if slot >= 5 && slot <= 44 {
@@ -1023,31 +1022,78 @@ var spriteBASlotMask = [CyclesPerLine]uint8{
 // spriteDMAStall reports whether any sprite whose BA window covers this
 // slot is currently DMA active, and so is holding BA low.
 func (v *VICII) spriteDMAStall(slot uint16) bool {
-	cand := spriteBASlotMask[slot]
-	if cand == 0 || v.registers12To15[3] == 0 {
-		return false
-	}
-	for i := uint8(0); i < 8; i++ {
-		if cand&(1<<i) != 0 && v.spriteDMAActive(i) {
-			return true
-		}
-	}
-	return false
+	return spriteBASlotMask[slot]&v.spriteDisplay != 0
 }
 
-// spriteDMAActive reports whether sprite i is enabled and its Y band
-// (accounting for Y-expansion) covers the current raster line.
-func (v *VICII) spriteDMAActive(i uint8) bool {
-	mask := uint8(1) << i
-	if v.registers12To15[3]&mask == 0 {
-		return false
+// latchSpriteDisplay advances each sprite's DMA state one raster line, and
+// leaves in spriteDisplay the set of sprites that will be drawn on the
+// *next* line, with spriteRow holding the row of each sprite's shape to
+// fetch.
+//
+// The VIC-II runs this once per line, in the first phase of article cycle
+// 55 (our slot 44). A sprite's DMA is a one-shot trigger: it turns on for
+// the single line where the sprite's Y matches the low eight bits of
+// RASTER, and from then on the chip walks the sprite's 21 rows off an
+// internal counter (MCBASE) with no further reference to Y. Rewriting Y
+// part way through cannot retract the rows already committed, which is
+// exactly what a sprite multiplexer relies on: it reprograms a sprite for
+// its next slot while the current one is still being drawn.
+//
+// Everything after this point - the pointer and data fetches, and the
+// display window on the following line - runs off the state latched here.
+func (v *VICII) latchSpriteDisplay() {
+	enable := v.registers12To15[3] // $D015
+	expandY := v.register17        // $D017
+	line := uint8(v.rasterLine)
+
+	for i := uint8(0); i < 8; i++ {
+		mask := uint8(1) << i
+
+		// Advance a sprite already under DMA to its next row. Y expansion
+		// holds each row for two lines by only advancing on every second
+		// one, tracked by the expansion flip flop.
+		if v.spriteDisplay&mask != 0 {
+			advance := true
+			if expandY&mask != 0 {
+				v.spriteExpFF ^= mask
+				advance = v.spriteExpFF&mask == 0
+			}
+			if advance {
+				if v.spriteRow[i] == 20 {
+					v.spriteDisplay &^= mask
+				} else {
+					v.spriteRow[i]++
+				}
+			}
+		}
+
+		// A sprite whose DMA is off starts a new 21 row run on the line
+		// its Y names. The comparison is against the low eight bits of
+		// RASTER, so on PAL a sprite positioned above line 56 is triggered
+		// a second time when the raster passes 256 + Y.
+		if v.spriteDisplay&mask == 0 && enable&mask != 0 &&
+			v.registers00To10[i*2+1] == line {
+			v.spriteDisplay |= mask
+			v.spriteRow[i] = 0
+			v.spriteExpFF |= mask
+		}
 	}
-	y := uint16(v.registers00To10[i*2+1])
-	r := v.rasterLine
-	if v.register17&mask != 0 {
-		return r >= y && r < y+42
+}
+
+// latchSpriteShape performs sprite i's pointer and data fetches, the
+// p-access and three s-accesses the VIC-II makes in article cycles 58+2i
+// and 59+2i. The three bytes are one row of the sprite, chosen by the row
+// counter the chip derives from how far into its Y band the sprite is.
+func (v *VICII) latchSpriteShape(i uint8) {
+	if v.spriteDisplay&(1<<i) == 0 {
+		return
 	}
-	return r >= y && r < y+21
+	screenBase := (uint16(v.memPointers) >> 4) & 0x0F << 10
+	ptr := plaVICSpriteLoad(screenBase + 0x03F8 + uint16(i))
+	addr := uint16(ptr)*64 + uint16(v.spriteRow[i])*3
+	v.spriteShape[i][0] = plaVICSpriteLoad(addr)
+	v.spriteShape[i][1] = plaVICSpriteLoad(addr + 1)
+	v.spriteShape[i][2] = plaVICSpriteLoad(addr + 2)
 }
 
 // cycleSetVicCounter loads VC from VCBase and resets VMLI (and RC on a Bad

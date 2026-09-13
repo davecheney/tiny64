@@ -42,7 +42,7 @@ func TestVICSpriteSingleColorRendering(t *testing.T) {
 	v.control2 = 0x08
 
 	// Advance VIC to line 55, dot 48 (start of sprite 0)
-	for v.rasterLine != 55 || v.dot != 48 {
+	for v.rasterLine != 56 || v.dot != 48 {
 		v.StepDot()
 	}
 
@@ -52,14 +52,14 @@ func TestVICSpriteSingleColorRendering(t *testing.T) {
 		v.dot++
 	}
 
-	// Verify byte 0 drawn pixels (dots 48..55 on line 55) match Red palette color
+	// Verify byte 0 drawn pixels (dots 48..55 on line 56) match Red palette color
 	buf := FrameBufferRGBA()
 	redColor := C64Palette[2]
 	for dot := uint16(48); dot < 56; dot++ {
-		idx := (int(55-FirstVisibleLine)*VisibleDotsPerLine + int(dot)) * 4
+		idx := (int(56-FirstVisibleLine)*VisibleDotsPerLine + int(dot)) * 4
 		got := [4]byte{buf[idx], buf[idx+1], buf[idx+2], buf[idx+3]}
 		if got != redColor {
-			t.Errorf("dot %d on line 50 = %v, want %v (Red)", dot, got, redColor)
+			t.Errorf("dot %d on line 56 = %v, want %v (Red)", dot, got, redColor)
 		}
 	}
 }
@@ -93,7 +93,7 @@ func TestVICSpriteMulticolorRendering(t *testing.T) {
 
 	v.control1 = 0x1B
 	v.control2 = 0x08
-	for v.rasterLine != 55 || v.dot != 48 {
+	for v.rasterLine != 56 || v.dot != 48 {
 		v.StepDot()
 	}
 
@@ -110,21 +110,21 @@ func TestVICSpriteMulticolorRendering(t *testing.T) {
 
 	// Pair 01 (dots 48, 49) -> Cyan
 	for dot := uint16(48); dot <= 49; dot++ {
-		idx := (int(55-FirstVisibleLine)*VisibleDotsPerLine + int(dot)) * 4
+		idx := (int(56-FirstVisibleLine)*VisibleDotsPerLine + int(dot)) * 4
 		if got := [4]byte{buf[idx], buf[idx+1], buf[idx+2], buf[idx+3]}; got != cyan {
 			t.Errorf("pair 01 at dot %d = %v, want Cyan %v", dot, got, cyan)
 		}
 	}
 	// Pair 10 (dots 50, 51) -> Purple
 	for dot := uint16(50); dot <= 51; dot++ {
-		idx := (int(55-FirstVisibleLine)*VisibleDotsPerLine + int(dot)) * 4
+		idx := (int(56-FirstVisibleLine)*VisibleDotsPerLine + int(dot)) * 4
 		if got := [4]byte{buf[idx], buf[idx+1], buf[idx+2], buf[idx+3]}; got != purple {
 			t.Errorf("pair 10 at dot %d = %v, want Purple %v", dot, got, purple)
 		}
 	}
 	// Pair 11 (dots 52, 53) -> Green
 	for dot := uint16(52); dot <= 53; dot++ {
-		idx := (int(55-FirstVisibleLine)*VisibleDotsPerLine + int(dot)) * 4
+		idx := (int(56-FirstVisibleLine)*VisibleDotsPerLine + int(dot)) * 4
 		if got := [4]byte{buf[idx], buf[idx+1], buf[idx+2], buf[idx+3]}; got != green {
 			t.Errorf("pair 11 at dot %d = %v, want Green %v", dot, got, green)
 		}
@@ -138,26 +138,28 @@ func TestVICSpriteExpansionXY(t *testing.T) {
 	cia2.PRA, cia2.DDRA = 3, 3
 	v.memPointers = 0x14
 	ram[0x0400+0x03F8] = 64
-	ram[0x1000] = 0x80 // 1 bit set at px=0
+	ram[0x1000] = 0x80 // row 0, 1 bit set at px=0
+	ram[0x1003] = 0x80 // row 1, 1 bit set at px=0
+	ram[0x1006] = 0x00 // row 2, blank
 
 	v.WriteRegister(0xD000, 24) // X=24
 	v.WriteRegister(0xD001, 55) // Y=55
 	v.WriteRegister(0xD015, 0x01)
-	v.WriteRegister(0xD017, 0x01) // Expand Y (42 lines)
-	v.WriteRegister(0xD01D, 0x01) // Expand X (48 dots)
+	v.WriteRegister(0xD017, 0x01) // Expand Y
+	v.WriteRegister(0xD01D, 0x01) // Expand X
 	v.WriteRegister(0xD027, 2)    // Red
 
 	v.control1 = 0x1B
 	v.control2 = 0x08
 
-	for v.rasterLine != 55 || v.dot != 48 {
-		v.StepDot()
-	}
-
-	// With Expand X, bit 0 (px=0) spans dots 48 and 49.
-	// With Expand Y, row 0 spans lines 55 and 56.
-	for line := uint16(55); line <= 56; line++ {
-		v.rasterLine = line
+	// Sprite Y names the line the DMA is triggered on, so the first
+	// displayed line is 56. The expansion flip flop is set by the trigger
+	// and inverted once per line thereafter, which makes row 0 occupy a
+	// single line and every later row occupy two.
+	for line := uint16(56); line <= 59; line++ {
+		for v.rasterLine != line || v.dot != 48 {
+			v.StepDot()
+		}
 		for dot := uint16(48); dot <= 51; dot++ {
 			v.dot = dot
 			v.paintGraphicsPixel()
@@ -166,14 +168,28 @@ func TestVICSpriteExpansionXY(t *testing.T) {
 
 	buf := FrameBufferRGBA()
 	red := C64Palette[2]
+	at := func(line, dot uint16) [4]byte {
+		idx := (int(line-FirstVisibleLine)*VisibleDotsPerLine + int(dot)) * 4
+		return [4]byte{buf[idx], buf[idx+1], buf[idx+2], buf[idx+3]}
+	}
 
-	for line := uint16(55); line <= 56; line++ {
+	// Row 0 on line 56, row 1 held across lines 57 and 58, row 2 blank on 59.
+	for _, line := range []uint16{56, 57, 58} {
+		// Expand X makes bit 0 span two dots.
 		for dot := uint16(48); dot <= 49; dot++ {
-			idx := (int(line-FirstVisibleLine)*VisibleDotsPerLine + int(dot)) * 4
-			if got := [4]byte{buf[idx], buf[idx+1], buf[idx+2], buf[idx+3]}; got != red {
+			if got := at(line, dot); got != red {
 				t.Errorf("expanded pixel at line %d, dot %d = %v, want Red %v", line, dot, got, red)
 			}
 		}
+		// Bit 1 is clear, so dots 50 and 51 must not be sprite coloured.
+		for dot := uint16(50); dot <= 51; dot++ {
+			if got := at(line, dot); got == red {
+				t.Errorf("line %d, dot %d = Red, want background", line, dot)
+			}
+		}
+	}
+	if got := at(59, 48); got == red {
+		t.Errorf("line 59, dot 48 = Red, want background (row 2 is blank)")
 	}
 }
 
@@ -193,14 +209,14 @@ func TestVICSpritePriority(t *testing.T) {
 
 	v.control1 = 0x1B
 	v.control2 = 0x08
-	for v.rasterLine != 55 || v.dot != 48 {
+	for v.rasterLine != 56 || v.dot != 48 {
 		v.StepDot()
 	}
 
 	buf := FrameBufferRGBA()
 	red := C64Palette[2]
 	white := C64Palette[1]
-	idx := (int(55-FirstVisibleLine)*VisibleDotsPerLine + 48) * 4
+	idx := (int(56-FirstVisibleLine)*VisibleDotsPerLine + 48) * 4
 
 	// Test 1: Priority = 0 (sprite in front of graphics). Sprite (Red) shows over foreground graphics (White).
 	v.WriteRegister(0xD01B, 0x00)
@@ -253,7 +269,7 @@ func TestVICSpriteSpriteCollision(t *testing.T) {
 
 	v.control1 = 0x1B
 	v.control2 = 0x08
-	for v.rasterLine != 55 || v.dot != 48 {
+	for v.rasterLine != 56 || v.dot != 48 {
 		v.StepDot()
 	}
 	v.dot = 48
@@ -293,7 +309,7 @@ func TestVICSpriteDataCollision(t *testing.T) {
 
 	v.control1 = 0x1B
 	v.control2 = 0x08
-	for v.rasterLine != 55 || v.dot != 48 {
+	for v.rasterLine != 56 || v.dot != 48 {
 		v.StepDot()
 	}
 	v.dot = 48
@@ -335,7 +351,7 @@ func TestVICSpriteXMSBForSprites1To7(t *testing.T) {
 	v.control1 = 0x1B
 	v.control2 = 0x08
 
-	for v.rasterLine != 55 || v.dot != 280 {
+	for v.rasterLine != 56 || v.dot != 280 {
 		v.StepDot()
 	}
 
@@ -347,10 +363,85 @@ func TestVICSpriteXMSBForSprites1To7(t *testing.T) {
 	buf := FrameBufferRGBA()
 	redColor := C64Palette[2]
 	for dot := uint16(280); dot < 288; dot++ {
-		idx := (int(55-FirstVisibleLine)*VisibleDotsPerLine + int(dot)) * 4
+		idx := (int(56-FirstVisibleLine)*VisibleDotsPerLine + int(dot)) * 4
 		got := [4]byte{buf[idx], buf[idx+1], buf[idx+2], buf[idx+3]}
 		if got != redColor {
-			t.Errorf("sprite 1 at dot %d on line 55 = %v, want %v (Red)", dot, got, redColor)
+			t.Errorf("sprite 1 at dot %d on line 56 = %v, want %v (Red)", dot, got, redColor)
+		}
+	}
+}
+
+// displayedLines runs the per line sprite DMA latch over a range of raster
+// lines and reports the lines on which sprite 0 is displayed. The latch runs
+// at slot 44, after that line's display window, so state latched on line L
+// drives the display of line L+1.
+func displayedLines(v *VICII, from, to uint16, at map[uint16]func()) []uint16 {
+	var lines []uint16
+	for line := from; line <= to; line++ {
+		v.rasterLine = line
+		if f, ok := at[line]; ok {
+			f()
+		}
+		v.latchSpriteDisplay()
+		if v.spriteDisplay&1 != 0 {
+			lines = append(lines, line+1)
+		}
+	}
+	return lines
+}
+
+// TestVICSpriteDMABandIsYPlusOne verifies that the sprite Y register names the
+// line the DMA is triggered on rather than the first line drawn. The chip
+// turns the display on at cycle 58, past that line's display window, so a
+// sprite at Y occupies lines Y+1 to Y+21.
+func TestVICSpriteDMABandIsYPlusOne(t *testing.T) {
+	v := &VICII{}
+	v.Reset()
+	v.WriteRegister(0xD015, 0x01)
+	v.WriteRegister(0xD001, 55)
+
+	got := displayedLines(v, 40, 90, nil)
+	if len(got) != 21 {
+		t.Fatalf("displayed %d lines %v, want 21", len(got), got)
+	}
+	if got[0] != 56 || got[20] != 76 {
+		t.Errorf("displayed lines %d..%d, want 56..76", got[0], got[20])
+	}
+}
+
+// TestVICSpriteDMATriggerIsOneShot verifies that DMA is a one shot trigger:
+// once a sprite is under DMA the chip walks 21 rows off its own counter and
+// never consults Y again. Raster multiplexers depend on this, because they
+// rewrite Y mid band to reuse the same sprite further down the screen.
+func TestVICSpriteDMATriggerIsOneShot(t *testing.T) {
+	v := &VICII{}
+	v.Reset()
+	v.WriteRegister(0xD015, 0x01)
+	v.WriteRegister(0xD001, 55)
+
+	// Move the sprite mid band to a line the raster has not yet reached but
+	// which still falls inside the band. A chip that re-armed on every Y
+	// match would restart the run at line 65 and stretch the band; the real
+	// one ignores Y entirely until the 21 rows are spent. The later write
+	// then starts a fresh band once DMA has switched off.
+	got := displayedLines(v, 40, 200, map[uint16]func(){
+		60:  func() { v.WriteRegister(0xD001, 65) },
+		100: func() { v.WriteRegister(0xD001, 150) },
+	})
+
+	want := make([]uint16, 0, 42)
+	for line := uint16(56); line <= 76; line++ {
+		want = append(want, line)
+	}
+	for line := uint16(151); line <= 171; line++ {
+		want = append(want, line)
+	}
+	if len(got) != len(want) {
+		t.Fatalf("displayed %d lines, want %d: got %v", len(got), len(want), got)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("displayed lines %v, want %v", got, want)
 		}
 	}
 }
