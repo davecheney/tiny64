@@ -371,29 +371,40 @@ func TestVICSpriteXMSBForSprites1To7(t *testing.T) {
 	}
 }
 
-func TestVICSpriteXWrapsAtRasterLine(t *testing.T) {
+func TestVICWrappedSpritesFillLeftBorderBlock(t *testing.T) {
 	clearFrameBufferRGBA()
 
 	v := &VICII{
 		dot:           0,
 		rasterLine:    56,
 		lineDrawable:  true,
-		spriteDisplay: 1,
-		spriteShape:   [8][3]uint8{{0xFF, 0, 0}},
+		spriteDisplay: 3,
+		spriteShape: [8][3]uint8{
+			{0xFF, 0xFF, 0xFF},
+			{0xFF, 0xFF, 0xFF},
+		},
 	}
-	v.registers00To10[0] = 0xE0 // X=480 with $D010 bit 0 set
+	v.registers00To10[0] = 0xE0 // Sprite 0: X=480, wraps to dots 0-23.
+	v.registers00To10[2] = 0x00 // Sprite 1: X=0, starts at dot 24.
 	v.registers00To10[0x10] = 0x01
 	v.registers22To2E[5] = 2
+	v.registers22To2E[6] = 4
 
-	for range 8 {
+	for range 32 {
 		v.paintGraphicsPixel()
 		v.dot++
 	}
 
-	for dot := uint16(0); dot < 8; dot++ {
+	for dot := uint16(0); dot < 24; dot++ {
 		if !frameBufferPixelIs(dot, 56, 2) {
 			t.Errorf("wrapped sprite pixel at dot %d is %v, want %v",
 				dot, frameBufferPixelRGBA(dot, 56), C64Palette[2])
+		}
+	}
+	for dot := uint16(24); dot < 32; dot++ {
+		if !frameBufferPixelIs(dot, 56, 4) {
+			t.Errorf("adjacent sprite pixel at dot %d is %v, want %v",
+				dot, frameBufferPixelRGBA(dot, 56), C64Palette[4])
 		}
 	}
 }
