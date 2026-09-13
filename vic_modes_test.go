@@ -63,6 +63,34 @@ func TestVICGraphicsModeAddresses(t *testing.T) {
 	}
 }
 
+func TestVICBitmapIdleAccessUsesIdleData(t *testing.T) {
+	saveMachine(t)
+	cia2.PRA, cia2.DDRA = 3, 3 // VIC bank 0
+
+	v := &VICII{
+		idle:               true,
+		VC:                 12,
+		RC:                 3,
+		memPointers:        0x08,
+		control1:           0x20, // standard bitmap
+		videoBufferPending: 0x00C1,
+	}
+	ram[0x2063] = 0xA5
+	ram[0x3FFF] = 0x5A
+
+	v.cycleGAccess()
+
+	if got := v.gdPending; got != 0x5A {
+		t.Fatalf("idle bitmap g-access = %#02x, want idle byte %#02x", got, 0x5A)
+	}
+	if v.videoBufferPending != 0 {
+		t.Fatalf("idle bitmap video data = %#04x, want 0", v.videoBufferPending)
+	}
+	if v.VC != 12 || v.VMLI != 0 {
+		t.Fatalf("idle bitmap g-access advanced counters to VC=%d VMLI=%d", v.VC, v.VMLI)
+	}
+}
+
 func TestVICXScrollDelaysGraphicsReload(t *testing.T) {
 	v := &VICII{control2: 3, gdPending: 0xFF, videoBufferPending: 0x0100}
 
@@ -80,6 +108,22 @@ func TestVICXScrollDelaysGraphicsReload(t *testing.T) {
 	}
 }
 
+func TestVICXScrollWriteReloadsAtCurrentDot(t *testing.T) {
+	v := &VICII{
+		dot:                48,
+		control2:           7,
+		gdPending:          0xA5,
+		videoBufferPending: 0x0D06,
+	}
+
+	v.WriteRegister(0xD016, 0)
+
+	if v.gdSequencer != 0xA5 || v.videoBuffer != 0x0D06 {
+		t.Fatalf("sequencer=%#02x buffer=%#04x after same-dot XSCROLL write, want pending graphics data",
+			v.gdSequencer, v.videoBuffer)
+	}
+}
+
 func TestVICSideBorderOpen40To38Trick(t *testing.T) {
 	v := &VICII{}
 	v.Reset()
@@ -92,31 +136,33 @@ func TestVICSideBorderOpen40To38Trick(t *testing.T) {
 	v.verticalBorder = false
 	v.syncLineVisibility()
 
-	// Advance beam to rightComp38 (dot 359). The left comparison at dot 48
+	// Advance beam to the 38-column right comparison in horizontal blanking.
+	// The left comparison at dot 48
 	// clears the main border flip-flop on the way.
-	// In 40-col mode, dot 359 does NOT latch mainBorder.
+	// In 40-column mode, this comparison does not latch mainBorder.
 	for v.dot != rightComp38-1 {
 		v.StepDot()
 	}
-	v.StepDot() // now at dot 359
+	v.StepDot()
 	if v.mainBorder {
-		t.Fatalf("mainBorder=true at dot 359 in 40-column mode, want false")
+		t.Fatalf("mainBorder=true at dot %d in 40-column mode, want false", rightComp38)
 	}
+	v.StepDot()
 
-	// Switch CSEL to 0 (38 columns) right after dot 359, before dot 368.
+	// Switch CSEL to 0 after the 38-column comparison and before the
+	// 40-column comparison.
 	v.WriteRegister(0xD016, 0x00) // CSEL=0
 
-	// Advance to rightComp40 (dot 368).
-	// Since CSEL is now 0, the 40-column border comparison at dot 368 is bypassed!
+	// Since CSEL is now 0, the 40-column comparison is bypassed.
 	for v.dot != rightComp40-1 {
 		v.StepDot()
 	}
-	v.StepDot() // now at dot 368
+	v.StepDot()
 	if v.mainBorder {
-		t.Fatalf("mainBorder=true at dot 368 with CSEL=0 trick, want false (side border opened)")
+		t.Fatalf("mainBorder=true at dot %d with CSEL=0 trick, want false (side border opened)", rightComp40)
 	}
 
-	// In 40-column mode without the trick, dot 368 would have latched mainBorder.
+	// In 40-column mode without the trick, its comparison latches mainBorder.
 	vNormal := &VICII{}
 	vNormal.Reset()
 	vNormal.rasterLine = 100
@@ -129,7 +175,7 @@ func TestVICSideBorderOpen40To38Trick(t *testing.T) {
 		vNormal.StepDot()
 	}
 	if !vNormal.mainBorder {
-		t.Fatalf("mainBorder=false at dot 368 in normal 40-column mode, want true")
+		t.Fatalf("mainBorder=false at dot %d in normal 40-column mode, want true", rightComp40)
 	}
 }
 
@@ -143,26 +189,95 @@ func TestVICSideBorderOpen38To40Trick(t *testing.T) {
 	v.verticalBorder = false
 	v.syncLineVisibility()
 
-	// In 38-column mode, switch to 40-column before dot 359
+	// In 38-column mode, switch to 40-column before its right comparison.
 	v.WriteRegister(0xD016, 0x08) // CSEL=1 (40 cols)
 
-	// Step to dot 359. Since CSEL=1, dot 359 won't trigger mainBorder.
+	// Since CSEL=1, the 38-column comparison will not trigger mainBorder.
 	for v.dot != rightComp38 {
 		v.StepDot()
 	}
 	if v.mainBorder {
-		t.Fatalf("mainBorder=true at dot 359 with CSEL=1, want false")
+		t.Fatalf("mainBorder=true at dot %d with CSEL=1, want false", rightComp38)
 	}
+	v.StepDot()
 
-	// Switch back to CSEL=0 before dot 368.
+	// Switch back to CSEL=0 before the 40-column comparison.
 	v.WriteRegister(0xD016, 0x00) // CSEL=0 (38 cols)
 
-	// Step to dot 368. Since CSEL=0, dot 368 won't trigger mainBorder either.
+	// Since CSEL=0, the 40-column comparison will not trigger it either.
 	for v.dot != rightComp40 {
 		v.StepDot()
 	}
 	if v.mainBorder {
-		t.Fatalf("mainBorder=true at dot 368 with CSEL=0, want false (side border opened)")
+		t.Fatalf("mainBorder=true at dot %d with CSEL=0, want false (side border opened)", rightComp40)
+	}
+}
+
+func TestVICSideBorderWriteAtRightCompareDot(t *testing.T) {
+	v := &VICII{
+		dot:            rightComp38,
+		rasterLine:     100,
+		control2:       0,
+		mainBorder:     true,
+		rightBorderAt:  rightEdge38,
+		lineDrawable:   true,
+		verticalBorder: false,
+	}
+
+	v.WriteRegister(0xD016, csel)
+
+	if v.mainBorder {
+		t.Fatal("mainBorder=true after same-dot CSEL write bypassed right comparison")
+	}
+	if v.rightBorderAt != 0 {
+		t.Fatalf("rightBorderAt=%d after bypassed comparison, want 0", v.rightBorderAt)
+	}
+}
+
+func TestVICSideBorderRMWWritesSkipRightComparisons(t *testing.T) {
+	v := &VICII{
+		dot:            rightComp38,
+		rasterLine:     100,
+		control2:       0,
+		mainBorder:     true,
+		rightBorderAt:  rightEdge38,
+		lineDrawable:   true,
+		verticalBorder: false,
+	}
+
+	v.WriteRegister(0xD016, csel)
+	if v.mainBorder {
+		t.Fatalf("mainBorder=true after write at dot %d bypassed 38-column comparison", rightComp38)
+	}
+
+	v.dot = rightComp40
+	v.WriteRegister(0xD016, 0)
+	if v.mainBorder {
+		t.Fatalf("mainBorder=true after write at dot %d bypassed 40-column comparison", rightComp40)
+	}
+	if v.rightBorderAt != 0 {
+		t.Fatalf("rightBorderAt=%d after both comparisons were bypassed, want 0", v.rightBorderAt)
+	}
+}
+
+func TestVICSideBorderWriteAtCompareDot(t *testing.T) {
+	v := &VICII{}
+	v.Reset()
+	v.rasterLine = 100
+	v.control1 = 0x1B
+	v.control2 = 0x00 // CSEL=0
+	v.verticalBorder = false
+	v.syncLineVisibility()
+	v.dot = leftComp40 - 1
+
+	v.StepDot() // reaches the 40-column left compare with CSEL still clear
+	if !v.mainBorder {
+		t.Fatal("mainBorder=false before same-dot register write")
+	}
+
+	v.WriteRegister(0xD016, 0x08)
+	if v.mainBorder {
+		t.Fatal("mainBorder=true after same-dot CSEL write")
 	}
 }
 
