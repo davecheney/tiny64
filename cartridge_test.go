@@ -84,6 +84,21 @@ func TestParseCRTNormal16KSingleChip(t *testing.T) {
 	}
 }
 
+func TestInsertSplits16KROM(t *testing.T) {
+	saveMachine(t)
+
+	rom := make([]byte, 0x4000)
+	rom[0], rom[0x2000] = 0x80, 0xA0
+	bus.Insert(rom, true, true, true, true)
+
+	if got := cartridge.romlLoad(0); got != 0x80 {
+		t.Fatalf("cartridge.romlLoad(0) = %#02x, want 0x80", got)
+	}
+	if got := cartridge.romhLoad(0); got != 0xA0 {
+		t.Fatalf("cartridge.romhLoad(0) = %#02x, want 0xa0", got)
+	}
+}
+
 func TestParseCRTErrors(t *testing.T) {
 	tests := []struct {
 		name string

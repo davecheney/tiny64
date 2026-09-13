@@ -2,6 +2,7 @@ package tiny64
 
 import (
 	"encoding/binary"
+	"errors"
 	"fmt"
 	"os"
 )
@@ -10,7 +11,7 @@ import (
 // port. The zero value matches an empty port: /GAME and /EXROM float high
 // (unasserted), so the PLA falls back to normal CPU-port-driven banking.
 type Cartridge struct {
-	ROM          []byte // legacy single-chip ROM image, used as a fallback when ROMLData/ROMHData are empty
+	ROM          []byte // Deprecated: legacy single-chip ROM image, used only as a fallback when ROMLData/ROMHData are empty
 	ROMLData     []byte // bytes exposed through the /ROML chip-select, usually $8000-$9FFF
 	ROMHData     []byte // bytes exposed through the /ROMH chip-select, usually $A000-$BFFF or $E000-$FFFF
 	Name         string // cartridge name from the CRT header
@@ -45,10 +46,7 @@ func (c *Cartridge) romlLoad(addr uint16) uint8 {
 	if len(rom) == 0 {
 		rom = c.ROM
 	}
-	if len(rom) == 0 {
-		return 0xFF
-	}
-	return rom[int(addr)%len(rom)]
+	return cartridgeLoad(rom, addr)
 }
 
 func (c *Cartridge) romhLoad(addr uint16) uint8 {
@@ -56,9 +54,15 @@ func (c *Cartridge) romhLoad(addr uint16) uint8 {
 	if len(rom) == 0 {
 		rom = c.ROM
 	}
+	return cartridgeLoad(rom, addr)
+}
+
+func cartridgeLoad(rom []byte, addr uint16) uint8 {
 	if len(rom) == 0 {
 		return 0xFF
 	}
+	// Real cartridge ROM chips expose only the address pins they have. A
+	// smaller image therefore naturally mirrors through the selected window.
 	return rom[int(addr)%len(rom)]
 }
 
@@ -68,11 +72,16 @@ func (c *Cartridge) romhLoad(addr uint16) uint8 {
 // actually populated with a ROM chip on the PCB.
 func (b *Bus) Insert(rom []byte, game, exrom, romh, roml bool) {
 	cart := Cartridge{ROM: rom, Game: game, Exrom: exrom, ROMH: romh, ROML: roml}
-	if roml {
-		cart.ROMLData = rom
-	}
-	if romh {
-		cart.ROMHData = rom
+	if roml && romh && len(rom) > 0x2000 {
+		cart.ROMLData = rom[:0x2000]
+		cart.ROMHData = rom[0x2000:]
+	} else {
+		if roml {
+			cart.ROMLData = rom
+		}
+		if romh {
+			cart.ROMHData = rom
+		}
 	}
 	b.InsertCartridge(cart)
 }
@@ -154,6 +163,9 @@ func ParseCRT(data []byte) (Cartridge, error) {
 		switch start {
 		case 0x8000:
 			if size > 0x2000 {
+				// 16K normal CRT images can store both ROML and ROMH in one
+				// CHIP packet starting at $8000: the first 8K is ROML, the
+				// remainder is ROMH.
 				cart.ROMLData = append([]byte(nil), chip[:0x2000]...)
 				cart.ROML = true
 				cart.ROMHData = append([]byte(nil), chip[0x2000:]...)
@@ -172,7 +184,7 @@ func ParseCRT(data []byte) (Cartridge, error) {
 	}
 
 	if !cart.ROML && !cart.ROMH {
-		return Cartridge{}, fmt.Errorf("CRT image contains no ROML or ROMH CHIP packets")
+		return Cartridge{}, errors.New("CRT image contains no ROML or ROMH CHIP packets")
 	}
 	return cart, nil
 }
