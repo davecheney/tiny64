@@ -66,6 +66,7 @@ func main() {
 	deadtest := flag.Bool("deadtest", false, "insert the Dead Test MAX-mode cartridge before reset")
 	disk := flag.String("disk", "", "insert this D64 disk image or PRG file into drive 8")
 	prg := flag.String("prg", "", "insert this PRG file into drive 8 (formatted on a virtual disk)")
+	cartridgePath := flag.String("cartridge", "", "insert this CRT cartridge image")
 	drive := flag.String("drive", "1541", "drive to answer for device 8: \"1541\" emulates the drive's CPU and GCR, \"virtual\" implements CBM DOS directly")
 	wedge := flag.Bool("wedge", false, "enable the resident DOS wedge at the BASIC prompt")
 	flag.Parse()
@@ -85,6 +86,13 @@ func main() {
 	}
 	if *deadtest {
 		tiny64.GetBus().Insert(rom.DeadTest, true, false, true, false)
+	}
+	if *cartridgePath != "" {
+		cart, err := tiny64.ReadCartridge(*cartridgePath)
+		if err != nil {
+			log.Fatal(err)
+		}
+		tiny64.GetBus().InsertCartridge(cart)
 	}
 	if *wedge {
 		tiny64.EnableDOSWedge()

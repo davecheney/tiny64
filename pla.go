@@ -21,7 +21,12 @@ func plaLoad(addr uint16) uint8 {
 	loram, hiram, charen := cpu.bankBits()
 
 	switch {
+	case addr >= 0x8000 && addr <= 0x9FFF && cartridge.ROML && (cartridge.Exrom || cartridge.ultimax()):
+		return cartridge.romlLoad(addr - 0x8000)
 	case addr >= 0xA000 && addr <= 0xBFFF && loram && hiram:
+		if cartridge.Game && cartridge.Exrom && cartridge.ROMH {
+			return cartridge.romhLoad(addr - 0xA000)
+		}
 		return rom.Basic[addr-0xA000]
 	case addr >= 0xD000 && addr <= 0xDFFF && (loram || hiram):
 		if charen {
@@ -31,7 +36,7 @@ func plaLoad(addr uint16) uint8 {
 	case addr >= 0xE000 && cartridge.ultimax() && cartridge.ROMH:
 		// A cartridge wired for MAX mode overrides the KERNAL entirely,
 		// regardless of hiram.
-		return cartridge.ROM[addr-0xE000]
+		return cartridge.romhLoad(addr - 0xE000)
 	case addr >= 0xE000 && hiram:
 		return rom.Kernal[addr-0xE000]
 	default:
@@ -75,7 +80,7 @@ func plaVICLoad(addr uint16) uint8 {
 	bank := uint16(^effective(cia2.PRA, cia2.DDRA)&0x03) << 14
 	addr = bank | addr&0x3FFF
 	if cartridge.ultimax() && cartridge.ROMH && addr&0x3000 == 0x3000 {
-		return cartridge.ROM[addr&0x1FFF]
+		return cartridge.romhLoad(addr & 0x1FFF)
 	}
 	// Character ROM is only mapped for VIC character generator accesses
 	// in text mode (BMM=0). In bitmap mode (BMM=1), VIC always reads RAM.
@@ -91,7 +96,7 @@ func plaVICSpriteLoad(addr uint16) uint8 {
 	bank := uint16(^effective(cia2.PRA, cia2.DDRA)&0x03) << 14
 	addr = bank | addr&0x3FFF
 	if cartridge.ultimax() && cartridge.ROMH && addr&0x3000 == 0x3000 {
-		return cartridge.ROM[addr&0x1FFF]
+		return cartridge.romhLoad(addr & 0x1FFF)
 	}
 	return ram[addr]
 }

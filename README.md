@@ -39,6 +39,7 @@ replaces the other.
 
     go run ./cmd/c64 -disk demo.d64                  # the real 1541
     go run ./cmd/c64 -disk demo.d64 -drive=virtual   # the generic drive
+    go run ./cmd/c64 -cartridge game.crt             # a CRT cartridge image
 
 Both should behave identically for `LOAD"$",8`, `LOAD"NAME",8` and
 `SAVE`; the difference only shows for software that drives the 1541's own
