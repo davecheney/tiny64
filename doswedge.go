@@ -18,6 +18,7 @@ type dosWedgeState struct {
 }
 
 var dosWedge dosWedgeState
+var dosWedgeProgram = buildDOSWedge()
 
 // EnableDOSWedge arranges for a small resident DOS wedge to be installed
 // after BASIC initializes its RAM vectors. The wedge occupies $C000-$CFFF
@@ -54,8 +55,7 @@ func tickDOSWedge() {
 		return
 	}
 
-	program := buildDOSWedge()
-	copy(ram[dosWedgeOrigin:], program)
+	copy(ram[dosWedgeOrigin:], dosWedgeProgram)
 	ram[0x0302] = uint8(dosWedgeOrigin & 0xFF)
 	ram[0x0303] = uint8(dosWedgeOrigin >> 8)
 	dosWedge.installed = true
