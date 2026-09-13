@@ -10,15 +10,15 @@ import (
 // port. The zero value matches an empty port: /GAME and /EXROM float high
 // (unasserted), so the PLA falls back to normal CPU-port-driven banking.
 type Cartridge struct {
-	ROM          []byte
-	ROMLData     []byte
-	ROMHData     []byte
-	Name         string
-	HardwareType uint16
-	Game         bool // /GAME line: true = pulled low (asserted)
-	Exrom        bool // /EXROM line: true = pulled low (asserted)
-	ROMH         bool // /ROMH chip-select populated with a physical ROM chip
-	ROML         bool // /ROML chip-select populated with a physical ROM chip
+	ROM          []byte // legacy single-chip ROM image, used as a fallback when ROMLData/ROMHData are empty
+	ROMLData     []byte // bytes exposed through the /ROML chip-select, usually $8000-$9FFF
+	ROMHData     []byte // bytes exposed through the /ROMH chip-select, usually $A000-$BFFF or $E000-$FFFF
+	Name         string // cartridge name from the CRT header
+	HardwareType uint16 // raw CRT hardware type from the CRT header
+	Game         bool   // /GAME line: true = pulled low (asserted)
+	Exrom        bool   // /EXROM line: true = pulled low (asserted)
+	ROMH         bool   // /ROMH chip-select populated with a physical ROM chip
+	ROML         bool   // /ROML chip-select populated with a physical ROM chip
 }
 
 var cartridge Cartridge
@@ -173,14 +173,6 @@ func ParseCRT(data []byte) (Cartridge, error) {
 
 	if !cart.ROML && !cart.ROMH {
 		return Cartridge{}, fmt.Errorf("CRT image contains no ROML or ROMH CHIP packets")
-	}
-	switch {
-	case cart.ROML && cart.ROMH:
-		cart.ROM = append(append([]byte(nil), cart.ROMLData...), cart.ROMHData...)
-	case cart.ROML:
-		cart.ROM = append([]byte(nil), cart.ROMLData...)
-	case cart.ROMH:
-		cart.ROM = append([]byte(nil), cart.ROMHData...)
 	}
 	return cart, nil
 }

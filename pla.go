@@ -21,7 +21,7 @@ func plaLoad(addr uint16) uint8 {
 	loram, hiram, charen := cpu.bankBits()
 
 	switch {
-	case addr >= 0x8000 && addr <= 0x9FFF && cartridge.ROML && (cartridge.Exrom || cartridge.ultimax()):
+	case addr >= 0x8000 && addr <= 0x9FFF && cartridge.ROML && (cartridge.ultimax() || cartridge.Exrom && loram && hiram):
 		return cartridge.romlLoad(addr - 0x8000)
 	case addr >= 0xA000 && addr <= 0xBFFF && loram && hiram:
 		if cartridge.Game && cartridge.Exrom && cartridge.ROMH {

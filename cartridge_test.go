@@ -135,6 +135,13 @@ func TestPLACartridgeNormalMapping(t *testing.T) {
 	if got := plaLoad(0xBFFF); got != 0xBF {
 		t.Fatalf("plaLoad(0xbfff) = %#02x, want 0xbf", got)
 	}
+
+	ram[0x8000] = 0x44
+	cpu.PortDDR = 0x07
+	cpu.Port = 0x06 // LORAM low, HIRAM and CHAREN high
+	if got := plaLoad(0x8000); got != 0x44 {
+		t.Fatalf("plaLoad(0x8000) with LORAM low = %#02x, want RAM 0x44", got)
+	}
 }
 
 func TestPLACartridgeUltimaxMapping(t *testing.T) {
