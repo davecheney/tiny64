@@ -184,9 +184,33 @@ func (c *CPU) TickPhi2() {
 	keyboard.tick()
 	tickDOSWedge()
 
-	// If VIC-II has pulled AEC low, the CPU is electronically
-	// disconnected from the bus. It stalls entirely.
-	if !vic.AEC {
+	nmi := nmiAsserted()
+	if nmi && !c.nmiLine {
+		c.nmiLatch = true
+		c.nmiLatchClock = c.Clock
+	}
+	c.nmiLine = nmi
+
+	irq := cia1.IRQ || vic.IRQ
+	if irq && !c.irqLine {
+		c.irqAssertClock = c.Clock
+	}
+	c.irqLine = irq
+
+	// BA low does not freeze the CPU outright. It drives the 6510's RDY
+	// pin, which only halts the processor on a *read* cycle; a write cycle
+	// already in flight always completes. That is precisely why the VIC-II
+	// asserts BA three cycles before it actually takes the bus (see
+	// spriteBASlotMask and the Bad Line c-access lead): the longest run of
+	// consecutive writes a 6502 can perform is three - the interrupt
+	// sequence's three pushes - so by the time AEC drops and the VIC owns
+	// the bus, the CPU is guaranteed to have stopped.
+	//
+	// Modelling this matters for cycle-exact code: stalling unconditionally
+	// halts the CPU up to three cycles early, and how early depends on
+	// whatever instruction happens to be executing, which shows up as
+	// timing jitter in raster code that reprograms sprites mid-screen.
+	if !vic.AEC && cpuWriteCycles[c.Opcode]>>c.TState&1 == 0 {
 		return
 	}
 
@@ -198,19 +222,6 @@ func (c *CPU) TickPhi2() {
 	// IRQ/NMI line to be stable for 2 cycles before it's recognized (see
 	// Clock/irqAssertClock/nmiLatchClock).
 	case 0:
-		nmi := nmiAsserted()
-		if nmi && !c.nmiLine {
-			c.nmiLatch = true
-			c.nmiLatchClock = c.Clock
-		}
-		c.nmiLine = nmi
-
-		irq := cia1.IRQ || vic.IRQ
-		if irq && !c.irqLine {
-			c.irqAssertClock = c.Clock
-		}
-		c.irqLine = irq
-
 		switch {
 		case c.nmiLatch && c.Clock >= c.nmiLatchClock+2:
 			// NMI is checked before IRQ because it wins when both are
@@ -2789,4 +2800,38 @@ func (c *CPU) compare(reg, value uint8) {
 // SBC(M) is equivalent to ADC(^M) since A - M - (1-C) == A + ^M + C.
 func (c *CPU) sbc(value uint8) {
 	c.adc(^value)
+}
+
+// cpuWriteCycles records, per opcode, which T-states drive a write cycle
+// onto the bus: bit T is set if T-state T writes. It lets TickPhi2 answer
+// "is the cycle I am about to run a read?" without executing it, which is
+// what the 6510's RDY/BA handling needs (see TickPhi2).
+//
+// T-state 0 is always an opcode fetch and so never writes, which is what
+// makes indexing by c.Opcode safe: at T0 the field still holds the
+// *previous* instruction's opcode, but every entry has bit 0 clear.
+// Hardware interrupts run BRK's microcode with c.Opcode set to $00, so the
+// $00 entry covers the IRQ/NMI push sequence too.
+//
+// Opcodes the core does not implement read as 0, which degrades to the
+// conservative "always stall" behaviour; they panic on execution anyway.
+// TestCPUWriteCyclesTableMatchesMicrocode re-derives this table from the
+// microcode and fails if the two ever drift apart.
+var cpuWriteCycles = [256]uint16{
+	0x001C, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0018, 0x0000, 0x0004, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0030, 0x0000, // $00
+	0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0030, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0060, 0x0000, // $10
+	0x0018, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0018, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0030, 0x0000, // $20
+	0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0030, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0060, 0x0000, // $30
+	0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0018, 0x0000, 0x0004, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0030, 0x0000, // $40
+	0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0030, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0060, 0x0000, // $50
+	0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0018, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0030, 0x0000, // $60
+	0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0030, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0060, 0x0000, // $70
+	0x0000, 0x0020, 0x0000, 0x0000, 0x0004, 0x0004, 0x0004, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0008, 0x0008, 0x0008, 0x0000, // $80
+	0x0000, 0x0020, 0x0000, 0x0000, 0x0008, 0x0008, 0x0008, 0x0000, 0x0000, 0x0010, 0x0000, 0x0000, 0x0000, 0x0010, 0x0000, 0x0000, // $90
+	0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, // $A0
+	0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, // $B0
+	0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0018, 0x0018, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0030, 0x0000, // $C0
+	0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0030, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0060, 0x0000, // $D0
+	0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0018, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0030, 0x0000, // $E0
+	0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0030, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0060, 0x0000, // $F0
 }

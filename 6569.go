@@ -142,6 +142,9 @@ type VICII struct {
 	interruptStatus uint8
 	interruptEnable uint8
 	IRQ             bool
+
+	spriteSpriteCollision uint8
+	spriteDataCollision   uint8
 }
 
 var vic VICII
@@ -197,6 +200,8 @@ func (v *VICII) Reset() {
 	v.interruptStatus = 0
 	v.interruptEnable = 0
 	v.IRQ = false
+	v.spriteSpriteCollision = 0
+	v.spriteDataCollision = 0
 	v.syncLineVisibility()
 }
 
@@ -222,7 +227,7 @@ func (v *VICII) syncLineVisibility() {
 func (v *VICII) WriteRegister(addr uint16, value uint8) {
 	reg := addr & 0x3F
 	switch {
-	case reg < 0x11:
+	case reg <= 0x10:
 		v.registers00To10[reg] = value
 	case reg == regControl1:
 		v.control1 = value
@@ -243,6 +248,8 @@ func (v *VICII) WriteRegister(addr uint16, value uint8) {
 	case reg == 0x1A:
 		v.interruptEnable = value & 0x0F
 		v.updateIRQ()
+	case reg == 0x1E, reg == 0x1F:
+		// Collision registers are read-cleared and ignore writes.
 	case reg < regBorderColor:
 		v.registers19To1F[reg-0x19] = value
 	case reg == regBorderColor:
@@ -291,29 +298,29 @@ func (v *VICII) advanceGraphicsData() {
 	}
 }
 
-func (v *VICII) nextGraphicsColor() byte {
+func (v *VICII) nextGraphicsColor() (byte, bool) {
 	if !v.multicolor {
 		bit := v.gdSequencer & 0x80
 		v.gdSequencer <<= 1
 		if bit == 0 {
 			if v.graphicsMode == modeECMText {
-				return v.backgroundColor(uint8(v.videoBuffer>>6) & 0x03)
+				return v.backgroundColor(uint8(v.videoBuffer>>6) & 0x03), false
 			}
 			if v.graphicsMode == modeStandardBitmap {
-				return byte(v.videoBuffer) & 0x0F
+				return byte(v.videoBuffer) & 0x0F, false
 			}
 			if v.graphicsMode > modeECMText {
-				return 0
+				return 0, false
 			}
-			return v.background0
+			return v.background0, false
 		}
 		switch v.graphicsMode {
 		case modeStandardText, modeMulticolorText, modeECMText:
-			return byte(v.videoBuffer>>8) & 0x0F
+			return byte(v.videoBuffer>>8) & 0x0F, true
 		case modeStandardBitmap:
-			return byte(v.videoBuffer>>4) & 0x0F
+			return byte(v.videoBuffer>>4) & 0x0F, true
 		default:
-			return 0
+			return 0, false
 		}
 	}
 
@@ -327,31 +334,31 @@ func (v *VICII) nextGraphicsColor() byte {
 	case modeMulticolorText:
 		switch pair {
 		case 0:
-			return v.background0
+			return v.background0, false
 		case 1:
-			return v.backgroundColor(1)
+			return v.backgroundColor(1), false
 		case 2:
-			return v.backgroundColor(2)
+			return v.backgroundColor(2), false
 		default:
-			return byte(v.videoBuffer>>8) & 0x07
+			return byte(v.videoBuffer>>8) & 0x07, true
 		}
 	case modeMulticolorBitmap:
 		switch pair {
 		case 0:
-			return v.background0
+			return v.background0, false
 		case 1:
-			return byte(v.videoBuffer>>4) & 0x0F
+			return byte(v.videoBuffer>>4) & 0x0F, true
 		case 2:
-			return byte(v.videoBuffer) & 0x0F
+			return byte(v.videoBuffer) & 0x0F, true
 		default:
-			return byte(v.videoBuffer>>8) & 0x0F
+			return byte(v.videoBuffer>>8) & 0x0F, true
 		}
 	default:
-		return 0
+		return 0, false
 	}
 }
 
-// paintGraphicsPixel emits one pixel through the border unit.
+// paintGraphicsPixel emits one pixel through the border unit and sprite compositor.
 //
 // Section 3.9 of the VIC Article is explicit that the *main* border
 // flip-flop alone decides whether border colour reaches the screen; the
@@ -365,11 +372,144 @@ func (v *VICII) nextGraphicsColor() byte {
 // keeps shifting behind a closed border exactly as the hardware does, and
 // only the colour that is written is replaced.
 func (v *VICII) paintGraphicsPixel() {
-	graphicsColor := v.nextGraphicsColor()
-	if v.mainBorder {
-		graphicsColor = v.borderColor
+	graphicsColor, isForeground := v.nextGraphicsColor()
+	enableReg := v.registers12To15[3] // $D015
+
+	if enableReg == 0 {
+		if v.mainBorder {
+			graphicsColor = v.borderColor
+		}
+		writePixelToBuffer(v.dot, v.rasterLine, graphicsColor&0x0F)
+		return
 	}
-	writePixelToBuffer(v.dot, v.rasterLine, graphicsColor&0x0F)
+
+	d := v.dot
+	r := v.rasterLine
+	expandYReg := v.register17            // $D017
+	expandXReg := v.registers19To1F[4]    // $D01D
+	multicolorReg := v.registers19To1F[3] // $D01C
+	priorityReg := v.registers19To1F[2]   // $D01B
+	msbReg := v.registers00To10[0x10]     // $D010
+	screenBase := (uint16(v.memPointers) >> 4) & 0x0F << 10
+
+	var (
+		hitCount             int
+		currentHitMask       uint8
+		topSpriteColor       byte
+		topSpritePriorityBit bool
+	)
+
+	for i := uint8(0); i < 8; i++ {
+		mask := uint8(1 << i)
+		if enableReg&mask == 0 {
+			continue
+		}
+
+		// Vertical range check
+		y := uint16(v.registers00To10[i*2+1])
+		expandY := (expandYReg & mask) != 0
+		var py uint8
+		if !expandY {
+			if r < y || r >= y+21 {
+				continue
+			}
+			py = uint8(r - y)
+		} else {
+			if r < y || r >= y+42 {
+				continue
+			}
+			py = uint8((r - y) / 2)
+		}
+
+		// Horizontal range check
+		x := uint16(v.registers00To10[i*2])
+		if msbReg&mask != 0 {
+			x |= 0x100
+		}
+		expandX := (expandXReg & mask) != 0
+		startDot := 24 + x
+		var px uint8
+		if !expandX {
+			if d < startDot || d >= startDot+24 {
+				continue
+			}
+			px = uint8(d - startDot)
+		} else {
+			if d < startDot || d >= startDot+48 {
+				continue
+			}
+			px = uint8((d - startDot) / 2)
+		}
+
+		// Fetch sprite pattern byte
+		ptrAddr := screenBase + 0x03F8 + uint16(i)
+		ptr := plaVICSpriteLoad(ptrAddr)
+		dataAddr := uint16(ptr) * 64
+
+		multicolor := (multicolorReg & mask) != 0
+		var color byte
+		if !multicolor {
+			byteOffset := px / 8
+			bitInByte := 7 - (px % 8)
+			b := plaVICSpriteLoad(dataAddr + uint16(py)*3 + uint16(byteOffset))
+			if (b>>bitInByte)&1 == 0 {
+				continue
+			}
+			color = v.registers22To2E[5+i] & 0x0F
+		} else {
+			pairIdx := px / 2
+			byteOffset := pairIdx / 4
+			shift := (3 - (pairIdx % 4)) * 2
+			b := plaVICSpriteLoad(dataAddr + uint16(py)*3 + uint16(byteOffset))
+			pairVal := (b >> shift) & 0x03
+			switch pairVal {
+			case 0:
+				continue
+			case 1:
+				color = v.registers22To2E[3] & 0x0F // $D025 extra color 0
+			case 2:
+				color = v.registers22To2E[5+i] & 0x0F // $D027+i individual color
+			case 3:
+				color = v.registers22To2E[4] & 0x0F // $D026 extra color 1
+			}
+		}
+
+		hitCount++
+		currentHitMask |= mask
+		if hitCount == 1 {
+			topSpriteColor = color
+			topSpritePriorityBit = (priorityReg & mask) != 0 // $D01B priority
+		}
+	}
+
+	if hitCount > 1 {
+		newCollisions := currentHitMask &^ v.spriteSpriteCollision
+		v.spriteSpriteCollision |= currentHitMask
+		if newCollisions != 0 {
+			v.interruptStatus |= 0x04
+			v.updateIRQ()
+		}
+	}
+
+	if hitCount > 0 && isForeground {
+		newCollisions := currentHitMask &^ v.spriteDataCollision
+		v.spriteDataCollision |= currentHitMask
+		if newCollisions != 0 {
+			v.interruptStatus |= 0x08
+			v.updateIRQ()
+		}
+	}
+
+	finalColor := graphicsColor
+	if v.mainBorder {
+		finalColor = v.borderColor
+	} else if hitCount > 0 {
+		if !topSpritePriorityBit || !isForeground {
+			finalColor = topSpriteColor
+		}
+	}
+
+	writePixelToBuffer(d, r, finalColor&0x0F)
 }
 
 // ReadRegister reads a VIC-II register, mirrored every 64 bytes across
@@ -403,6 +543,14 @@ func (v *VICII) ReadRegister(addr uint16) uint8 {
 		return v.borderColor
 	case regBackground0:
 		return v.background0
+	case 0x1E:
+		val := v.spriteSpriteCollision
+		v.spriteSpriteCollision = 0
+		return val
+	case 0x1F:
+		val := v.spriteDataCollision
+		v.spriteDataCollision = 0
+		return val
 	}
 	switch {
 	case reg < 0x11:
@@ -844,12 +992,62 @@ func (v *VICII) phi0low() {
 	}
 
 	// cycleIsCAccess: pulls BA low for the duration of a Bad Line's
-	// c-accesses, article cycles 12-54.
-	v.BA = !(slot >= 1 && slot <= 43 && badLine)
+	// c-accesses, article cycles 12-54. Note the three cycle lead: the
+	// first c-access is at article cycle 15 (slot 4).
+	//
+	// Sprite DMA (section 3.6.3) additionally pulls BA low for five
+	// cycles per DMA-active sprite - two fetch cycles plus the same three
+	// cycle lead - in the fixed windows given by spriteBASlotMask.
+	v.BA = !(slot >= 1 && slot <= 43 && badLine) && !v.spriteDMAStall(slot)
 
 	if slot >= 5 && slot <= 44 {
 		v.cycleGAccess()
 	}
+}
+
+// spriteBASlotMask gives, for each bus cycle of a line, the set of sprites
+// whose BA window covers it. Sprite N's BA runs from slot 44+2N through
+// 48+2N inclusive: the two cycles of pointer/data fetch it actually needs
+// (slots 47+2N and 48+2N), preceded by the three cycles of lead time the
+// VIC-II gives the CPU to retire any in-flight write cycles before the bus
+// is taken away. Transcribed from the 6569 (PAL) cycle table in VICE's
+// x64sc (viciisc/vicii-chip-model.c), rebased from its article cycle
+// numbering onto slot (article cycle = slot + 11).
+var spriteBASlotMask = [CyclesPerLine]uint8{
+	44: 0x01, 45: 0x01, 46: 0x03, 47: 0x03, 48: 0x07, 49: 0x06,
+	50: 0x0E, 51: 0x0C, 52: 0x1C, 53: 0x18, 54: 0x38, 55: 0x30,
+	56: 0x70, 57: 0x60, 58: 0xE0, 59: 0xC0, 60: 0xC0, 61: 0x80,
+	62: 0x80,
+}
+
+// spriteDMAStall reports whether any sprite whose BA window covers this
+// slot is currently DMA active, and so is holding BA low.
+func (v *VICII) spriteDMAStall(slot uint16) bool {
+	cand := spriteBASlotMask[slot]
+	if cand == 0 || v.registers12To15[3] == 0 {
+		return false
+	}
+	for i := uint8(0); i < 8; i++ {
+		if cand&(1<<i) != 0 && v.spriteDMAActive(i) {
+			return true
+		}
+	}
+	return false
+}
+
+// spriteDMAActive reports whether sprite i is enabled and its Y band
+// (accounting for Y-expansion) covers the current raster line.
+func (v *VICII) spriteDMAActive(i uint8) bool {
+	mask := uint8(1) << i
+	if v.registers12To15[3]&mask == 0 {
+		return false
+	}
+	y := uint16(v.registers00To10[i*2+1])
+	r := v.rasterLine
+	if v.register17&mask != 0 {
+		return r >= y && r < y+42
+	}
+	return r >= y && r < y+21
 }
 
 // cycleSetVicCounter loads VC from VCBase and resets VMLI (and RC on a Bad

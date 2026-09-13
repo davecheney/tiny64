@@ -85,6 +85,17 @@ func plaVICLoad(addr uint16) uint8 {
 	return ram[addr]
 }
 
+// plaVICSpriteLoad reads sprite pointer and pattern data through the VIC-II's
+// memory view. Character ROM is not mapped for sprite accesses (s-accesses).
+func plaVICSpriteLoad(addr uint16) uint8 {
+	bank := uint16(^effective(cia2.PRA, cia2.DDRA)&0x03) << 14
+	addr = bank | addr&0x3FFF
+	if cartridge.ultimax() && cartridge.ROMH && addr&0x3000 == 0x3000 {
+		return cartridge.ROM[addr&0x1FFF]
+	}
+	return ram[addr]
+}
+
 // ioLoad/ioStore dispatch the $D000-$DFFF I/O region to the appropriate
 // chip. The SID and cartridge I/O are ignored for now and simply fall
 // through to RAM.

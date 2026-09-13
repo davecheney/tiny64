@@ -15,7 +15,7 @@ func TestVICGraphicsModeColors(t *testing.T) {
 		v.control1, v.control2 = control1, control2
 		v.loadGraphicsData()
 		for i, color := range want {
-			if got := v.nextGraphicsColor(); got != color {
+			if got, _ := v.nextGraphicsColor(); got != color {
 				t.Errorf("%s pixel %d = %d, want %d", name, i, got, color)
 			}
 		}
