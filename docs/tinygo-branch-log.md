@@ -40,6 +40,8 @@ cycle-accurate VIC-II/6502-opcode push (the commits below).
 | `49bb855` | vic: pin down the sprite DMA and BA behaviour with tests | **skip** | Test-only follow-up requiring the skipped `3ede1ec` sprite-DMA implementation. |
 | `f482449` | build: upgrade Ebitengine to 2.10.1 | **skip** | Ebitengine is used only by the desktop frontend and is absent from both TinyGo device dependency graphs. The update passed isolated desktop and device-build checks, but is not a TinyGo improvement and was reverted to keep this branch hardware-focused. |
 | `c19872c` | Fix VIC-II right-edge raster seam | **skip** | Isolated cherry-pick conflicts in `6569.go` and its test; the raster path is part of the rejected graphics-mode/sprite implementation. |
+| `e5c0950` | Use fs.FS for D64 loader | **picked (full)** | Refactors D64 filesystem loader to use standard library `io/fs.FS`. Applied cleanly; `go test ./...` and device builds passed. |
+| `a0c5bbe` | 6510: implement missing illegal opcodes ANC and LAX family | **picked (full)** | Implements ANC (0x0B/0x2B) and full LAX family (0xA3/0xA7/0xAF/0xB3/0xB7/0xBF) in 6510 CPU core. Applied cleanly; on-device measurement on Tufty 2040 at `-opt=2 -scheduler=none` confirmed no frame-time regression (steady `emulate≈74.67ms/frame` across 10 50-frame windows, matching baseline). |
 
 ## Performance investigation: frame-time gap vs main's ~70ms target
 
