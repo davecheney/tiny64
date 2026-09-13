@@ -1,9 +1,8 @@
 package tiny64
 
 import (
-	"os"
-	"path/filepath"
 	"testing"
+	"testing/fstest"
 )
 
 // TestD64TrackLayout checks the standard 35-track and 40-track D64 sector-count zones
@@ -150,28 +149,46 @@ func TestDisk40TrackAccess(t *testing.T) {
 func TestReadDiskOrPRG40Track(t *testing.T) {
 	saveMachine(t)
 
-	dir := t.TempDir()
-
-	// Write a dummy 40-track D64 image
-	path40 := filepath.Join(dir, "test40.d64")
-	if err := os.WriteFile(path40, make([]byte, D64Size40), 0o644); err != nil {
-		t.Fatalf("failed to write dummy 40-track file: %v", err)
+	fsys := fstest.MapFS{
+		"test40.d64": {Data: make([]byte, D64Size40)},
+		"bad.d64":    {Data: make([]byte, 180000)},
 	}
 
-	img, err := ReadDiskOrPRG(path40)
+	img, err := ReadDiskOrPRG(fsys, "test40.d64")
 	if err != nil {
-		t.Fatalf("ReadDiskOrPRG(%q) error = %v", path40, err)
+		t.Fatalf("ReadDiskOrPRG(test40.d64) error = %v", err)
 	}
 	if len(img) != D64Size40 {
 		t.Fatalf("len(img) = %d, want %d", len(img), D64Size40)
 	}
 
-	// Write an invalid-sized file (e.g. 180000 bytes)
-	pathInvalid := filepath.Join(dir, "bad.d64")
-	if err := os.WriteFile(pathInvalid, make([]byte, 180000), 0o644); err != nil {
-		t.Fatalf("failed to write invalid file: %v", err)
+	if _, err := ReadDiskOrPRG(fsys, "bad.d64"); err == nil {
+		t.Fatalf("ReadDiskOrPRG(bad.d64) should have failed for 180000 byte image")
 	}
-	if _, err := ReadDiskOrPRG(pathInvalid); err == nil {
-		t.Fatalf("ReadDiskOrPRG(%q) should have failed for 180000 byte image", pathInvalid)
+}
+
+func TestReadDiskOrPRGWrapsPRGFromFS(t *testing.T) {
+	saveMachine(t)
+
+	prgData := []byte{0x01, 0x08, 0x00, 0x00}
+	fsys := fstest.MapFS{
+		"programs/love.prg": {Data: prgData},
+	}
+
+	img, err := ReadDiskOrPRG(fsys, "programs/love.prg")
+	if err != nil {
+		t.Fatalf("ReadDiskOrPRG(programs/love.prg) error = %v", err)
+	}
+	if len(img) != D64Size {
+		t.Fatalf("len(img) = %d, want %d", len(img), D64Size)
+	}
+
+	InsertDisk(img)
+	entries := diskDirectory()
+	if len(entries) != 1 {
+		t.Fatalf("len(diskDirectory()) = %d, want 1", len(entries))
+	}
+	if name := entries[0].nameString(); name != "LOVE" {
+		t.Errorf("entry name = %q, want LOVE", name)
 	}
 }
