@@ -4,15 +4,16 @@ import "strings"
 
 // The IEC serial bus is open-collector: each line is asserted
 // (electrically low) if ANY device pulls it low, and only released (high,
-// via pull-up) when every device releases it. Only one drive is modeled,
-// so the two drivers are the C64's CIA2 and the drive's own VIA1.
+// via pull-up) when every device releases it. The C64's CIA2 is the only
+// bus driver modeled on this side; attached peripherals (iecPeripheral)
+// drive the other side.
 //
 // CIA2 Port A ($DD00) bits 3/4/5 (ATN/CLOCK/DATA OUT) drive the bus
 // through inverting 7406 buffers, so a bit WRITTEN as 1 pulls its line low
 // - asserted. That is the convention the KERNAL uses throughout: CLKLO is
 // LDA $DD00 / ORA #$10 / STA $DD00, and CLKHI is the matching AND #$EF.
-// There is no separate test-harness state: cmd/drivec (or a real CIA2)
-// both just manipulate CIA2's registers directly via CIA2().
+// There is no separate test-harness state: a test harness (or a real CIA2)
+// just manipulates CIA2's registers directly via CIA2().
 
 // iecPeripheral is a device hanging off the IEC bus. Because the bus is
 // open-collector, a peripheral only ever says whether it is *pulling* a
@@ -145,7 +146,7 @@ func cia2DataOut() bool {
 // SetCIA2ATN, SetCIA2CLK and SetCIA2DATA drive CIA2's Port A as if a C64
 // (or a test harness standing in for one) wanted to assert/release the
 // corresponding IEC line: they configure the bit as an output and write
-// it the way the KERNAL does, for tools like cmd/drivec.
+// it the way the KERNAL does, for tools that drive the bus directly.
 func SetCIA2ATN(asserted bool)  { setCIA2OutputBit(0x08, asserted) }
 func SetCIA2CLK(asserted bool)  { setCIA2OutputBit(0x10, asserted) }
 func SetCIA2DATA(asserted bool) { setCIA2OutputBit(0x20, asserted) }
@@ -181,59 +182,6 @@ func cia2ReadPRA() uint8 {
 	return base | in
 }
 
-// via1ClkOut reports whether VIA1 is currently driving CLOCK OUT (PRB bit
-// 3) low; it only has effect when that bit is configured as an output.
-func via1ClkOut() bool {
-	return via1.DDRB&0x08 != 0 && via1.ORB&0x08 != 0
-}
-
-// via1DataOut reports whether VIA1 is currently pulling DATA low: either
-// it has explicitly driven DATA OUT (PRB bit 1), or - the classic IEC
-// auto-acknowledge quirk - ATN is asserted on the bus and the drive hasn't
-// yet set its ATN acknowledge bit (PRB bit 4) to override that.
-func via1DataOut() bool {
-	dataOut := via1.DDRB&0x02 != 0 && via1.ORB&0x02 != 0
-	atnAck := via1.DDRB&0x10 != 0 && via1.ORB&0x10 != 0
-	return dataOut || (ATNAsserted() && !atnAck)
-}
-
-// via1ReadPRB constructs VIA1's Port B read value: ATN IN/device jumpers/
-// CLOCK IN/DATA IN (bits 7,6,5,2,0) always reflect the live bus/jumper
-// state regardless of DDR, while ATN ACK/CLOCK OUT/DATA OUT (bits 4,3,1)
-// use normal DDR-effective read-back.
-func via1ReadPRB() uint8 {
-	var in uint8
-	if ATNAsserted() {
-		in |= 0x80
-	}
-	// Device address jumpers: 00 = device #8 (both bits 0).
-	if CLKAsserted() {
-		in |= 0x04
-	}
-	if DATAAsserted() {
-		in |= 0x01
-	}
-
-	out := viaEffective(via1.ORB, via1.DDRB) & 0x1A
-	return in | out
-}
-
-// via1AtnAck reports whether VIA1 has set its ATN acknowledge bit (PRB bit
-// 4), overriding the automatic ATN->DATA pulldown.
-func via1AtnAck() bool {
-	return via1.DDRB&0x10 != 0 && via1.ORB&0x10 != 0
-}
-
-// via1SampleATN presents the current bus ATN state to VIA1's CA1 pin,
-// which is how the drive learns that the C64 wants its attention: the
-// 7406 inverter between the bus and the chip means an asserted (low) ATN
-// arrives at CA1 as a high level, and the DOS ROM programs PCR bit 0 for
-// a low-to-high active edge and enables the CA1 interrupt, so asserting
-// ATN interrupts the drive into its command handler.
-func via1SampleATN() {
-	via1.setCA1(ATNAsserted())
-}
-
 // IECStatus returns a human-readable summary of the IEC bus lines, who is
 // driving each one, and the attached peripherals - for debugging tools.
 func IECStatus() string {
@@ -260,17 +208,6 @@ func IECStatus() string {
 	}
 	for _, p := range iecBus {
 		switch d := p.(type) {
-		case *drive1541:
-			devices = append(devices, "1541 #8")
-			if via1ClkOut() {
-				clkDrivers = append(clkDrivers, "1541")
-			}
-			if via1.DDRB&0x02 != 0 && via1.ORB&0x02 != 0 {
-				dataDrivers = append(dataDrivers, "1541:DATA_OUT")
-			}
-			if ATNAsserted() && !via1AtnAck() {
-				dataDrivers = append(dataDrivers, "1541:auto-ack")
-			}
 		case *iecDevice:
 			devices = append(devices, "device #"+itoa(int(d.address))+" "+d.stateName())
 			if d.clk {

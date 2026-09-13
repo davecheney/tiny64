@@ -10,8 +10,9 @@ package tiny64
 //
 // What that buys: LOAD, SAVE, the directory, and the command channel all
 // work, at real bus speed. What it costs: no fastloader, no copy
-// protection, no drive code upload, no timing-dependent trickery. For
-// those you need the full 1541 (see drive1541).
+// protection, no drive code upload, no timing-dependent trickery. This
+// branch does not model the full 1541 (GCR/6502/VIA) at all, so this is
+// the only drive available here.
 //
 // The protocol implemented here is the standard CBM serial bus, following
 // Butterfield's "How the VIC/64 Serial Bus Works" and the CBM timing table
@@ -149,15 +150,20 @@ const (
 // virtualDrive is the singleton generic drive, if one is attached.
 var virtualDrive iecDevice
 
+// virtualDriveAttached reports whether AttachVirtualDrive/AttachVirtualPRG
+// has put the generic drive on the bus and it hasn't since been detached.
+var virtualDriveAttached bool
+
 // AttachVirtualDrive puts a generic CBM-DOS drive on the IEC bus at the
 // given primary address (8 for the first drive), replacing any virtual
 // drive already there. It speaks the serial protocol on the wire but
-// implements the DOS in Go, so it needs no drive CPU and no GCR; use
-// AttachDrive(true) instead if you need a real 1541.
+// implements the DOS in Go against a D64 image, with no drive CPU and no
+// GCR to model.
 func AttachVirtualDrive(address uint8) {
 	virtualDrive = iecDevice{address: address}
 	virtualDrive.dos.reset()
 	attachIEC(&virtualDrive)
+	virtualDriveAttached = true
 }
 
 // AttachVirtualPRG puts a read-only generic drive on the IEC bus at address
@@ -175,11 +181,13 @@ func AttachVirtualPRG(address uint8, name string, data []byte) {
 		data: data,
 	}}
 	attachIEC(&virtualDrive)
+	virtualDriveAttached = true
 }
 
 // DetachVirtualDrive removes the generic drive from the IEC bus.
 func DetachVirtualDrive() {
 	detachIEC(&virtualDrive)
+	virtualDriveAttached = false
 }
 
 func (d *iecDevice) iecCLKOut() bool  { return d.clk }

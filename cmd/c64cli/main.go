@@ -65,7 +65,6 @@ func main() {
 	destestmax := flag.Bool("destestmax", false, "insert the DiSTestMAX MAX-mode cartridge before reset")
 	deadtest := flag.Bool("deadtest", false, "insert the Dead Test MAX-mode cartridge before reset")
 	disk := flag.String("disk", "", "insert this D64 disk image into drive 8")
-	drive := flag.String("drive", "1541", "drive to answer for device 8: \"1541\" emulates the drive's CPU and GCR, \"virtual\" implements CBM DOS directly")
 	flag.Parse()
 
 	// Fill RAM with random values to simulate power-on randomness.
@@ -92,21 +91,9 @@ func main() {
 		if len(image) != tiny64.D64Size {
 			log.Fatalf("%s is %d bytes, not a %d byte 35-track D64", *disk, len(image), tiny64.D64Size)
 		}
-		// Inserting a disk plugs a 1541 into the serial bus, if there
-		// wasn't one there already.
+		// Inserting a disk plugs the virtual drive into the serial bus,
+		// if there wasn't one there already.
 		tiny64.InsertDisk(image)
-
-		switch *drive {
-		case "1541":
-			// InsertDisk already attached one.
-		case "virtual":
-			// Only one device can answer for address 8, so the 1541 that
-			// InsertDisk plugged in has to come out first.
-			tiny64.AttachDrive(false)
-			tiny64.AttachVirtualDrive(8)
-		default:
-			log.Fatalf("unknown -drive %q, want \"1541\" or \"virtual\"", *drive)
-		}
 	}
 
 	tiny64.Reset()

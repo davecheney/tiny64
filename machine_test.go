@@ -20,23 +20,21 @@ func saveMachine(t *testing.T) {
 	savedCPU, savedCIA1, savedCIA2 := cpu, cia1, cia2
 	savedKeyboard, savedVIC, savedCartridge := keyboard, vic, cartridge
 	savedRAM, savedColorRAM := ram, colorRAM
-	savedDriveCPU, savedVIA1, savedVIA2 := driveCPU, via1, via2
-	savedDriveRAM, savedDisk := driveRAM, diskImage
-	savedDriveAttached := driveAttached
-	// The bus is its own state, not a shadow of driveAttached: a peripheral
-	// can sit on it without setting that flag at all. Snapshot the slice
-	// header and its contents, since a test may replace an entry.
+	savedDisk := diskImage
+	savedVirtualDriveAttached := virtualDriveAttached
+	// The bus is its own state, not a shadow of virtualDriveAttached: a
+	// peripheral can sit on it without setting that flag at all. Snapshot
+	// the slice header and its contents, since a test may replace an
+	// entry.
 	savedBus := append([]iecPeripheral(nil), iecBus...)
 	t.Cleanup(func() {
 		cpu, cia1, cia2 = savedCPU, savedCIA1, savedCIA2
 		keyboard, vic, cartridge = savedKeyboard, savedVIC, savedCartridge
 		ram, colorRAM = savedRAM, savedColorRAM
-		driveCPU, via1, via2 = savedDriveCPU, savedVIA1, savedVIA2
-		driveRAM = savedDriveRAM
 		InsertDisk(savedDisk)
-		driveResetDisk()
-		driveAttached = savedDriveAttached
-		// Last, because InsertDisk above attaches a 1541 of its own.
+		virtualDriveAttached = savedVirtualDriveAttached
+		// Last, because InsertDisk above attaches the virtual drive of
+		// its own.
 		iecBus = savedBus
 	})
 }

@@ -17,32 +17,24 @@ tiny64 emulates:
 - the 6510 CPU
 - the 6569 VIC-II video chip (PAL)
 - the 6526 CIA I/O chips
-- the 6522 VIA and a complete 1541 disk drive - its own 6502 running the
-  real DOS ROM, a rotating GCR track under the head, and the serial IEC
-  bus between the two machines - so `LOAD"$",8` reads a real D64, and the
-  DOS can format a blank one for itself
+- a virtual IEC drive that speaks the real serial bus protocol
+  (`AttachVirtualDrive`) cycle by cycle, but implements CBM DOS directly
+  in Go against a D64 image rather than emulating a drive's own CPU. It
+  has no drive CPU to step and no GCR to decode, so it costs almost
+  nothing to run, and the unmodified KERNAL cannot tell the difference -
+  but it cannot run anything that talks to a real 1541's own processor.
 
-There is also a second, much smaller drive that speaks the same wire
-protocol without modelling any of the 1541's internals: `AttachVirtualDrive`
-puts a device on the bus that handles the serial handshake cycle by cycle
-but implements CBM DOS in Go against a D64 image. It has no drive CPU to
-step and no GCR to decode, so it costs almost nothing to run, and the
-unmodified KERNAL cannot tell the difference - but it cannot run anything
-that talks to the drive's own processor.
+  This is the `tinygo` branch: it targets microcontrollers, where the
+  real 1541 CPU/VIA/GCR emulation main carries is too costly to run
+  cycle-accurately. It intentionally does not have that emulation; see
+  main for cycle-accurate 1541 support.
 
 A drive is only plugged in when something asks for one, with
-`AttachDrive`, or by inserting a disk: `cmd/c64` and `cmd/c64cli` both
-take a `-disk FILE` flag naming a 35-track D64 image, and a `-drive` flag
-choosing which drive answers for device 8 — `1541` (the default) or
-`virtual`. Only one drive can answer for a given address, so attaching one
-replaces the other.
+`AttachVirtualDrive`, or by inserting a disk: `cmd/c64` and `cmd/c64cli`
+both take a `-disk FILE` flag naming a 35-track D64 image, which attaches
+the virtual drive automatically.
 
-    go run ./cmd/c64 -disk demo.d64                  # the real 1541
-    go run ./cmd/c64 -disk demo.d64 -drive=virtual   # the generic drive
-
-Both should behave identically for `LOAD"$",8`, `LOAD"NAME",8` and
-`SAVE`; the difference only shows for software that drives the 1541's own
-processor.
+    go run ./cmd/c64 -disk demo.d64
 
 It is deliberately small: the core package has no dependency on any
 graphics library, so it can run headless (for testing) or under
@@ -52,8 +44,8 @@ Raspberry Pi Pico.
 
 ## Layout
 
-- the repository root is the core emulator package (CPU, VIC-II, CIA,
-  1541, the generic IEC drive, bus/PLA)
+- the repository root is the core emulator package (CPU, VIC-II, CIA, the
+  virtual IEC drive, bus/PLA)
 - `rom/` embeds the ROM images the emulator needs to boot
 - `cmd/internal/desktop/` is the shared Ebitengine frontend used by the desktop
   commands
@@ -62,7 +54,6 @@ Raspberry Pi Pico.
 - `cmd/gopher-badge64` is the TinyGo build target for the Gopher Badge
 - `cmd/tufty2040` is the TinyGo build target for the Pimoroni Tufty 2040,
   using its parallel ST7789 display through PIO/DMA
-- `cmd/drivec` is a standalone 1541 drive/IEC bus test harness
 - `cmd/deadtest` and `cmd/destestmax` run C64 diagnostic cartridges
 
 Tufty 2040 builds should leave TinyGo's default scheduler and optimization
