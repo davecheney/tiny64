@@ -56,6 +56,11 @@ func TestVICBorderPlacement(t *testing.T) {
 	if firstNonBorder != wantFirst {
 		t.Errorf("first non-border pixel at displayX=%d, want %d", firstNonBorder, wantFirst)
 	}
+	if !frameBufferPixelIs(uint16(rightComp40), 100, 0x0e) {
+		t.Errorf("pixel at first right-border displayX=%d is %v, want border color %v",
+			rightComp40, frameBufferPixelRGBA(uint16(rightComp40), 100), C64Palette[0x0e])
+	}
+
 	_ = wantLast
 }
 
