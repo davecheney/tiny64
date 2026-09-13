@@ -92,15 +92,15 @@ func isPowerOfTwo(n int) bool {
 // actually populated with a ROM chip on the PCB.
 func (b *Bus) Insert(rom []byte, game, exrom, romh, roml bool) {
 	cart := Cartridge{ROM: rom, Game: game, Exrom: exrom, ROMH: romh, ROML: roml}
-	if roml && romh && len(rom) > cartridgeBankSize {
+	if roml && romh {
 		cart.ROMLData, cart.ROMHData = splitROMLH(rom)
-	} else {
-		if roml {
-			cart.ROMLData = rom
-		}
-		if romh {
+		if cart.ROMHData == nil {
 			cart.ROMHData = rom
 		}
+	} else if roml {
+		cart.ROMLData = rom
+	} else if romh {
+		cart.ROMHData = rom
 	}
 	b.InsertCartridge(cart)
 }
@@ -170,17 +170,17 @@ func ParseCRT(data []byte) (Cartridge, error) {
 		bank := binary.BigEndian.Uint16(data[off+0x0A : off+0x0C])
 		start := binary.BigEndian.Uint16(data[off+0x0C : off+0x0E])
 		size := int(binary.BigEndian.Uint16(data[off+0x0E : off+0x10]))
-		if size != packetLen-0x10 {
-			return Cartridge{}, fmt.Errorf("CRT CHIP packet at offset %d has image size %d but packet carries %d bytes", off, size, packetLen-0x10)
-		}
-		if !isPowerOfTwo(size) {
-			return Cartridge{}, fmt.Errorf("CRT CHIP packet at offset %d has non-power-of-two image size %d", off, size)
-		}
 		if chipType != 0 {
 			return Cartridge{}, fmt.Errorf("unsupported CRT CHIP type %d at offset %d", chipType, off)
 		}
 		if bank != 0 {
 			return Cartridge{}, fmt.Errorf("unsupported banked CRT CHIP bank %d at offset %d", bank, off)
+		}
+		if size != packetLen-0x10 {
+			return Cartridge{}, fmt.Errorf("CRT CHIP packet at offset %d has image size %d but packet carries %d bytes", off, size, packetLen-0x10)
+		}
+		if size > 0x4000 {
+			return Cartridge{}, fmt.Errorf("CRT CHIP packet at offset %d has unsupported image size %d", off, size)
 		}
 
 		chip := data[off+0x10 : off+packetLen]
