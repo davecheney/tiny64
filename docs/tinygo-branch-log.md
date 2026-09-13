@@ -72,6 +72,33 @@ raster loop. The XIP and `-opt` telemetry/findings are being kept
 permanently (both in code and in this log) since they narrow the search
 space for whoever picks this up next.
 
+## Tried and rejected: main PR #24 (VIC-II hoist)/'davecheney-effective-spork' branch
+
+`main`'s open PR #24 (`f11cc3b`, `7716d73`, `8b6a30f`, branch
+`dfc/vic-hoist-commits-2-4`) hoists the hblank and per-build render-window
+tests out of the per-dot `dotclock1`-`dotclock7` calls in `6569.go`, and
+was measured on `main` (Gopher Badge) as a ~1.65% win over `78e8f0e`.
+Since this branch's `6569.go`/`vic_test.go` are untouched since the branch
+point, all three commits cherry-picked onto `tinygo` cleanly with zero
+conflicts, and `go build`/`go test ./...` and both TinyGo device builds
+passed.
+
+On-device (Tufty 2040) it measured **worse**, not better: emulate≈76-77ms
+at `-opt=2` (previously ≈73-74ms/frame without the hoist, at the same
+`-opt=2`), consistent across a 400+ frame capture. XIP hit rate was
+unaffected (≈99.97-99.99%), so this was not a cache-pressure change - the
+extra per-cycle branching/bookkeeping the hoist adds appears to cost more
+on this compiler/target combination than the branches it removes save.
+This is the opposite of the (real, PR #24-confirmed) result on the Gopher
+Badge, so the two boards/build configurations disagree here.
+
+**Rejected. Reverted from this branch** (the three commits were dropped
+via `git reset --hard` back to `43f319b` before ever being pushed, so
+`tinygo`'s history has no trace of the attempt beyond this log entry).
+Not backported. If revisited, it needs its own A/B on the Tufty 2040 (and
+ideally the Gopher Badge too, since this branch targets both) rather than
+assuming the Badge result transfers.
+
 ## Contributing back to main
 
 This branch also contributes performance fixes upstream to `main` when
