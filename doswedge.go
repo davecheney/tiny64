@@ -62,6 +62,10 @@ func resetDOSWedge() {
 	dosWedge.armInstall = dosWedge.enabled
 }
 
+// installDOSWedgeIfReady watches BASIC's warm-start vector at $0302/$0303.
+// BASIC writes that vector during initialization; once it reaches the standard
+// warm-start address, the resident wedge payload can safely replace it without
+// racing ROM startup.
 func installDOSWedgeIfReady(writeAddr uint16) {
 	if !dosWedge.enabled || dosWedge.installed || !dosWedge.armInstall {
 		return

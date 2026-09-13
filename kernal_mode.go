@@ -2,7 +2,6 @@ package tiny64
 
 import (
 	"fmt"
-	"sync"
 
 	"github.com/davecheney/tiny64/rom"
 )
@@ -16,8 +15,6 @@ const (
 
 var (
 	activeKernalMode = kernalModeStock
-	wedgeKernalROM   []byte
-	wedgeKernalOnce  sync.Once
 )
 
 func setKernalMode(mode kernalMode) {
@@ -39,11 +36,6 @@ func SetKernalMode(mode string) error {
 }
 
 func activeKernalROM() []byte {
-	if activeKernalMode != kernalModeWedge {
-		return rom.Kernal
-	}
-	wedgeKernalOnce.Do(func() {
-		wedgeKernalROM = append([]byte(nil), rom.Kernal...)
-	})
-	return wedgeKernalROM
+	_ = activeKernalMode
+	return rom.Kernal
 }

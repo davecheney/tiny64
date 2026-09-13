@@ -70,6 +70,15 @@ func main() {
 	kernal := flag.String("kernal", "stock", "KERNAL profile: \"stock\" or \"wedge\"")
 	wedge := flag.Bool("wedge", false, "alias for -kernal=wedge")
 	flag.Parse()
+	var explicitKernal, explicitWedge bool
+	flag.Visit(func(f *flag.Flag) {
+		if f.Name == "kernal" {
+			explicitKernal = true
+		}
+		if f.Name == "wedge" {
+			explicitWedge = true
+		}
+	})
 
 	// Fill RAM with random values to simulate power-on randomness.
 	ram := tiny64.Ram()
@@ -86,6 +95,9 @@ func main() {
 	}
 	if *deadtest {
 		tiny64.GetBus().Insert(rom.DeadTest, true, false, true, false)
+	}
+	if explicitKernal && explicitWedge && *kernal != "wedge" {
+		log.Fatal("conflicting flags: -wedge cannot be combined with -kernal stock")
 	}
 	if *wedge {
 		*kernal = "wedge"

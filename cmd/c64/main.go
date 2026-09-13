@@ -16,6 +16,15 @@ func main() {
 	kernal := flag.String("kernal", "stock", "KERNAL profile: \"stock\" or \"wedge\"")
 	wedge := flag.Bool("wedge", false, "alias for -kernal=wedge")
 	flag.Parse()
+	var explicitKernal, explicitWedge bool
+	flag.Visit(func(f *flag.Flag) {
+		if f.Name == "kernal" {
+			explicitKernal = true
+		}
+		if f.Name == "wedge" {
+			explicitWedge = true
+		}
+	})
 
 	targetFile := *disk
 	if targetFile == "" {
@@ -35,6 +44,9 @@ func main() {
 	// the callback where it would be that disappearing window again.
 	if *drive != "1541" && *drive != "virtual" {
 		log.Fatalf("unknown -drive %q, want \"1541\" or \"virtual\"", *drive)
+	}
+	if explicitKernal && explicitWedge && *kernal != "wedge" {
+		log.Fatal("conflicting flags: -wedge cannot be combined with -kernal stock")
 	}
 	if *wedge {
 		*kernal = "wedge"
