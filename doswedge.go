@@ -1,5 +1,7 @@
 package tiny64
 
+import "sync"
+
 const (
 	dosWedgeOrigin     = 0xC000
 	dosWedgeReactivate = 0xCC00
@@ -18,7 +20,18 @@ type dosWedgeState struct {
 }
 
 var dosWedge dosWedgeState
-var dosWedgeProgram = buildDOSWedge()
+var (
+	dosWedgeProgram     []byte
+	dosWedgeProgramOnce sync.Once
+)
+
+func residentDOSWedgeImage() []byte {
+	// The resident wedge image is immutable and shared across installs.
+	dosWedgeProgramOnce.Do(func() {
+		dosWedgeProgram = buildDOSWedge()
+	})
+	return dosWedgeProgram
+}
 
 // EnableDOSWedge arranges for a small resident DOS wedge to be installed
 // after BASIC initializes its RAM vectors. The wedge occupies $C000-$CFFF
@@ -55,7 +68,7 @@ func tickDOSWedge() {
 		return
 	}
 
-	copy(ram[dosWedgeOrigin:], dosWedgeProgram)
+	copy(ram[dosWedgeOrigin:], residentDOSWedgeImage())
 	ram[0x0302] = uint8(dosWedgeOrigin & 0xFF)
 	ram[0x0303] = uint8(dosWedgeOrigin >> 8)
 	dosWedge.installed = true
