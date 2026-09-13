@@ -120,7 +120,7 @@ Raspberry Pi Pico.
 - `cmd/prg` inspects `.prg` files: header, BASIC listing, disassembly
 - `cmd/internal/prg` and `cmd/internal/disasm` are the PRG decoder and the
   6502 disassembler behind it
-- `cmd/deadtest` runs the built-in C64 Dead Test diagnostic cartridge
+- `cmd/deadtest` and `cmd/destestmax` run C64 diagnostic cartridges
 
 Tufty 2040 builds should leave TinyGo's default scheduler and optimization
 level in place unless re-measuring on hardware; scheduler or `-opt` overrides

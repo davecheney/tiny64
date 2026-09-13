@@ -1,5 +1,5 @@
 // Package desktop provides the shared Ebitengine-based GUI frontend used
-// by tiny64's desktop commands (cmd/c64, cmd/deadtest).
+// by tiny64's desktop commands (cmd/c64, cmd/destestmax, cmd/deadtest).
 // It is deliberately isolated from the core tiny64 package: the long-term
 // goal is to run tiny64 on a Raspberry Pi Pico 2 under TinyGo, which won't
 // use Ebitengine at all, so nothing in this package should be depended on
