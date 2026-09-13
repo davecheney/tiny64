@@ -74,7 +74,6 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
-	*kernal = resolvedKernal
 
 	// Fill RAM with random values to simulate power-on randomness.
 	ram := tiny64.Ram()
@@ -92,7 +91,7 @@ func main() {
 	if *deadtest {
 		tiny64.GetBus().Insert(rom.DeadTest, true, false, true, false)
 	}
-	if err := tiny64.SetKernalMode(*kernal); err != nil {
+	if err := tiny64.SetKernalMode(resolvedKernal); err != nil {
 		log.Fatal(err)
 	}
 	targetFile := *disk

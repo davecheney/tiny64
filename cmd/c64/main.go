@@ -20,7 +20,6 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
-	*kernal = resolvedKernal
 
 	targetFile := *disk
 	if targetFile == "" {
@@ -41,7 +40,7 @@ func main() {
 	if *drive != "1541" && *drive != "virtual" {
 		log.Fatalf("unknown -drive %q, want \"1541\" or \"virtual\"", *drive)
 	}
-	if err := tiny64.SetKernalMode(*kernal); err != nil {
+	if err := tiny64.SetKernalMode(resolvedKernal); err != nil {
 		log.Fatal(err)
 	}
 

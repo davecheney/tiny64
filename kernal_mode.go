@@ -20,6 +20,10 @@ func SetKernalMode(mode string) error {
 }
 
 // ResolveKernalModeFlags resolves -kernal and -wedge flag combinations.
+// explicitKernal and explicitWedge report whether each flag was present on
+// the command line. If both were explicitly set and -wedge is true while
+// -kernal is not "wedge", this reports a conflict. Otherwise -wedge=true
+// takes precedence over -kernal.
 func ResolveKernalModeFlags(kernal string, wedge bool, explicitKernal, explicitWedge bool) (string, error) {
 	if explicitWedge && wedge && explicitKernal && kernal != "wedge" {
 		return "", fmt.Errorf("conflicting flags: -wedge cannot be combined with -kernal %q", kernal)
