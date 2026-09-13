@@ -4,6 +4,8 @@ package main
 import (
 	"flag"
 	"log"
+	"os"
+	"path/filepath"
 
 	"github.com/davecheney/tiny64"
 	"github.com/davecheney/tiny64/cmd/internal/desktop"
@@ -25,7 +27,7 @@ func main() {
 	var image []byte
 	if targetFile != "" {
 		var err error
-		if image, err = tiny64.ReadDiskOrPRG(targetFile); err != nil {
+		if image, err = tiny64.ReadDiskOrPRG(os.DirFS(filepath.Dir(targetFile)), filepath.Base(targetFile)); err != nil {
 			log.Fatal(err)
 		}
 	}
