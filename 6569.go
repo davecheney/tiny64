@@ -489,6 +489,10 @@ func (v *VICII) paintGraphicsPixel() {
 	}
 
 	finalColor := graphicsColor
+	// The right edge comparator is sampled on the character-cell boundary,
+	// but a mid-line CSEL change can leave mainBorder open for that sample.
+	// The boundary pixel is nevertheless part of the right border; masking it
+	// here prevents the last graphics pixel from leaking into the border.
 	if v.mainBorder {
 		finalColor = v.borderColor
 	} else if hitCount > 0 {
@@ -749,6 +753,12 @@ func FinishFrame() {
 // in flash precisely because it failed to inline, so code size is not
 // evidence that it is faster.
 func (v *VICII) dotclock0() {
+	// The pixel at the 40-column right edge is visible before the following
+	// cycle's register writes are sampled. Repaint it here so raster changes
+	// that occur at the boundary apply to the complete border cell.
+	if v.dot == rightComp40 && v.lineDrawable {
+		writePixelToBuffer(rightComp40, v.rasterLine, v.borderColor&0x0F)
+	}
 	v.dot++
 	v.advanceGraphicsData()
 
