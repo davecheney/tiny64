@@ -240,7 +240,9 @@ func (c *CPU) TickPhi2() {
 			c.Interrupt = 2
 			c.Opcode = 0x00
 			c.TState = 1
-		case irq && c.effectiveI == 0 && c.Clock >= c.irqAssertClock+2:
+		// irqAssertClock is recorded on the first cycle that samples the
+		// asserted line, so +1 recognizes it on the second sampled cycle.
+		case irq && c.effectiveI == 0 && c.Clock >= c.irqAssertClock+1:
 			c.Interrupt = 1
 			c.Opcode = 0x00
 			c.TState = 1
