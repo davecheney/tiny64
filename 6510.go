@@ -182,7 +182,6 @@ func (c *CPU) TickPhi2() {
 	// monostable is a timer, so it counts here with the CIAs. It isn't on
 	// the bus, so AEC is none of its business.
 	keyboard.tick()
-	tickDOSWedge()
 
 	nmi := nmiAsserted()
 	if nmi && !c.nmiLine {

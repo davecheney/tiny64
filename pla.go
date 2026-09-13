@@ -33,7 +33,7 @@ func plaLoad(addr uint16) uint8 {
 		// regardless of hiram.
 		return cartridge.ROM[addr-0xE000]
 	case addr >= 0xE000 && hiram:
-		return rom.Kernal[addr-0xE000]
+		return activeKernalROM()[addr-0xE000]
 	default:
 		return ram[addr]
 	}
@@ -54,6 +54,7 @@ func plaStore(addr uint16, val uint8) {
 		// else: character ROM selected, read-only; RAM is disabled here.
 	default:
 		ram[addr] = val
+		installDOSWedgeIfReady(addr)
 	}
 }
 

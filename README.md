@@ -44,12 +44,13 @@ Both should behave identically for `LOAD"$",8`, `LOAD"NAME",8` and
 `SAVE`; the difference only shows for software that drives the 1541's own
 processor.
 
-The desktop and headless front ends also have an opt-in `-wedge` flag. It
-installs a small resident program at `$C000` after BASIC initializes, without
-requiring freezer hardware or a cartridge ROM:
+The desktop and headless front ends support `-kernal stock|wedge`. `wedge`
+enables a DOS-wedge KERNAL profile that installs a small resident program at
+`$C000` during boot. The legacy `-wedge` flag remains as an alias for
+`-kernal wedge`:
 
-    go run ./cmd/c64 -disk demo.d64 -wedge
-    go run ./cmd/c64cli -disk demo.d64 -drive=virtual -wedge
+    go run ./cmd/c64 -disk demo.d64 -kernal wedge
+    go run ./cmd/c64cli -disk demo.d64 -drive=virtual -kernal wedge
 
 The wedge prints `DOS WEDGE ACTIVE` at the first prompt and accepts the
 historical direct-mode DOS Wedge / DOS Manager 5.1 shorthands:

@@ -15,8 +15,9 @@ const (
 )
 
 type dosWedgeState struct {
-	enabled   bool
-	installed bool
+	enabled    bool
+	installed  bool
+	armInstall bool
 }
 
 var dosWedge dosWedgeState
@@ -39,31 +40,35 @@ func residentDOSWedgeImage() []byte {
 func EnableDOSWedge() {
 	dosWedge.enabled = true
 	dosWedge.installed = false
+	dosWedge.armInstall = true
+	setKernalMode(kernalModeWedge)
 }
 
 // DisableDOSWedge disables the DOS wedge and restores BASIC's standard warm
 // start vector if the wedge is currently installed.
 func DisableDOSWedge() {
 	dosWedge.enabled = false
+	dosWedge.armInstall = false
 	if ram[0x0302] == uint8(dosWedgeOrigin&0xFF) && ram[0x0303] == uint8(dosWedgeOrigin>>8) {
 		ram[0x0302] = uint8(basicWarmStart & 0xFF)
 		ram[0x0303] = uint8(basicWarmStart >> 8)
 	}
 	dosWedge.installed = false
+	setKernalMode(kernalModeStock)
 }
 
 func resetDOSWedge() {
 	dosWedge.installed = false
+	dosWedge.armInstall = dosWedge.enabled
 }
 
-func tickDOSWedge() {
-	if !dosWedge.enabled || dosWedge.installed {
+func installDOSWedgeIfReady(writeAddr uint16) {
+	if !dosWedge.enabled || dosWedge.installed || !dosWedge.armInstall {
 		return
 	}
-
-	// BASIC installs this vector during its cold start. Waiting for the
-	// standard value avoids racing the ROM's initialization and makes the
-	// wedge work after both cold and warm machine resets.
+	if writeAddr != 0x0302 && writeAddr != 0x0303 {
+		return
+	}
 	if ram[0x0302] != uint8(basicWarmStart&0xFF) || ram[0x0303] != uint8(basicWarmStart>>8) {
 		return
 	}
@@ -72,6 +77,7 @@ func tickDOSWedge() {
 	ram[0x0302] = uint8(dosWedgeOrigin & 0xFF)
 	ram[0x0303] = uint8(dosWedgeOrigin >> 8)
 	dosWedge.installed = true
+	dosWedge.armInstall = false
 }
 
 type wedgeFixup struct {

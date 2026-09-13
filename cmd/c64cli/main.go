@@ -67,7 +67,8 @@ func main() {
 	disk := flag.String("disk", "", "insert this D64 disk image or PRG file into drive 8")
 	prg := flag.String("prg", "", "insert this PRG file into drive 8 (formatted on a virtual disk)")
 	drive := flag.String("drive", "1541", "drive to answer for device 8: \"1541\" emulates the drive's CPU and GCR, \"virtual\" implements CBM DOS directly")
-	wedge := flag.Bool("wedge", false, "enable the resident DOS wedge at the BASIC prompt")
+	kernal := flag.String("kernal", "stock", "KERNAL profile: \"stock\" or \"wedge\"")
+	wedge := flag.Bool("wedge", false, "alias for -kernal=wedge")
 	flag.Parse()
 
 	// Fill RAM with random values to simulate power-on randomness.
@@ -87,7 +88,10 @@ func main() {
 		tiny64.GetBus().Insert(rom.DeadTest, true, false, true, false)
 	}
 	if *wedge {
-		tiny64.EnableDOSWedge()
+		*kernal = "wedge"
+	}
+	if err := tiny64.SetKernalMode(*kernal); err != nil {
+		log.Fatal(err)
 	}
 	targetFile := *disk
 	if targetFile == "" {

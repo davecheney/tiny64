@@ -192,3 +192,19 @@ func TestDOSWedgeDoesNotInterceptStoredBASICLines(t *testing.T) {
 		t.Fatal("stored BASIC line loaded a program through the direct-mode wedge")
 	}
 }
+
+func TestDOSWedgeActivationIsResetDriven(t *testing.T) {
+	m := newMachine(t)
+	useDrive(t, virtualDriveDisk(t, "HELLO", helloPRG))
+	m.waitForLine(5, "READY.")
+
+	EnableDOSWedge()
+	m.typeLine("/HELLO")
+	m.waitForScreen("?SYNTAX  ERROR")
+
+	m.reset(5, "READY.")
+	m.waitForScreen("DOS WEDGE ACTIVE")
+	m.typeLine("/HELLO")
+	m.waitForScreen("SEARCHING FOR HELLO")
+	waitForLoad(m)
+}
