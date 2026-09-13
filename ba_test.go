@@ -119,3 +119,76 @@ func TestSpriteBASlotMask(t *testing.T) {
 		t.Errorf("spriteBASlotMask mismatch\n got %v\nwant %v", spriteBASlotMask, want)
 	}
 }
+
+// TestCPUStallsOnReadCyclesOnlyWhileAECLow verifies the behaviour that
+// cpuWriteCycles exists to support: BA low drives the 6510's RDY pin, which
+// halts the processor on a read cycle but lets a write cycle complete.
+//
+// Stalling unconditionally instead halts the CPU up to three cycles early,
+// and how early depends on whichever instruction happens to be executing.
+// That is what made sprite multiplexers jitter from frame to frame.
+func TestCPUStallsOnReadCyclesOnlyWhileAECLow(t *testing.T) {
+	saveRAM, saveBus, saveCPU, saveVIC := ram, bus, cpu, vic
+	t.Cleanup(func() { ram, bus, cpu, vic = saveRAM, saveBus, saveCPU, saveVIC })
+
+	// STA $0400: three read cycles then one write cycle.
+	const opcode = 0x8D
+	writeMask := cpuWriteCycles[opcode]
+	if writeMask == 0 {
+		t.Fatalf("cpuWriteCycles[$%02X] = 0, expected a write cycle", opcode)
+	}
+
+	setup := func() {
+		ram = [65536]byte{}
+		bus = Bus{}
+		cpu = CPU{}
+		cpu.PortDDR = 0xFF
+		cpu.PC = 0x1000
+		cpu.SP = 0xFF
+		cpu.A = 0x42
+		ram[0x1000], ram[0x1001], ram[0x1002] = opcode, 0x00, 0x04
+		vic.BA, vic.AEC = true, true
+	}
+
+	// Run up to the write cycle with the bus free, then take it away. The
+	// write must still land and the CPU must move on.
+	setup()
+	for i := 0; ; i++ {
+		if i > 12 {
+			t.Fatalf("never reached the write cycle of $%02X", opcode)
+		}
+		if cpu.Opcode == opcode && writeMask>>cpu.TState&1 == 1 {
+			break
+		}
+		cpu.TickPhi2()
+	}
+	before := cpu.TState
+	vic.AEC = false
+	cpu.TickPhi2()
+	if cpu.TState == before {
+		t.Errorf("CPU stalled on a write cycle (TState stuck at %d); writes ignore RDY", before)
+	}
+	if ram[0x0400] != 0x42 {
+		t.Errorf("ram[$0400] = $%02X, want $42; the write cycle did not complete", ram[0x0400])
+	}
+
+	// Now the converse: a read cycle with the bus taken must not advance.
+	setup()
+	for i := 0; ; i++ {
+		if i > 12 {
+			t.Fatalf("never reached a read cycle of $%02X", opcode)
+		}
+		if cpu.Opcode == opcode && cpu.TState != 0 && writeMask>>cpu.TState&1 == 0 {
+			break
+		}
+		cpu.TickPhi2()
+	}
+	before = cpu.TState
+	beforePC := cpu.PC
+	vic.AEC = false
+	cpu.TickPhi2()
+	if cpu.TState != before || cpu.PC != beforePC {
+		t.Errorf("CPU advanced through a read cycle while AEC was low: TState %d->%d, PC $%04X->$%04X",
+			before, cpu.TState, beforePC, cpu.PC)
+	}
+}

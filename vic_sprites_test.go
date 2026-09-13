@@ -445,3 +445,151 @@ func TestVICSpriteDMATriggerIsOneShot(t *testing.T) {
 		}
 	}
 }
+
+// TestVICSpriteShapeIsLatchedPerLine verifies that the three pattern bytes a
+// sprite draws are fetched once per line, in that sprite's own slot of the
+// fetch block, and not re-read from memory as each pixel is painted.
+//
+// This is what makes a raster multiplexer work. The routine that rewrites a
+// sprite's pointer part way down the screen runs while the line it belongs to
+// is still being drawn, so a VIC that re-read the pointer per pixel would
+// switch shape mid-line and truncate the sprite.
+func TestVICSpriteShapeIsLatchedPerLine(t *testing.T) {
+	clearFrameBufferRGBA()
+
+	v := &VICII{}
+	v.Reset()
+	cia2.PRA, cia2.DDRA = 3, 3
+	v.memPointers = 0x14
+
+	ram[0x0400+0x03F8] = 64 // sprite 0 data at $1000
+	ram[0x1000] = 0xFF      // row 0, all eight pixels set
+
+	v.WriteRegister(0xD000, 24) // X=24 -> dot 48
+	v.WriteRegister(0xD001, 55)
+	v.WriteRegister(0xD010, 0)
+	v.WriteRegister(0xD027, 2) // Red
+	v.WriteRegister(0xD015, 0x01)
+	v.control1 = 0x1B
+	v.control2 = 0x08
+
+	for v.rasterLine != 56 || v.dot != 48 {
+		v.StepDot()
+	}
+
+	// Pull the shape out from under the sprite mid-line, exactly as a
+	// multiplexer would. Line 56 was already fetched during line 55, so
+	// every pixel of it must still be drawn.
+	for addr := uint16(0x1000); addr < 0x1040; addr++ {
+		ram[addr] = 0
+	}
+	ram[0x0400+0x03F8] = 65
+
+	for range 8 {
+		v.paintGraphicsPixel()
+		v.dot++
+	}
+
+	buf := FrameBufferRGBA()
+	red := C64Palette[2]
+	at := func(line, dot uint16) [4]byte {
+		idx := (int(line-FirstVisibleLine)*VisibleDotsPerLine + int(dot)) * 4
+		return [4]byte{buf[idx], buf[idx+1], buf[idx+2], buf[idx+3]}
+	}
+	for dot := uint16(48); dot < 56; dot++ {
+		if got := at(56, dot); got != red {
+			t.Errorf("dot %d on line 56 = %v, want Red %v (shape was latched on line 55)", dot, got, red)
+		}
+	}
+
+	// The latch is per line, not a one-off: line 57 fetches again during
+	// line 56 and so must pick up the new, blank shape.
+	for v.rasterLine != 57 || v.dot != 48 {
+		v.StepDot()
+	}
+	for range 8 {
+		v.paintGraphicsPixel()
+		v.dot++
+	}
+	for dot := uint16(48); dot < 56; dot++ {
+		if got := at(57, dot); got == red {
+			t.Errorf("dot %d on line 57 = Red, want background (shape was re-fetched on line 56)", dot)
+		}
+	}
+}
+
+// TestVICSpriteYCompareWrapsAtEightBits verifies that the DMA trigger compares
+// the sprite Y against the low eight bits of RASTER. On PAL the raster runs to
+// 311, so a sprite parked above line 56 is triggered a second time as the
+// raster passes 256+Y, and its band wraps the frame boundary.
+func TestVICSpriteYCompareWrapsAtEightBits(t *testing.T) {
+	v := &VICII{}
+	v.Reset()
+	v.WriteRegister(0xD015, 0x01)
+	v.WriteRegister(0xD001, 50)
+
+	got := displayedLines(v, 40, 311, nil)
+	if len(got) < 22 {
+		t.Fatalf("displayed %d lines %v, want both bands", len(got), got)
+	}
+	if got[0] != 51 || got[20] != 71 {
+		t.Errorf("first band %d..%d, want 51..71", got[0], got[20])
+	}
+	// 256+50 = 306, so the second band opens on 307.
+	if got[21] != 307 {
+		t.Errorf("second band starts at %d, want 307 (raster 306 matches Y=50 in eight bits)", got[21])
+	}
+}
+
+// TestVICSpriteDisableDoesNotRetractBand verifies that MxE is consulted only
+// when arming the DMA. Once a sprite is under DMA the run is committed and
+// clearing its enable bit cannot cut it short; the sprite stops when its rows
+// are spent. A multiplexer that disables a sprite after handing it off relies
+// on the rows already in flight still being drawn.
+func TestVICSpriteDisableDoesNotRetractBand(t *testing.T) {
+	v := &VICII{}
+	v.Reset()
+	v.WriteRegister(0xD015, 0x01)
+	v.WriteRegister(0xD001, 55)
+
+	got := displayedLines(v, 40, 120, map[uint16]func(){
+		60: func() { v.WriteRegister(0xD015, 0x00) },
+	})
+	if len(got) != 21 {
+		t.Fatalf("displayed %d lines %v, want the full 21 line band", len(got), got)
+	}
+	if got[0] != 56 || got[20] != 76 {
+		t.Errorf("displayed lines %d..%d, want 56..76", got[0], got[20])
+	}
+}
+
+// TestSpriteDMAPullsBALow verifies that a sprite under DMA actually drives BA
+// low over its window, rather than the window merely being described by
+// spriteBASlotMask. Sprite 0 fetches in slots 47 and 48 and BA leads the grab
+// by three cycles, so BA is low across slots 44 to 48 and high either side.
+func TestSpriteDMAPullsBALow(t *testing.T) {
+	v := &VICII{}
+	v.Reset()
+	cia2.PRA, cia2.DDRA = 3, 3
+	v.memPointers = 0x14
+	v.WriteRegister(0xD001, 55)
+	v.WriteRegister(0xD015, 0x01)
+	v.control1 = 0x1B
+	v.control2 = 0x08
+
+	// Line 56 is inside the band, so sprite 0 is under DMA for the whole
+	// of that line's fetch block. Bad Line BA is confined to slots 1-43,
+	// which leaves slots 44 and up to the sprites alone.
+	for v.rasterLine != 56 || v.dot != 0 {
+		v.StepDot()
+	}
+	for slot := uint16(43); slot <= 50; slot++ {
+		for v.dot != slot*8+5 {
+			v.StepDot()
+		}
+		want := slot < 44 || slot > 48 // BA high outside sprite 0's window
+		if v.BA != want {
+			t.Errorf("slot %d: BA = %v, want %v", slot, v.BA, want)
+		}
+	}
+}
