@@ -34,7 +34,7 @@ func TestVICBorderPlacement(t *testing.T) {
 	// c-accesses have long since populated the video matrix buffer.
 	firstNonBorder := -1
 	lastNonBorder := -1
-	for x := range DotsPerLine {
+	for x := range VisibleDotsPerLine {
 		if frameBufferPixelRGBA(uint16(x), 100)[3] == 0 {
 			continue
 		}
@@ -47,21 +47,22 @@ func TestVICBorderPlacement(t *testing.T) {
 	}
 	t.Logf("row 100: first non-border pixel at displayX=%d, last at displayX=%d (row width=%d)", firstNonBorder, lastNonBorder, DotsPerLine)
 
-	// Expected: left border/display transition at leftComp (CSEL=1), right
-	// at rightComp (CSEL=1); dot is the display column directly.
+	// The left comparison uses the visible dot directly. The VIC X counter
+	// wraps before the right comparison, whose visible edge is dot 368.
 	wantFirst := leftComp40
-	wantLast := rightComp40 - 1 // last border pixel is one before the right comparison value
+	wantLast := rightEdge40 - 1
 	t.Logf("want first non-border displayX=%d", wantFirst)
 
 	if firstNonBorder != wantFirst {
 		t.Errorf("first non-border pixel at displayX=%d, want %d", firstNonBorder, wantFirst)
 	}
-	if !frameBufferPixelIs(uint16(rightComp40), 100, 0x0e) {
-		t.Errorf("pixel at first right-border displayX=%d is %v, want border color %v",
-			rightComp40, frameBufferPixelRGBA(uint16(rightComp40), 100), C64Palette[0x0e])
+	if lastNonBorder != wantLast {
+		t.Errorf("last non-border pixel at displayX=%d, want %d", lastNonBorder, wantLast)
 	}
-
-	_ = wantLast
+	if !frameBufferPixelIs(uint16(rightEdge40), 100, 0x0e) {
+		t.Errorf("pixel at first right-border displayX=%d is %v, want border color %v",
+			rightEdge40, frameBufferPixelRGBA(uint16(rightEdge40), 100), C64Palette[0x0e])
+	}
 }
 
 // TestVICGAccessPixelAlignment is a regression test for a 4-pixel g-access
@@ -107,7 +108,7 @@ func TestVICGAccessPixelAlignment(t *testing.T) {
 
 	const foreground = 0x01
 	wantFirst := uint16(leftComp40)     // displayX 48
-	wantLast := uint16(rightComp40 - 2) // displayX 366
+	wantLast := uint16(rightEdge40 - 1) // displayX 367
 	if !frameBufferPixelIs(wantFirst, targetRow, foreground) {
 		t.Errorf("pixel at first column's leftmost displayX=%d is %v, want foreground %v (occluded by border)",
 			wantFirst, frameBufferPixelRGBA(wantFirst, targetRow), C64Palette[foreground])

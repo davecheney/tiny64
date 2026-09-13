@@ -47,8 +47,11 @@ const (
 
 	leftComp38  = 55  // CSEL=0: 38 columns (article $1F)
 	leftComp40  = 48  // CSEL=1: 40 columns (article $18)
-	rightComp38 = 359 // CSEL=0: 38 columns (article $14F)
-	rightComp40 = 368 // CSEL=1: 40 columns (article $158)
+	rightComp38 = 408 // CSEL=0: 38 columns (article $14F, after X counter wrap)
+	rightComp40 = 416 // CSEL=1: 40 columns (article $158, after X counter wrap)
+
+	rightEdge38 = 359
+	rightEdge40 = 368
 )
 
 // Border unit comparison values, indexed by the RSEL/CSEL control bits.
@@ -78,19 +81,22 @@ type VICII struct {
 	// compares - which LLVM cannot hoist for us, since the pixel sink call
 	// may alias this struct and forces a reload after every paint. Kept in
 	// sync by syncLineVisibility.
-	lineVisible    bool
-	lineDrawable   bool
-	mainBorder     bool
-	verticalBorder bool
-	gdSequencer    uint8
-	graphicsMode   uint8
-	multicolor     bool
-	multicolorHalf bool
-	borderColor    uint8
-	background0    uint8
-	control1       uint8
-	control2       uint8
-	memPointers    uint8
+	lineVisible     bool
+	lineDrawable    bool
+	mainBorder      bool
+	verticalBorder  bool
+	rightBorderAt   uint16
+	rightBorderOpen bool
+	rightBorder     [VisibleDotsPerLine - rightEdge38]uint8
+	gdSequencer     uint8
+	graphicsMode    uint8
+	multicolor      bool
+	multicolorHalf  bool
+	borderColor     uint8
+	background0     uint8
+	control1        uint8
+	control2        uint8
+	memPointers     uint8
 
 	// Signals driven by the VIC-II and sensed by the CPU
 	BA  bool // Bus Available (true = high/free, false = low/stalled)
@@ -189,6 +195,8 @@ func (v *VICII) Reset() {
 	// the whole upper border until that comparison arrives.
 	v.mainBorder = true
 	v.verticalBorder = true
+	v.rightBorderAt = 0
+	v.rightBorderOpen = false
 	v.gdSequencer = 0
 	v.graphicsMode = modeStandardText
 	v.multicolor = false
@@ -251,6 +259,8 @@ func (v *VICII) WriteRegister(addr uint16, value uint8) {
 		v.registers12To15[reg-0x12] = value
 	case reg == regControl2:
 		v.control2 = value
+		v.sampleSideBorderAtWrite(value)
+		v.sampleGraphicsAtWrite(value)
 	case reg == 0x17:
 		v.register17 = value
 	case reg == regMemPointers:
@@ -291,6 +301,77 @@ func (v *VICII) backgroundColor(index uint8) uint8 {
 
 func (v *VICII) selectedGraphicsMode() uint8 {
 	return (v.control1>>4)&0x06 | (v.control2 >> 4 & 0x01)
+}
+
+func (v *VICII) sampleSideBorderAtWrite(control2 uint8) {
+	csel := control2 & csel
+	left := (v.dot == leftComp38 && csel == 0) ||
+		(v.dot == leftComp40 && csel != 0)
+	if left && !v.verticalBorder {
+		v.mainBorder = false
+	}
+	switch v.dot {
+	case rightEdge38:
+		if csel == 0 {
+			v.rightBorderAt = rightEdge38
+		} else if v.rightBorderAt == rightEdge38 {
+			v.rightBorderAt = 0
+		}
+	case rightEdge40:
+		if csel != 0 {
+			v.rightBorderAt = rightEdge40
+		} else if v.rightBorderAt == rightEdge40 {
+			v.rightBorderAt = 0
+		}
+	}
+	switch v.dot {
+	case rightComp38:
+		if v.rightBorderAt == rightEdge38 {
+			if csel == 0 {
+				v.mainBorder = true
+			} else {
+				v.mainBorder = false
+				v.rightBorderAt = 0
+				v.rightBorderOpen = true
+			}
+		}
+	case rightComp40:
+		if v.rightBorderAt == rightEdge40 {
+			if csel != 0 {
+				v.mainBorder = true
+			} else {
+				v.mainBorder = false
+				v.rightBorderAt = 0
+				v.rightBorderOpen = true
+			}
+		}
+	}
+}
+
+func (v *VICII) finishSideBorder() {
+	if !v.lineDrawable {
+		v.rightBorderAt = 0
+		v.rightBorderOpen = false
+		return
+	}
+	if v.rightBorderAt != 0 {
+		for dot := v.rightBorderAt; dot < VisibleDotsPerLine; dot++ {
+			writePixelToBuffer(dot, v.rasterLine, v.rightBorder[dot-rightEdge38])
+		}
+	} else if !v.rightBorderOpen {
+		// Preserve the VIC's boundary pixel when a visible CSEL trick opens
+		// the rest of the right border. A later hblank write can open it too.
+		writePixelToBuffer(rightEdge40, v.rasterLine, v.rightBorder[rightEdge40-rightEdge38])
+	}
+	v.rightBorderAt = 0
+	v.rightBorderOpen = false
+}
+
+func (v *VICII) sampleGraphicsAtWrite(control2 uint8) {
+	slot := v.dot / 8
+	if slot >= 6 && slot <= 45 && v.dot&0x07 == uint16(control2&0x07) {
+		v.loadGraphicsData()
+	}
 }
 
 func (v *VICII) loadGraphicsData() {
@@ -387,6 +468,9 @@ func (v *VICII) nextGraphicsColor() (byte, bool) {
 func (v *VICII) paintGraphicsPixel() {
 	graphicsColor, isForeground := v.nextGraphicsColor()
 	display := v.spriteDisplay
+	if v.dot >= rightEdge38 {
+		v.rightBorder[v.dot-rightEdge38] = v.borderColor & 0x0F
+	}
 
 	if display == 0 {
 		if v.mainBorder {
@@ -730,9 +814,8 @@ func FinishFrame() {
 //     dot of a line, DotsPerLine-1), which only the 8th dot of a cycle
 //     (dotclock7) can reach, since DotsPerLine is a multiple of
 //     DotsPerCycle;
-//   - the border comparisons only match dots 48, 55, 359, and 368 (see
-//     leftComp/rightComp), all of which are ≡ 7 or 0 (mod 8) - border
-//     transitions only ever land on a character-cell boundary;
+//   - the border comparisons only match dots 48, 55, 408, and 416 (see
+//     leftComp/rightComp), all of which are ≡ 7 or 0 (mod 8);
 //   - the g-access result reloads on the XSCROLL-selected dot of a
 //     character cell, so every phase may need to check that condition.
 //
@@ -753,11 +836,10 @@ func FinishFrame() {
 // in flash precisely because it failed to inline, so code size is not
 // evidence that it is faster.
 func (v *VICII) dotclock0() {
-	// The pixel at the 40-column right edge is visible before the following
-	// cycle's register writes are sampled. Repaint it here so raster changes
-	// that occur at the boundary apply to the complete border cell.
-	if v.dot == rightComp40 && v.lineDrawable {
-		writePixelToBuffer(rightComp40, v.rasterLine, v.borderColor&0x0F)
+	if v.dot == rightEdge40 {
+		// CPU writes at the boundary occur after its pixel was first
+		// generated. Capture the resulting border color on the next dot.
+		v.rightBorder[rightEdge40-rightEdge38] = v.borderColor & 0x0F
 	}
 	v.dot++
 	v.advanceGraphicsData()
@@ -848,19 +930,14 @@ func (v *VICII) dotclock5() {
 	v.paintGraphicsPixel()
 }
 
-// dotclock6 handles cycle phase 6; its beam advance reaches phase 7, the
-// first of the two phases that can carry a border transition. Dot values
-// ≡7 (mod 8) are the only ones that can equal rightComp[0] (359) or
-// leftComp[0] (55), so this only needs to check those two, not the
 // dotclock6 handles cycle phase 6. Its beam advance reaches phase 6
-// (8N+7), where 38-column border comparisons (leftComp38=55,
-// rightComp38=359) occur.
+// (8N+7), where the 38-column left border comparison occurs.
 func (v *VICII) dotclock6() {
 	v.dot++
 	v.advanceGraphicsData()
 
-	if v.dot == rightComp38 && v.control2&csel == 0 {
-		v.mainBorder = true
+	if v.dot == rightEdge38 && v.control2&csel == 0 {
+		v.rightBorderAt = rightEdge38
 	}
 	if v.dot == leftComp38 && v.control2&csel == 0 {
 		rsel := (v.control1 >> 3) & 1
@@ -886,12 +963,14 @@ func (v *VICII) dotclock6() {
 }
 
 // dotclock7 handles cycle phase 7. Its beam advance reaches phase 7
-// (8N+8 = 0 mod 8), where line wrap and 40-column border comparisons
-// (leftComp40=48, rightComp40=368) occur.
+// (8N+8 = 0 mod 8), where line wrap, the 40-column left comparison, and
+// both right comparisons occur. The VIC X counter wraps before the right
+// comparisons, placing article coordinates $14f/$158 at dots 408/416.
 func (v *VICII) dotclock7() {
 	v.dot++
 	v.advanceGraphicsData()
 	if v.dot >= DotsPerLine {
+		v.finishSideBorder()
 		v.dot = 0
 		v.rasterLine++
 		if v.rasterLine >= RasterLinesPerFrame {
@@ -908,8 +987,24 @@ func (v *VICII) dotclock7() {
 		return
 	}
 
-	if v.dot == rightComp40 && v.control2&csel != 0 {
-		v.mainBorder = true
+	if v.dot == rightEdge40 && v.control2&csel != 0 {
+		v.rightBorderAt = rightEdge40
+	}
+	if v.dot == rightComp38 && v.rightBorderAt == rightEdge38 {
+		if v.control2&csel == 0 {
+			v.mainBorder = true
+		} else {
+			v.mainBorder = false
+			v.rightBorderAt = 0
+		}
+	}
+	if v.dot == rightComp40 && v.rightBorderAt == rightEdge40 {
+		if v.control2&csel != 0 {
+			v.mainBorder = true
+		} else {
+			v.mainBorder = false
+			v.rightBorderAt = 0
+		}
 	}
 	if v.dot == leftComp40 && v.control2&csel != 0 {
 		rsel := (v.control1 >> 3) & 1
