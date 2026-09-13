@@ -281,6 +281,10 @@ func (c *CPU) TickPhi2() {
 			c.A <<= 1
 			c.setNZ(c.A)
 			c.TState = 0 // Finished, next cycle is T0 for next opcode
+		case 0x0C: // NOP Absolute (illegal opcode / TOP)
+			c.Operand = uint16(c.load(c.PC)) // Store address low byte
+			c.PC++
+			c.TState = 2
 		case 0x0D: // ORA Absolute
 			c.Operand = uint16(c.load(c.PC)) // Store address low byte
 			c.PC++
@@ -754,6 +758,14 @@ func (c *CPU) TickPhi2() {
 			c.Operand = uint16(c.load(c.PC)) // Store address low byte
 			c.PC++
 			c.TState = 2
+		case 0xB7: // LAX (Indirect),Y (illegal opcode)
+			c.Pointer = c.load(c.PC) // Store ZP pointer address (IAL)
+			c.PC++
+			c.TState = 2
+		case 0xC7: // DCP Zero Page (illegal opcode)
+			c.Operand = uint16(c.load(c.PC)) // Store ZP address
+			c.PC++
+			c.TState = 2
 		case 0xC0: // CPY Immediate
 			c.compare(c.Y, c.load(c.PC))
 			c.PC++
@@ -918,11 +930,27 @@ func (c *CPU) TickPhi2() {
 			c.Operand = uint16(c.load(c.PC)) // Store address low byte
 			c.PC++
 			c.TState = 2
-		case 0xEA: // NOP
+		case 0xEA, 0x1A, 0x3A, 0x5A, 0x7A, 0xDA, 0xFA: // NOP (including unofficial 1-byte NOPs)
 			// Real 6502 still performs a bus cycle here: it reads the
 			// next opcode byte and discards it, without advancing PC.
 			c.load(c.PC)
 			c.TState = 0 // Finished, next cycle is T0 for next opcode
+		case 0x80, 0x82, 0x89, 0xC2, 0xE2: // NOP Immediate (illegal opcode / DOP)
+			c.load(c.PC)
+			c.PC++
+			c.TState = 0 // Finished, next cycle is T0 for next opcode
+		case 0x04, 0x44, 0x64: // NOP Zero Page (illegal opcode / DOP)
+			c.Operand = uint16(c.load(c.PC))
+			c.PC++
+			c.TState = 2
+		case 0x14, 0x34, 0x54, 0x74, 0xD4, 0xF4: // NOP Zero Page,X (illegal opcode / DOP)
+			c.Pointer = c.load(c.PC)
+			c.PC++
+			c.TState = 2
+		case 0x1C, 0x3C, 0x5C, 0x7C, 0xDC, 0xFC: // NOP Absolute,X (illegal opcode / TOP)
+			c.Operand = uint16(c.load(c.PC))
+			c.PC++
+			c.TState = 2
 		case 0xA9: // LDA Immediate
 			c.A = c.load(c.PC)
 			c.setNZ(c.A)
@@ -944,6 +972,25 @@ func (c *CPU) TickPhi2() {
 		case 0x01: // ORA (Indirect,X): dummy read from BAL before adding X
 			c.load(uint16(c.Pointer))
 			c.TState = 3
+		case 0x04, 0x44, 0x64: // NOP Zero Page: dummy read operand
+			c.load(c.Operand)
+			c.TState = 0 // Finished, next cycle is T0 for next opcode
+		case 0x14, 0x34, 0x54, 0x74, 0xD4, 0xF4: // NOP Zero Page,X: dummy read from BAL before adding X
+			c.load(uint16(c.Pointer))
+			c.TState = 3
+		case 0x1C, 0x3C, 0x5C, 0x7C, 0xDC, 0xFC: // NOP Absolute,X: fetch address high byte, add X
+			low := uint8(c.Operand)
+			high := c.load(c.PC)
+			sum := uint16(low) + uint16(c.X)
+			c.Addr2 = uint16(high)<<8 | (sum & 0xFF) // Guess address (may have wrong high byte)
+			if sum > 0xFF {
+				c.Value = 1                                               // Page crossed
+				c.Operand = (uint16(high)<<8 | uint16(low)) + uint16(c.X) // Corrected address
+			} else {
+				c.Value = 0
+			}
+			c.PC++
+			c.TState = 3
 		case 0x05: // ORA Zero Page: read operand, OR with A
 			c.A |= c.load(c.Operand)
 			c.setNZ(c.A)
@@ -954,6 +1001,10 @@ func (c *CPU) TickPhi2() {
 		case 0x08: // PHP: push status, with B and unused bits set
 			c.push(c.regP | 0x30)
 			c.TState = 0 // Finished, next cycle is T0 for next opcode
+		case 0x0C: // NOP Absolute: fetch address high byte
+			c.Operand |= uint16(c.load(c.PC)) << 8
+			c.PC++
+			c.TState = 3
 		case 0x0D: // ORA Absolute: fetch address high byte
 			c.Operand |= uint16(c.load(c.PC)) << 8
 			c.PC++
@@ -1361,6 +1412,9 @@ func (c *CPU) TickPhi2() {
 		case 0xB1: // LDA (Indirect),Y: fetch effective address low byte (BAL)
 			c.Operand = uint16(c.load(uint16(c.Pointer)))
 			c.TState = 3
+		case 0xB7: // LAX (Indirect),Y: fetch effective address low byte (BAL)
+			c.Operand = uint16(c.load(uint16(c.Pointer)))
+			c.TState = 3
 		case 0xB4: // LDY Zero Page,X: dummy read from BAL before adding X
 			c.load(uint16(c.Pointer))
 			c.TState = 3
@@ -1432,6 +1486,9 @@ func (c *CPU) TickPhi2() {
 			c.compare(c.A, c.load(c.Operand))
 			c.TState = 0 // Finished, next cycle is T0 for next opcode
 		case 0xC6: // DEC Zero Page: read old value
+			c.Value = c.load(c.Operand)
+			c.TState = 3
+		case 0xC7: // DCP Zero Page: read old value
 			c.Value = c.load(c.Operand)
 			c.TState = 3
 		case 0xCC: // CPY Absolute: fetch address high byte
@@ -1593,6 +1650,19 @@ func (c *CPU) TickPhi2() {
 			c.setCarry(c.Value&0x80 != 0) // Carry from old bit 7
 			c.Value <<= 1
 			c.TState = 4
+		case 0x14, 0x34, 0x54, 0x74, 0xD4, 0xF4: // NOP Zero Page,X: dummy read at BAL+X
+			c.load(uint16(c.Pointer + c.X))
+			c.TState = 0 // Finished, next cycle is T0 for next opcode
+		case 0x1C, 0x3C, 0x5C, 0x7C, 0xDC, 0xFC: // NOP Absolute,X: read at guess address, finish unless page crossed
+			c.load(c.Addr2)
+			if c.Value == 0 {
+				c.TState = 0 // Finished, next cycle is T0 for next opcode
+			} else {
+				c.TState = 4 // Page crossed: need corrected re-read
+			}
+		case 0x0C: // NOP Absolute: dummy read operand
+			c.load(c.Operand)
+			c.TState = 0 // Finished, next cycle is T0 for next opcode
 		case 0x0D: // ORA Absolute: read operand, OR with A
 			c.A |= c.load(c.Operand)
 			c.setNZ(c.A)
@@ -1926,6 +1996,18 @@ func (c *CPU) TickPhi2() {
 				c.Value = 0
 			}
 			c.TState = 4
+		case 0xB7: // LAX (Indirect),Y: fetch effective address high byte (BAH), add Y
+			low := uint8(c.Operand)
+			high := c.load(uint16(c.Pointer + 1)) // zero-page wraparound
+			sum := uint16(low) + uint16(c.Y)
+			c.Addr2 = uint16(high)<<8 | (sum & 0xFF) // Guess address (may have wrong high byte)
+			if sum > 0xFF {
+				c.Value = 1                                               // Page crossed
+				c.Operand = (uint16(high)<<8 | uint16(low)) + uint16(c.Y) // Corrected address
+			} else {
+				c.Value = 0
+			}
+			c.TState = 4
 		case 0xB4: // LDY Zero Page,X: read operand into Y
 			c.Y = c.load(uint16(c.Pointer + c.X)) // zero-page wraparound
 			c.setNZ(c.Y)
@@ -1980,6 +2062,11 @@ func (c *CPU) TickPhi2() {
 		case 0xC6: // DEC Zero Page: dummy write-back of old value, compute new value
 			c.store(c.Operand, c.Value)
 			c.Value--
+			c.TState = 4
+		case 0xC7: // DCP Zero Page: dummy write-back of old value, compute new value and compare
+			c.store(c.Operand, c.Value)
+			c.Value--
+			c.compare(c.A, c.Value)
 			c.TState = 4
 		case 0xCC: // CPY Absolute: read operand, compare with Y
 			c.compare(c.Y, c.load(c.Operand))
@@ -2124,6 +2211,10 @@ func (c *CPU) TickPhi2() {
 			c.Operand |= uint16(c.load(uint16(c.Pointer+c.X+1))) << 8 // zero-page wraparound
 			c.TState = 5
 		case 0xC6: // DEC Zero Page: write new value
+			c.store(c.Operand, c.Value)
+			c.setNZ(c.Value)
+			c.TState = 0 // Finished, next cycle is T0 for next opcode
+		case 0xC7: // DCP Zero Page: write new value (already compared in T3)
 			c.store(c.Operand, c.Value)
 			c.setNZ(c.Value)
 			c.TState = 0 // Finished, next cycle is T0 for next opcode
@@ -2313,6 +2404,16 @@ func (c *CPU) TickPhi2() {
 			} else {
 				c.TState = 5 // Page crossed: need corrected re-read
 			}
+		case 0xB7: // LAX (Indirect),Y: read at guess address, finish unless page crossed
+			c.load(c.Addr2)
+			if c.Value == 0 {
+				c.A = bus.Data
+				c.X = c.A // LAX loads both A and X
+				c.setNZ(c.A)
+				c.TState = 0 // Finished, next cycle is T0 for next opcode
+			} else {
+				c.TState = 5 // Page crossed: need corrected re-read
+			}
 		case 0xB9: // LDA Absolute,Y: re-read at corrected address
 			c.A = c.load(c.Operand)
 			c.setNZ(c.A)
@@ -2378,6 +2479,9 @@ func (c *CPU) TickPhi2() {
 			c.TState = 0 // Finished, next cycle is T0 for next opcode
 		case 0xFD: // SBC Absolute,X: re-read at corrected address
 			c.sbc(c.load(c.Operand))
+			c.TState = 0 // Finished, next cycle is T0 for next opcode
+		case 0x1C, 0x3C, 0x5C, 0x7C, 0xDC, 0xFC: // NOP Absolute,X: dummy re-read at corrected address
+			c.load(c.Operand)
 			c.TState = 0 // Finished, next cycle is T0 for next opcode
 		case 0xFE: // INC Absolute,X: read old value at corrected address
 			c.Value = c.load(c.Operand)
@@ -2501,6 +2605,11 @@ func (c *CPU) TickPhi2() {
 			c.TState = 0 // Finished, next cycle is T0 for next opcode
 		case 0xB1: // LDA (Indirect),Y: re-read at corrected address
 			c.A = c.load(c.Operand)
+			c.setNZ(c.A)
+			c.TState = 0 // Finished, next cycle is T0 for next opcode
+		case 0xB7: // LAX (Indirect),Y: re-read at corrected address
+			c.A = c.load(c.Operand)
+			c.X = c.A // LAX loads both A and X
 			c.setNZ(c.A)
 			c.TState = 0 // Finished, next cycle is T0 for next opcode
 		case 0xC1: // CMP (Indirect,X): read operand, compare with A
