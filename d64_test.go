@@ -1,10 +1,14 @@
 package tiny64
 
-import "testing"
+import (
+	"os"
+	"path/filepath"
+	"testing"
+)
 
-// TestD64TrackLayout checks the standard 35-track D64 sector-count zones
+// TestD64TrackLayout checks the standard 35-track and 40-track D64 sector-count zones
 // and that the cumulative track offsets add up to the well-known 174848
-// byte image size (35 tracks, no error info).
+// and 196608 byte image sizes (35 and 40 tracks, no error info).
 func TestD64TrackLayout(t *testing.T) {
 	total := 0
 	for track := uint8(1); track <= 35; track++ {
@@ -13,9 +17,18 @@ func TestD64TrackLayout(t *testing.T) {
 		}
 		total += sectorsPerTrack(track) * 256
 	}
-	const want = 174848
-	if total != want {
-		t.Fatalf("total D64 size = %d, want %d", total, want)
+	if total != D64Size {
+		t.Fatalf("total 35-track D64 size = %d, want %d", total, D64Size)
+	}
+
+	for track := uint8(36); track <= 40; track++ {
+		if trackOffset(track) != total {
+			t.Fatalf("trackOffset(%d) = %d, want %d", track, trackOffset(track), total)
+		}
+		total += sectorsPerTrack(track) * 256
+	}
+	if total != D64Size40 {
+		t.Fatalf("total 40-track D64 size = %d, want %d", total, D64Size40)
 	}
 }
 
@@ -83,5 +96,82 @@ func TestMakeD64FromPRG(t *testing.T) {
 	readData := diskReadFile(entries[0])
 	if string(readData) != string(prgData) {
 		t.Errorf("diskReadFile = %v, want %v", readData, prgData)
+	}
+}
+
+// TestDisk40TrackAccess verifies sector reading/writing on tracks 36-40
+// for a 196608-byte D64 image.
+func TestDisk40TrackAccess(t *testing.T) {
+	saveMachine(t)
+
+	// 35-track image should reject track 36
+	data35 := make([]byte, D64Size)
+	InsertDisk(data35)
+	if diskReadSector(36, 0) != nil {
+		t.Fatalf("diskReadSector(36, 0) on 35-track image should be nil")
+	}
+
+	// 40-track image (196608 bytes)
+	data40 := make([]byte, D64Size40)
+	// Mark track 40 sector 16 (last sector of track 40)
+	t40s16Offset := trackOffset(40) + 16*256
+	data40[t40s16Offset] = 0x55
+	data40[t40s16Offset+255] = 0xAA
+	InsertDisk(data40)
+
+	// Test track 36 sector 0
+	if !diskWriteSector(36, 0, []byte{0x12, 0x34}) {
+		t.Fatalf("diskWriteSector(36, 0) failed on 40-track image")
+	}
+	blk36 := diskReadSector(36, 0)
+	if blk36 == nil || blk36[0] != 0x12 || blk36[1] != 0x34 {
+		t.Fatalf("diskReadSector(36, 0) = %v, want [0x12, 0x34...]", blk36)
+	}
+
+	// Test track 40 sector 16
+	blk40 := diskReadSector(40, 16)
+	if blk40 == nil || blk40[0] != 0x55 || blk40[255] != 0xAA {
+		t.Fatalf("diskReadSector(40, 16) = %v, want byte 0=0x55, byte 255=0xAA", blk40)
+	}
+
+	// Track 40 sector 17 (out of range, track 40 has 17 sectors 0-16)
+	if diskReadSector(40, 17) != nil {
+		t.Fatalf("diskReadSector(40, 17) should be nil")
+	}
+
+	// Track 41 sector 0 (out of range)
+	if diskReadSector(41, 0) != nil {
+		t.Fatalf("diskReadSector(41, 0) should be nil")
+	}
+}
+
+// TestReadDiskOrPRG40Track checks that ReadDiskOrPRG accepts both 35-track
+// and 40-track D64 images from disk.
+func TestReadDiskOrPRG40Track(t *testing.T) {
+	saveMachine(t)
+
+	dir := t.TempDir()
+
+	// Write a dummy 40-track D64 image
+	path40 := filepath.Join(dir, "test40.d64")
+	if err := os.WriteFile(path40, make([]byte, D64Size40), 0o644); err != nil {
+		t.Fatalf("failed to write dummy 40-track file: %v", err)
+	}
+
+	img, err := ReadDiskOrPRG(path40)
+	if err != nil {
+		t.Fatalf("ReadDiskOrPRG(%q) error = %v", path40, err)
+	}
+	if len(img) != D64Size40 {
+		t.Fatalf("len(img) = %d, want %d", len(img), D64Size40)
+	}
+
+	// Write an invalid-sized file (e.g. 180000 bytes)
+	pathInvalid := filepath.Join(dir, "bad.d64")
+	if err := os.WriteFile(pathInvalid, make([]byte, 180000), 0o644); err != nil {
+		t.Fatalf("failed to write invalid file: %v", err)
+	}
+	if _, err := ReadDiskOrPRG(pathInvalid); err == nil {
+		t.Fatalf("ReadDiskOrPRG(%q) should have failed for 180000 byte image", pathInvalid)
 	}
 }

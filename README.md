@@ -31,8 +31,8 @@ tiny64 emulates:
 
 A drive is only plugged in when something asks for one, with
 `AttachVirtualDrive`, or by inserting a disk: `cmd/c64` and `cmd/c64cli`
-both take a `-disk FILE` flag naming a 35-track D64 image, which attaches
-the virtual drive automatically.
+both take a `-disk FILE` flag naming a 35-track or 40-track D64 image,
+which attaches the virtual drive automatically.
 
     go run ./cmd/c64 -disk demo.d64
 

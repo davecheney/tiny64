@@ -1,12 +1,16 @@
 package tiny64
 
 // diskImage holds the raw bytes of the currently inserted D64 disk image
-// (standard 35-track, no error info, 174848 bytes); nil means no disk.
+// (standard 35-track or 40-track, no error info); nil means no disk.
 var diskImage []byte
 
 // D64Size is the length of a standard 35-track D64 image with no error
 // info: 683 sectors of 256 bytes.
 const D64Size = 174848
+
+// D64Size40 is the length of a standard 40-track D64 image with no error
+// info: 768 sectors of 256 bytes.
+const D64Size40 = 196608
 
 // InsertDisk loads a raw D64 disk image for the drive to read and write;
 // nil ejects whatever was in the drive.
@@ -33,8 +37,8 @@ func DiskImage() []byte {
 // DiskInserted reports whether a disk image is currently in the drive.
 func DiskInserted() bool { return diskImage != nil }
 
-// sectorsPerTrack returns the standard D64 sector count for track (1-35,
-// non-extended format); 0 for an out-of-range track.
+// sectorsPerTrack returns the standard D64 sector count for track (1-40);
+// 0 for an out-of-range track.
 func sectorsPerTrack(track uint8) int {
 	switch {
 	case track >= 1 && track <= 17:
@@ -43,14 +47,14 @@ func sectorsPerTrack(track uint8) int {
 		return 19
 	case track >= 25 && track <= 30:
 		return 18
-	case track >= 31 && track <= 35:
+	case track >= 31 && track <= 40:
 		return 17
 	default:
 		return 0
 	}
 }
 
-// trackOffset returns the byte offset of the start of track (1-35) within
+// trackOffset returns the byte offset of the start of track (1-40) within
 // a standard D64 image.
 func trackOffset(track uint8) int {
 	offset := 0
@@ -61,7 +65,7 @@ func trackOffset(track uint8) int {
 }
 
 // sectorOffset returns the byte offset of (track, sector) within a
-// standard D64 image, or -1 if either is out of range or the image is too
+// D64 image, or -1 if either is out of range or the image is too
 // short to hold it.
 func sectorOffset(track, sector uint8) int {
 	n := sectorsPerTrack(track)

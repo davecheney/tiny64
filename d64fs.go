@@ -449,20 +449,20 @@ func FormatDisk(name, id string) []byte {
 }
 
 // ReadDiskOrPRG loads a D64 disk image file or a PRG file from path.
-// If path points to a PRG file (or any file other than a 174848-byte D64 image),
+// If path points to a PRG file (or any file other than a 35-track or 40-track D64 image),
 // it creates a formatted 35-track D64 image containing the PRG file.
 func ReadDiskOrPRG(path string) ([]byte, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return nil, err
 	}
-	if len(data) == D64Size {
+	if len(data) == D64Size || len(data) == D64Size40 {
 		return data, nil
 	}
 	if strings.EqualFold(filepath.Ext(path), ".prg") || len(data) < D64Size {
 		return MakeD64FromPRG(path, data)
 	}
-	return nil, fmt.Errorf("%s is %d bytes, not a %d byte 35-track D64 or PRG file", path, len(data), D64Size)
+	return nil, fmt.Errorf("%s is %d bytes, not a %d byte (35-track) or %d byte (40-track) D64 or PRG file", path, len(data), D64Size, D64Size40)
 }
 
 // MakeD64FromPRG creates a formatted 35-track D64 disk image containing
