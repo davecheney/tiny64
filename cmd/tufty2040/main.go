@@ -143,6 +143,7 @@ func main() {
 		colorRAM[i] = byte(rand.Uint() & 0x0F)
 	}
 	tiny64.AttachVirtualPRG(8, "MAZE", mazePRG)
+	tiny64.EnableDOSWedge()
 	tiny64.Reset()
 
 	var demo demoLoader

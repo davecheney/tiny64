@@ -134,6 +134,28 @@ func TestDOSWedgeLoadRunAndMachineLoad(t *testing.T) {
 	m.waitForScreen("X")
 }
 
+// TestDOSWedgeLoadRunWildcard exercises the on-device demo's actual
+// keystrokes: up-arrow + "*" + RETURN. CBM DOS treats "*" as "the
+// first/only program on this disk", resolved by the KERNAL itself (the
+// wedge never special-cases it — it just copies whatever name was typed
+// into the LOAD command), so this loads and runs RUNME without naming it.
+func TestDOSWedgeLoadRunWildcard(t *testing.T) {
+	runPRG := []byte{
+		0x01, 0x08,
+		0x0B, 0x08,
+		0x0A, 0x00,
+		0x99, ' ', '"', 'X', '"',
+		0x00,
+		0x00, 0x00,
+	}
+	m := newWedgeMachine(t, virtualDriveDisk(t, "RUNME", runPRG))
+
+	m.typeLine("↑*")
+	m.waitForScreen("SEARCHING FOR *")
+	m.waitForScreen("LOADING")
+	m.waitForScreen("X")
+}
+
 func TestDOSWedgeMachineCodeLoadUsesFileLoadAddress(t *testing.T) {
 	mcPRG := []byte{0x00, 0x20, 0xDE, 0xAD, 0xBE, 0xEF}
 	m := newWedgeMachine(t, virtualDriveDisk(t, "CODE", mcPRG))

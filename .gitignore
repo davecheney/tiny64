@@ -7,3 +7,4 @@
 !go.sum
 !.github/workflows/*.yml
 !.github/dependabot.yml
+!cmd/tufty2040/assets/*.prg
