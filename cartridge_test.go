@@ -21,7 +21,10 @@ func testCRT(t *testing.T, hardwareType uint16, exrom, game bool, chips ...[]byt
 		crt[0x19] = 1
 	}
 	copy(crt[0x20:0x40], "TEST CART")
-	return append(crt, chips...)
+	for _, chip := range chips {
+		crt = append(crt, chip...)
+	}
+	return crt
 }
 
 func testCRTChip(t *testing.T, bank, start uint16, data []byte) []byte {
@@ -106,6 +109,7 @@ func TestParseCRTErrors(t *testing.T) {
 func TestPLACartridgeNormalMapping(t *testing.T) {
 	saveMachine(t)
 
+	cpu = CPU{}
 	roml := make([]byte, 0x2000)
 	romh := make([]byte, 0x2000)
 	roml[0], roml[0x1FFF] = 0x80, 0x9F
@@ -136,6 +140,7 @@ func TestPLACartridgeNormalMapping(t *testing.T) {
 func TestPLACartridgeUltimaxMapping(t *testing.T) {
 	saveMachine(t)
 
+	cpu = CPU{}
 	roml := make([]byte, 0x2000)
 	romh := make([]byte, 0x2000)
 	roml[0] = 0x80
