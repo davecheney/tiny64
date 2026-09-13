@@ -41,7 +41,6 @@ func EnableDOSWedge() {
 	dosWedge.enabled = true
 	dosWedge.installed = false
 	dosWedge.armInstall = true
-	setKernalMode(kernalModeWedge)
 }
 
 // DisableDOSWedge disables the DOS wedge and restores BASIC's standard warm
@@ -54,7 +53,6 @@ func DisableDOSWedge() {
 		ram[0x0303] = uint8(basicWarmStart >> 8)
 	}
 	dosWedge.installed = false
-	setKernalMode(kernalModeStock)
 }
 
 func resetDOSWedge() {

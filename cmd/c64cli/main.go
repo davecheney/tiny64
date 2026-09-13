@@ -70,16 +70,7 @@ func main() {
 	kernal := flag.String("kernal", "stock", "KERNAL profile: \"stock\" or \"wedge\"")
 	wedge := flag.Bool("wedge", false, "alias for -kernal=wedge")
 	flag.Parse()
-	var explicitKernal, explicitWedge bool
-	flag.Visit(func(f *flag.Flag) {
-		if f.Name == "kernal" {
-			explicitKernal = true
-		}
-		if f.Name == "wedge" {
-			explicitWedge = true
-		}
-	})
-	resolvedKernal, err := tiny64.ResolveKernalModeFlags(*kernal, *wedge, explicitKernal, explicitWedge)
+	resolvedKernal, err := tiny64.ResolveKernalModeFromFlagSet(flag.CommandLine, *kernal, *wedge)
 	if err != nil {
 		log.Fatal(err)
 	}

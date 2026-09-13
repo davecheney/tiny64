@@ -1,28 +1,9 @@
 package tiny64
 
 import (
+	"flag"
 	"fmt"
-	"sync"
-
-	"github.com/davecheney/tiny64/rom"
 )
-
-type kernalMode uint8
-
-const (
-	kernalModeStock kernalMode = iota
-	kernalModeWedge
-)
-
-var (
-	activeKernalMode = kernalModeStock
-	wedgeKernalROM   []byte
-	wedgeKernalOnce  sync.Once
-)
-
-func setKernalMode(mode kernalMode) {
-	activeKernalMode = mode
-}
 
 // SetKernalMode selects the active KERNAL profile. Supported values are
 // "stock" and "wedge".
@@ -41,7 +22,7 @@ func SetKernalMode(mode string) error {
 // ResolveKernalModeFlags resolves -kernal and -wedge flag combinations.
 func ResolveKernalModeFlags(kernal string, wedge bool, explicitKernal, explicitWedge bool) (string, error) {
 	if explicitWedge && wedge && explicitKernal && kernal != "wedge" {
-		return "", fmt.Errorf("conflicting flags: -wedge cannot be combined with -kernal stock")
+		return "", fmt.Errorf("conflicting flags: -wedge cannot be combined with -kernal %q", kernal)
 	}
 	if wedge {
 		return "wedge", nil
@@ -49,12 +30,16 @@ func ResolveKernalModeFlags(kernal string, wedge bool, explicitKernal, explicitW
 	return kernal, nil
 }
 
-func activeKernalROM() []byte {
-	if activeKernalMode != kernalModeWedge {
-		return rom.Kernal
-	}
-	wedgeKernalOnce.Do(func() {
-		wedgeKernalROM = append([]byte(nil), rom.Kernal...)
+// ResolveKernalModeFromFlagSet resolves the front-end -kernal/-wedge flags.
+func ResolveKernalModeFromFlagSet(fs *flag.FlagSet, kernal string, wedge bool) (string, error) {
+	var explicitKernal, explicitWedge bool
+	fs.Visit(func(f *flag.Flag) {
+		if f.Name == "kernal" {
+			explicitKernal = true
+		}
+		if f.Name == "wedge" {
+			explicitWedge = true
+		}
 	})
-	return wedgeKernalROM
+	return ResolveKernalModeFlags(kernal, wedge, explicitKernal, explicitWedge)
 }

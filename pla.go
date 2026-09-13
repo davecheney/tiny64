@@ -33,7 +33,7 @@ func plaLoad(addr uint16) uint8 {
 		// regardless of hiram.
 		return cartridge.ROM[addr-0xE000]
 	case addr >= 0xE000 && hiram:
-		return activeKernalROM()[addr-0xE000]
+		return rom.Kernal[addr-0xE000]
 	default:
 		return ram[addr]
 	}
