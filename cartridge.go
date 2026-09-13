@@ -11,7 +11,11 @@ import (
 // port. The zero value matches an empty port: /GAME and /EXROM float high
 // (unasserted), so the PLA falls back to normal CPU-port-driven banking.
 type Cartridge struct {
-	ROM          []byte // Deprecated: legacy single-chip ROM image, used only as a fallback when ROMLData/ROMHData are empty
+	// ROM is a legacy single-chip ROM image, used only as a fallback when
+	// ROMLData/ROMHData are empty.
+	//
+	// Deprecated: use ROMLData and ROMHData.
+	ROM          []byte
 	ROMLData     []byte // bytes exposed through the /ROML chip-select, usually $8000-$9FFF
 	ROMHData     []byte // bytes exposed through the /ROMH chip-select, usually $A000-$BFFF or $E000-$FFFF
 	Name         string // cartridge name from the CRT header
@@ -129,6 +133,8 @@ func ParseCRT(data []byte) (Cartridge, error) {
 	switch cart.HardwareType {
 	case crtHardwareNormal:
 	case crtHardwareUltimax:
+		// Hardware type 1 defines the cartridge as Ultimax/MAX mode, so
+		// trust the hardware type even if the header line bytes disagree.
 		cart.Game, cart.Exrom = true, false
 	default:
 		return Cartridge{}, fmt.Errorf("unsupported CRT hardware type %d", cart.HardwareType)
