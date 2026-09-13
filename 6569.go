@@ -282,6 +282,7 @@ func (v *VICII) WriteRegister(addr uint16, value uint8) {
 		v.registers19To1F[reg-0x19] = value
 	case reg == regBorderColor:
 		v.borderColor = value
+		v.sampleBorderColorAtWrite()
 	case reg == regBackground0:
 		v.background0 = value
 	case reg < 0x2F:
@@ -301,6 +302,19 @@ func (v *VICII) backgroundColor(index uint8) uint8 {
 		return v.registers22To2E[2]
 	default:
 		return 0
+	}
+}
+
+func (v *VICII) sampleBorderColorAtWrite() {
+	if v.dot < rightEdge40 || v.dot >= VisibleDotsPerLine {
+		return
+	}
+	first := v.dot - DotsPerCycle
+	if first < rightEdge38 {
+		first = rightEdge38
+	}
+	for dot := first; dot <= v.dot; dot++ {
+		v.rightBorder[dot-rightEdge38] = v.borderColor & 0x0F
 	}
 }
 
