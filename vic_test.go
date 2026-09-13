@@ -144,7 +144,7 @@ func TestVICResetIsIdle(t *testing.T) {
 }
 
 func TestVICRegisterStorage(t *testing.T) {
-	var v VICII
+	v := VICII{rasterCompare: 0x1FF}
 	for reg := uint16(0); reg < 0x2F; reg++ {
 		v.WriteRegister(0xD000+reg, uint8(reg+1))
 	}
@@ -380,6 +380,53 @@ func TestVICRasterIRQ(t *testing.T) {
 	if got := v.ReadRegister(0xD019); got != 0x70 {
 		t.Errorf("ReadRegister($D019) = $%02X, want $70", got)
 	}
+}
+
+func TestVICRasterIRQTriggersWhenCompareIsWrittenOnCurrentLine(t *testing.T) {
+	t.Run("$D012 low byte", func(t *testing.T) {
+		v := &VICII{}
+		v.Reset()
+		v.rasterLine = 1
+		v.rasterCompare = 2
+		v.interruptEnable = 0x01
+
+		v.WriteRegister(0xD012, 1)
+
+		if !v.IRQ {
+			t.Fatal("raster IRQ not triggered when $D012 was written to the current line")
+		}
+		if v.interruptStatus&0x01 == 0 {
+			t.Fatal("raster IRQ status not latched after same-line $D012 write")
+		}
+
+		v.WriteRegister(0xD019, 0x01)
+		v.WriteRegister(0xD012, 2)
+		v.WriteRegister(0xD012, 1)
+		if v.IRQ {
+			t.Fatal("raster IRQ retriggered more than once on the same raster line")
+		}
+
+		v.WriteRegister(0xD012, 2)
+		v.dot = DotsPerLine - 1
+		v.dotclock7()
+		if !v.IRQ {
+			t.Fatal("raster IRQ did not trigger after advancing to a new raster line")
+		}
+	})
+
+	t.Run("$D011 high bit", func(t *testing.T) {
+		v := &VICII{}
+		v.Reset()
+		v.rasterLine = 0x100
+		v.rasterCompare = 0
+		v.interruptEnable = 0x01
+
+		v.WriteRegister(0xD011, 0x80)
+
+		if !v.IRQ {
+			t.Fatal("raster IRQ not triggered when $D011 was written to the current line")
+		}
+	})
 }
 
 func TestVICRasterIRQReachesCPU(t *testing.T) {

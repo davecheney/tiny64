@@ -144,10 +144,11 @@ type VICII struct {
 	registers19To1F [0x07]uint8
 	registers22To2E [0x0D]uint8
 
-	rasterCompare   uint16
-	interruptStatus uint8
-	interruptEnable uint8
-	IRQ             bool
+	rasterCompare      uint16
+	rasterIRQTriggered bool
+	interruptStatus    uint8
+	interruptEnable    uint8
+	IRQ                bool
 
 	spriteSpriteCollision uint8
 	spriteDataCollision   uint8
@@ -214,6 +215,7 @@ func (v *VICII) Reset() {
 	v.denLatch = false
 	v.idle = true
 	v.rasterCompare = 0
+	v.rasterIRQTriggered = false
 	v.interruptStatus = 0
 	v.interruptEnable = 0
 	v.IRQ = false
@@ -227,8 +229,9 @@ func (v *VICII) Reset() {
 }
 
 func (v *VICII) checkRasterIRQ() {
-	if v.rasterLine == v.rasterCompare {
+	if v.rasterLine == v.rasterCompare && !v.rasterIRQTriggered {
 		v.interruptStatus |= 0x01
+		v.rasterIRQTriggered = true
 		v.updateIRQ()
 	}
 }
@@ -253,8 +256,10 @@ func (v *VICII) WriteRegister(addr uint16, value uint8) {
 	case reg == regControl1:
 		v.control1 = value
 		v.rasterCompare = (v.rasterCompare & 0xFF) | (uint16(value&0x80) << 1)
+		v.checkRasterIRQ()
 	case reg == 0x12:
 		v.rasterCompare = (v.rasterCompare & 0x100) | uint16(value)
+		v.checkRasterIRQ()
 	case reg < regControl2:
 		v.registers12To15[reg-0x12] = value
 	case reg == regControl2:
@@ -988,6 +993,7 @@ func (v *VICII) dotclock7() {
 		if v.rasterLine >= RasterLinesPerFrame {
 			v.rasterLine = 0
 		}
+		v.rasterIRQTriggered = false
 		// The only place rasterLine changes in the hot path, so the only
 		// place the cached visibility answers can go stale.
 		v.lineVisible = v.rasterLine < firstVBlankLine && v.rasterLine > lastVBlankLine
