@@ -8,6 +8,7 @@ import (
 	"math/rand/v2"
 	"time"
 
+	"device/rp"
 	"machine"
 
 	"github.com/davecheney/tiny64"
@@ -16,6 +17,23 @@ import (
 )
 
 const busBaud = 15_000_000
+
+// xipCacheDelta reads the RP2040's XIP cache hit/access counters
+// (XIP_CTRL.CTR_HIT/CTR_ACC), two free-running 32-bit counters that
+// increment on every flash (XIP) access the cache serves and every access
+// it sees at all, respectively. They are never reset by hardware, so the
+// caller keeps the previous reading and this returns hit/access deltas
+// since then - a window's cache hit rate, which tracks pressure from one
+// frame-batch to the next rather than a lifetime average that would just
+// flatten towards "mostly hits" over a long run. uint32 subtraction
+// handles the counters wrapping between reads; nothing here runs
+// anywhere near the ~4 billion accesses that would need to happen within
+// one window to wrap twice.
+func xipCacheDelta(prevHit, prevAcc uint32) (hit, acc, curHit, curAcc uint32) {
+	curHit = rp.XIP_CTRL.CTR_HIT.Get()
+	curAcc = rp.XIP_CTRL.CTR_ACC.Get()
+	return curHit - prevHit, curAcc - prevAcc, curHit, curAcc
+}
 
 func configureDisplay() (*parallelST7789, error) {
 	machine.LCD_CS.Configure(machine.PinConfig{Mode: machine.PinOutput})
@@ -130,11 +148,18 @@ func main() {
 	var demo demoLoader
 	var buttons buttonState
 	var emulateTime, waitTime, startDrawTime time.Duration
+	var prevXIPHit, prevXIPAcc uint32
 	for frame := 0; ; frame++ {
 		buttons.poll(&demo)
 		if frame%50 == 0 && frame > 0 {
-			fmt.Printf("frame %d: emulate=%v wait=%v start=%v (avg over 50 frames)\n",
-				frame, emulateTime/50, waitTime/50, startDrawTime/50)
+			hit, acc, curHit, curAcc := xipCacheDelta(prevXIPHit, prevXIPAcc)
+			prevXIPHit, prevXIPAcc = curHit, curAcc
+			var hitPct float64
+			if acc > 0 {
+				hitPct = 100 * float64(hit) / float64(acc)
+			}
+			fmt.Printf("frame %d: emulate=%v wait=%v start=%v (avg over 50 frames) xip=%.2f%% (%d/%d accesses)\n",
+				frame, emulateTime/50, waitTime/50, startDrawTime/50, hitPct, hit, acc)
 			emulateTime, waitTime, startDrawTime = 0, 0, 0
 		}
 

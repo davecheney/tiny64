@@ -86,9 +86,23 @@ Raspberry Pi Pico.
   using its parallel ST7789 display through PIO/DMA
 - `cmd/deadtest` and `cmd/destestmax` run C64 diagnostic cartridges
 
-Tufty 2040 builds should leave TinyGo's default scheduler and optimization
-level in place unless re-measuring on hardware; scheduler or `-opt` overrides
-can break or regress the build.
+Both `cmd/tufty2040` and `cmd/gopher-badge64` print a per-50-frame line to
+their USB serial console with emulate/draw timing and the RP2040 XIP
+(execute-in-place flash) cache's hit rate over that window, read from
+`XIP_CTRL.CTR_HIT`/`CTR_ACC`. Use this to tell a real cache-pressure
+regression (hit rate dropping) apart from any other cause of a frame-time
+change.
+
+Measured on a Tufty 2040 against the `tinygo` branch point: the default
+`-opt=z` (size) build ran emulate≈79ms/frame; `-opt=2` (speed) ran
+emulate≈73-74ms/frame, a ~7% win, for roughly 45KB more flash (108KB →
+156KB) but no measurable RAM cost. XIP cache hit rate was ≈99.97-100% at
+both optimization levels, ruling out flash-cache pressure as the
+difference; the win is from `-opt=2` generating faster code outright.
+`-opt=2` is therefore the recommended flag for on-device measurement
+unless flash space becomes tight enough to need `-opt=z` back. TinyGo's
+default scheduler should stay in place unless re-measuring on hardware;
+scheduler overrides can break or regress the build.
 
     tinygo build -target=tufty2040 -o out.uf2 ./cmd/tufty2040
 

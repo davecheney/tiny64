@@ -36,6 +36,42 @@ cycle-accurate VIC-II/6502-opcode push (the 9 commits below).
 | `f0470b4` | vic: add unit tests for 38-to-40 border opening and vertical border comparison rules | **skip** | Same as above - test-only, depends on `e9f8ccc`. |
 | `e9772f3` | vic: gate pixel output on the main border flip-flop only | **skip (for now)** | Depends on the VIC-II graphics-mode/border state added in `e9f8ccc`; nothing to backport onto until/unless that lands. |
 
+## Performance investigation: frame-time gap vs main's ~70ms target
+
+On-device (Tufty 2040) frame times after the strip-down and three
+backports above sit around emulate≈76-80ms/frame at TinyGo's default
+`-opt=z` (optimize for size), vs. main's stated cycle-accurate ~70ms
+target on the same class of hardware. Investigated two candidate causes:
+
+- **`-scheduler=none`**: valid on `cmd/tufty2040` (it has no goroutines;
+  `cmd/gopher-badge64` does, via its render goroutine, and needs
+  `-scheduler=cores`). Builds cleanly, ~1.3KB smaller flash, but no
+  measurable frame-time change on hardware. Not adopted as a default
+  since it buys nothing measurable and is a footgun if a goroutine is
+  ever added to `cmd/tufty2040`.
+- **XIP (execute-in-place flash) cache pressure**: added permanent
+  telemetry (`xip=H.HH% (hit/access accesses)` in the per-50-frame serial
+  report on both `cmd/tufty2040` and `cmd/gopher-badge64`) reading the
+  RP2040's free-running `XIP_CTRL.CTR_HIT`/`CTR_ACC` counters. Measured
+  hit rate is **≈99.97-100%** regardless of build (`-opt=z` or `-opt=2`)
+  — flash-cache pressure is not the cause of the frame-time gap.
+- **`-opt` level**: `-opt=1` (161KB flash) and `-opt=2` (156KB flash)
+  both build; `-opt=2` measured emulate≈73-74ms/frame on hardware, a
+  real ~7% win over `-opt=z`'s ≈79ms, for ~45KB more flash and no
+  measurable RAM cost. XIP hit rate was unchanged at `-opt=2` (still
+  ≈99.97-100%), confirming the win comes from better-optimized codegen,
+  not reduced cache pressure. **`-opt=2` is kept as the recommended flag**
+  going forward (see README); `-opt=1` was not separately re-verified on
+  hardware since `-opt=2` is both smaller and, by TinyGo's design intent,
+  at least as fast.
+
+Root cause of the remaining ~73ms (opt=2) vs ~70ms gap is still open —
+candidates not yet investigated: 6510 dispatch-table efficiency, GC
+pressure/allocation pattern, or redundant per-frame work in the VIC-II
+raster loop. The XIP and `-opt` telemetry/findings are being kept
+permanently (both in code and in this log) since they narrow the search
+space for whoever picks this up next.
+
 ## Contributing back to main
 
 This branch also contributes performance fixes upstream to `main` when
