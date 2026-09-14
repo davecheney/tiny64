@@ -158,12 +158,12 @@ func TestVICSpriteExpansionXY(t *testing.T) {
 	// single line and every later row occupy two.
 	for line := uint16(56); line <= 59; line++ {
 		for v.rasterLine != line || v.dot != 48 {
+			if v.dot%DotsPerCycle != 0 {
+				t.Fatalf("StepCycle starting at unaligned dot %d on raster line %d", v.dot, v.rasterLine)
+			}
 			v.StepCycle()
 		}
-		for dot := uint16(48); dot <= 51; dot++ {
-			v.dot = dot
-			v.paintGraphicsPixel()
-		}
+		v.StepCycle()
 	}
 
 	buf := FrameBufferRGBA()

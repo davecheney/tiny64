@@ -10,6 +10,17 @@ it, is what lets the emulator reproduce timing-sensitive behaviour such as
 bad lines, sprite/border timing, and raster interrupts, rather than just
 approximating the overall visual result.
 
+The public stepping unit is one bus cycle: `VIC().StepCycle()` advances
+eight dots, including the VIC-II's Phi1 accesses, the CPU and CIA Phi2
+tick, and then the IEC devices. `StepFrame()` advances exactly one PAL
+frame (19,656 cycles) from the current beam position; it does not
+synchronize to the top of the frame. Both APIs leave the beam on a cycle
+boundary and may be interleaved. The former `StepDot` and `FinishFrame`
+APIs have been removed; callers needing frame synchronization can step
+cycles until both `VIC().Dot()` and `VIC().RasterLine()` are zero. To
+preserve `FinishFrame`'s behavior when already at that position, take at
+least one cycle before checking.
+
 ## Scope
 
 tiny64 emulates:
