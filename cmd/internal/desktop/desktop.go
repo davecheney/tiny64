@@ -31,6 +31,10 @@ const resizeSettleFrames = 12 // ~200ms
 type emulator struct {
 	frames int
 
+	// display is whichever presentation path this build selected: the
+	// straight RGBA blit, or the palette shader.
+	display
+
 	// winW, winH are the window's dimensions as of the previous frame;
 	// dragW, dragH are what they were before the current drag started,
 	// and settled counts the frames since the size last changed.
@@ -105,11 +109,9 @@ func (e *emulator) Update() error {
 	return nil
 }
 
-// Draw blits the calculated frame buffer array straight onto the GPU texture.
+// Draw puts the frame the VIC-II just finished onto the screen.
 func (e *emulator) Draw(screen *ebiten.Image) {
-	// Blit the raw CPU bytes directly onto the Ebitengine screen texture.
-	// This uses highly optimized native OS calls under the hood (Metal on macOS).
-	screen.WritePixels(tiny64.FrameBufferRGBA())
+	e.display.blit(screen)
 }
 
 func (e *emulator) Layout(outsideWidth, outsideHeight int) (int, int) {
@@ -142,6 +144,10 @@ func Run(title string, setup func()) error {
 	colorRAM := tiny64.ColorRam()
 	for i := range colorRAM {
 		colorRAM[i] = byte(rand.Uint() & 0x0F)
+	}
+
+	if err := emu.display.init(); err != nil {
+		return err
 	}
 
 	if setup != nil {
