@@ -161,9 +161,12 @@ the GPU does it.
 
 Four horizontally adjacent pixels are packed into the RGBA channels of one
 texel, so the texture uploaded each frame is a quarter of the picture's
-width, 116KB rather than 460KB. `cmd/internal/desktop/palette.kage` picks
-a pixel's lane out of the texel covering it and looks the colour up in the
-palette, which the shader holds as a uniform.
+width, 116KB rather than 460KB. Raster lines are padded to a multiple of four
+pixels (408 bytes) during horizontal blanking so the entire buffer can be
+uploaded directly to the GPU texture without any per-frame CPU packing or
+re-striding. `cmd/internal/desktop/palette.kage` picks a pixel's lane out of the
+texel covering it and looks the colour up in the palette, which the shader
+holds as a uniform.
 
 `FrameBufferRGBA` expands a frame for the callers that do want whole
 pixels on the CPU — the tests and `cmd/snapshot` — but what it returns is
