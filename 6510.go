@@ -81,6 +81,11 @@ func (c *CPU) Status() uint8 {
 // does when the RESET line is asserted, and resets the VIC-II's internal
 // video logic state.
 func Reset() {
+	// The expansion port carries /RESET as well, so a cartridge that had
+	// banked itself out is back in the map before the CPU fetches its
+	// reset vector - which is how an autostart cartridge gets to run at
+	// all after the first time.
+	cartridge.reset()
 	cpu.Reset()
 	vic.Reset()
 	if driveAttached {

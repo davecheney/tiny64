@@ -177,7 +177,7 @@ func TestDOSWedgeDeactivateAndReactivate(t *testing.T) {
 		t.Fatal("/HELLO loaded a program after @Q deactivated the wedge")
 	}
 
-	m.typeLine("SYS 32777")
+	m.typeLine("SYS 828")
 	m.waitForScreen("DOS WEDGE ACTIVE")
 	m.typeLine("/HELLO")
 	m.waitForScreen("SEARCHING FOR HELLO")
@@ -195,9 +195,9 @@ func TestDOSWedgeDoesNotInterceptStoredBASICLines(t *testing.T) {
 	}
 }
 
-// TestDOSWedgeCartridgeImage checks the parts of the ROM image the KERNAL
-// and the user reach by fixed address rather than by following a vector:
-// the autostart signature, and the JMP that SYS 32777 lands on.
+// TestDOSWedgeCartridgeImage checks the parts of the ROM image that are
+// reached by fixed address rather than by following a vector: the
+// autostart signature, and the two JMPs the RAM stub calls through.
 func TestDOSWedgeCartridgeImage(t *testing.T) {
 	img := buildDOSWedge()
 
@@ -207,8 +207,16 @@ func TestDOSWedgeCartridgeImage(t *testing.T) {
 	if got, want := img[4:9], []byte{0xC3, 0xC2, 0xCD, 0x38, 0x30}; !bytes.Equal(got, want) {
 		t.Errorf("signature at $8004 = % X, want % X (CBM80)", got, want)
 	}
-	if got := img[dosWedgeReactivate-dosWedgeOrigin]; got != 0x4C {
-		t.Errorf("byte at SYS %d = %#02x, want %#02x (JMP)", dosWedgeReactivate, got, 0x4C)
+	for _, jmp := range []struct {
+		addr uint16
+		what string
+	}{
+		{dosWedgeReactivate, "the reactivate entry"},
+		{dosWedgeEntry, "the direct-mode entry"},
+	} {
+		if got := img[jmp.addr-dosWedgeOrigin]; got != 0x4C {
+			t.Errorf("byte at $%04X = %#02x, want %#02x (JMP): %s", jmp.addr, got, 0x4C, jmp.what)
+		}
 	}
 	if got := img[len(img)-1]; got != 0xFF {
 		t.Errorf("last byte = %#02x, want %#02x - the image must be padded to fill the EPROM", got, 0xFF)
@@ -223,10 +231,11 @@ func TestDOSWedgeCartridgeImage(t *testing.T) {
 	}{
 		{0, "cold start vector"},
 		{2, "NMI vector"},
-		{dosWedgeReactivate - dosWedgeOrigin + 1, "SYS reactivate target"},
+		{dosWedgeReactivate - dosWedgeOrigin + 1, "reactivate target"},
+		{dosWedgeEntry - dosWedgeOrigin + 1, "direct-mode entry target"},
 	} {
 		addr := uint16(img[vec.at]) | uint16(img[vec.at+1])<<8
-		if addr < dosWedgeOrigin+12 || addr > dosWedgeOrigin+dosWedgeSize-1 {
+		if addr < dosWedgeEntry+3 || addr > dosWedgeOrigin+dosWedgeSize-1 {
 			t.Errorf("%s = $%04X, want an address inside the cartridge", vec.name, addr)
 		}
 	}
@@ -262,17 +271,19 @@ func TestDOSWedgeEntryPointsMatchROM(t *testing.T) {
 
 // TestDOSWedgeBootsFromCartridgeSignature checks that the machine really
 // did boot the way a machine with a cartridge in it boots: nothing in Go
-// touches $0302, so finding it pointing into the cartridge's own ROM means
-// the KERNAL found the signature and handed over.
+// touches $0302, so finding it pointing at the stub the cartridge copied
+// into the cassette buffer means the KERNAL found the signature at $8004
+// and handed over. By the time the prompt is up the cartridge has banked
+// itself out again, so $8004 no longer reads back as its own signature.
 func TestDOSWedgeBootsFromCartridgeSignature(t *testing.T) {
 	newWedgeMachine(t, virtualDriveDisk(t, "HELLO", helloPRG))
 
 	main := uint16(ram[0x0302]) | uint16(ram[0x0303])<<8
-	if main < dosWedgeOrigin || main > dosWedgeOrigin+dosWedgeSize-1 {
-		t.Errorf("$0302 = $%04X, want an address in cartridge ROM", main)
+	if main < dosWedgeStub || main >= dosWedgeWork {
+		t.Errorf("$0302 = $%04X, want an address in the stub at $%04X", main, dosWedgeStub)
 	}
-	if got, want := bus.Load(0x8004), byte(0xC3); got != want {
-		t.Errorf("load($8004) = %#02x, want %#02x - the cartridge must be visible to the CPU", got, want)
+	if got := bus.Load(0x8004); got == 0xC3 {
+		t.Errorf("load($8004) = %#02x, want the RAM underneath - the cartridge must bank itself out after startup", got)
 	}
 }
 
@@ -299,17 +310,29 @@ func TestDOSWedgeLeavesRAMAlone(t *testing.T) {
 	}
 }
 
-// TestDOSWedgeReportsCartridgeMemoryTop checks the free-memory line, which
-// nothing in the emulator arranges: RAMTAS walks up from $0400 writing and
-// reading back, finds this cartridge where RAM should be, and sets the top
-// of BASIC memory below it. 38911 - 8192 = 30719.
-func TestDOSWedgeReportsCartridgeMemoryTop(t *testing.T) {
+// TestDOSWedgeFreesTheMemoryUnderItself checks the whole point of the
+// bank-control latch. RAMTAS walks up from $0400 writing and reading back,
+// and stops where the read disagrees; the cartridge runs it from the
+// screen page with the ROM out of the map, so the walk finds RAM all the
+// way to $A000 and BASIC gets the same 38911 bytes it gets with an empty
+// expansion port. Nothing in the emulator arranges that figure.
+func TestDOSWedgeFreesTheMemoryUnderItself(t *testing.T) {
 	m := newWedgeMachine(t, virtualDriveDisk(t, "HELLO", helloPRG))
-	if !screenHas("30719 BASIC BYTES FREE") {
-		t.Errorf("boot screen does not report 30719 bytes free: row 3 is %q", screenLine(3))
+	if !screenHas("38911 BASIC BYTES FREE") {
+		t.Errorf("boot screen does not report 38911 bytes free: row 3 is %q", screenLine(3))
+	}
+	if top := uint16(ram[0x0283]) | uint16(ram[0x0284])<<8; top != 0xA000 {
+		t.Errorf("top of BASIC memory = $%04X, want $A000", top)
 	}
 
-	// And with an empty expansion port, all of it is still there.
+	// And the memory is really usable, not just counted: from BASIC, the
+	// window the cartridge occupies stores and returns a value. The 1000
+	// keeps the answer from matching the echo of the POKE line above it.
+	m.typeLine("POKE 32768,42")
+	m.typeLine("PRINT PEEK(32768)+1000")
+	m.waitForScreen("1042")
+
+	// And with an empty expansion port, nothing about that changes.
 	DisableDOSWedge()
 	m.reset(5, "READY.")
 	if !screenHas("38911 BASIC BYTES FREE") {
@@ -319,8 +342,9 @@ func TestDOSWedgeReportsCartridgeMemoryTop(t *testing.T) {
 
 // TestDOSWedgeSurvivesRestore checks the cartridge's NMI vector. The
 // KERNAL's NMI handler runs the same signature check its reset does and
-// jumps through $8002, so a cartridge that leaves that vector pointing
-// anywhere careless crashes on the first RESTORE.
+// jumps through $8002 whenever the cartridge happens to be banked in, so
+// a cartridge that leaves that vector pointing anywhere careless crashes
+// on a RESTORE.
 func TestDOSWedgeSurvivesRestore(t *testing.T) {
 	m := newWedgeMachine(t, virtualDriveDisk(t, "HELLO", helloPRG))
 

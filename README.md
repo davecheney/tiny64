@@ -49,8 +49,7 @@ an 8K autostart cartridge into the expansion port before reset, the way a
 fastload or utility cartridge of the period arrived: the KERNAL finds the
 `CBM80` signature at `$8004` during its reset sequence and hands the cartridge
 control before BASIC has started, and the cartridge initializes the machine
-itself and points BASIC's main-loop vector at a handler that runs from ROM at
-`$8000-$9FFF`:
+itself and points BASIC's main-loop vector at its handler:
 
     go run ./cmd/c64 -disk demo.d64 -wedge
     go run ./cmd/c64cli -disk demo.d64 -drive=virtual -wedge
@@ -70,8 +69,8 @@ shorthands:
   returns to the BASIC prompt
 - `%NAME` expands to `LOAD"NAME",dev,1` for machine-code programs
 - `←NAME` expands to `SAVE"NAME",dev`
-- `@Q` deactivates the wedge; `SYS 32777` reactivates it, through a `JMP` at a
-  fixed offset in the cartridge header
+- `@Q` deactivates the wedge; `SYS 828` reactivates it, through the resident
+  stub and a `JMP` at a fixed offset in the cartridge header
 
 All disk traffic still uses the emulated KERNAL and IEC bus, so the normal
 load, save, directory, and command-channel messages remain visible. The wedge
@@ -81,12 +80,25 @@ program lines are deliberately left to BASIC rather than intercepted by a
 CHRGET hook, so wedge tokens in a numbered line retain normal BASIC syntax
 behaviour instead of becoming hidden disk operations.
 
-Nothing is copied into RAM, so `$C000-$CFFF` stays free; the wedge's few bytes
-of state live in the cassette buffer at `$033C`. Two things follow from the
-cartridge being real rather than simulated: BASIC reports 30719 bytes free
-instead of 38911, because the KERNAL's memory test walks up from `$0400` and
-finds the cartridge sitting where RAM would be, and a program that banks the
-cartridge out by clearing LORAM banks the wedge out with it.
+The cartridge takes itself out of the CPU's map once it has started up, the
+way the utility cartridges of the period did: the PCB carries a bank-control
+latch in the expansion port's I/O1 window at `$DE00`, and writing bit 0 there
+releases `/EXROM` and leaves the RAM underneath `$8000-$9FFF` visible. Code
+cannot bank out the ROM it is executing from, so the instructions that work the
+latch live in RAM - 50 bytes in the cassette buffer at `$033C`, which BASIC's
+`$0302` vector points at. They read the input line with the cartridge still
+gone, bank it in, call into it through a fixed `JMP` in its header, and bank it
+out again before BASIC touches the line. The handler returns with the carry
+saying whether BASIC should interpret the line or go straight to `READY.`.
+
+So the ROM is only in the CPU's map while wedge code is actually running in it,
+and BASIC reports the full 38911 bytes free. That figure is not arranged
+anywhere in Go: the cartridge copies a second, throwaway stub to the screen
+page - the one piece of RAM the KERNAL's `RAMTAS` does not clear - and calls
+`RAMTAS` from there with itself banked out, so the memory walk that sets the
+top of BASIC memory finds RAM all the way up to `$A000`. `$C000-$CFFF` stays
+free too; the wedge's only RAM is that stub and a few bytes of state after it
+in the cassette buffer.
 
 ## Inspecting programs
 

@@ -148,6 +148,11 @@ func ioStore(addr uint16, val uint8) {
 		cia1.Store(addr, val)
 	case addr >= 0xDD00 && addr <= 0xDDFF:
 		cia2.Store(addr, val)
+	case addr >= 0xDE00 && addr <= 0xDEFF && cartridge.Control:
+		// I/O1 is not decoded by anything on the board: it belongs to
+		// whatever is in the expansion port. The only thing tiny64 models
+		// there is a cartridge's own bank-control latch.
+		cartridge.bankControl(val)
 	default:
 		ram[addr] = val
 	}

@@ -9,6 +9,19 @@ type Cartridge struct {
 	Exrom bool // /EXROM line: true = pulled low (asserted)
 	ROMH  bool // /ROMH chip-select populated with a physical ROM chip
 	ROML  bool // /ROML chip-select populated with a physical ROM chip
+
+	// Control reports that the PCB carries a bank-control latch of its own
+	// in the expansion port's I/O1 window at $DE00. That is how utility and
+	// fastload cartridges of the period got out of the CPU's way once their
+	// startup code had installed itself: writing bit 0 there releases
+	// /EXROM and takes the ROM out of the map, leaving the RAM underneath
+	// it visible, and writing it clear pulls /EXROM low again.
+	Control bool
+
+	// released is that latch's state. The expansion port carries /RESET,
+	// which clears it, so a cartridge with a latch is always in the map
+	// when the KERNAL goes looking for its autostart signature.
+	released bool
 }
 
 var cartridge Cartridge
@@ -22,7 +35,27 @@ var cartridge Cartridge
 // not modeled, because no cartridge tiny64 runs in MAX mode populates
 // /ROML or reads RAM up there.
 func (c *Cartridge) ultimax() bool {
-	return c.Game && !c.Exrom
+	return c.Game && !c.exrom()
+}
+
+// exrom reports the state of the /EXROM line as the PLA sees it: how the
+// PCB wires it, as modified by the cartridge's own bank-control latch.
+func (c *Cartridge) exrom() bool {
+	return c.Exrom && !c.released
+}
+
+// bankControl handles a write to the bank-control latch at $DE00. Only a
+// cartridge that has one decodes I/O1 at all; on any other, the write goes
+// nowhere (see ioStore).
+func (c *Cartridge) bankControl(val uint8) {
+	c.released = val&0x01 != 0
+}
+
+// reset puts the cartridge back in the state the expansion port's /RESET
+// line leaves it in: any bank-control latch cleared, so the ROM is in the
+// map for the KERNAL's signature check.
+func (c *Cartridge) reset() {
+	c.released = false
 }
 
 // eightK reports whether the cartridge is wired the way an ordinary 8K
@@ -30,9 +63,10 @@ func (c *Cartridge) ultimax() bool {
 // then maps the /ROML image at $8000-$9FFF whenever the CPU is driving
 // LORAM and HIRAM high, which is the state IOINIT leaves the CPU port in -
 // so such a cartridge stays visible for a whole session rather than only
-// while its own startup code runs.
+// while its own startup code runs - unless it has a bank-control latch and
+// uses it to let go of /EXROM.
 func (c *Cartridge) eightK() bool {
-	return c.Exrom && !c.Game
+	return c.exrom() && !c.Game
 }
 
 // Insert plugs a cartridge into the expansion port. rom is the raw ROM

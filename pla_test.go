@@ -197,3 +197,57 @@ func TestPLALoadEmptyPortLeavesRAMAt8000(t *testing.T) {
 		t.Errorf("with a MAX-mode cartridge, load(0x8000) = %#02x, want RAM %#02x", got, 0xA5)
 	}
 }
+
+// TestPLACartridgeBankControlLatch checks the latch a utility cartridge
+// carries in the expansion port's I/O1 window to get out of the CPU's way
+// once its startup code has installed itself. Nothing on the board decodes
+// $DE00-$DEFF, so only a cartridge that says it has one responds there.
+func TestPLACartridgeBankControlLatch(t *testing.T) {
+	saveMachine(t)
+
+	cartROM := make([]byte, 0x2000)
+	for i := range cartROM {
+		cartROM[i] = byte(i)
+	}
+
+	const ramMarker = 0xDD
+	for i := range ram {
+		ram[i] = ramMarker
+	}
+	cpu = CPU{}
+
+	cartridge = Cartridge{ROM: cartROM, Exrom: true, ROML: true, Control: true}
+	if got, want := plaLoad(0x8000), cartROM[0]; got != want {
+		t.Fatalf("load(0x8000) = %#02x, want cartridge ROM byte %#02x - the latch starts clear", got, want)
+	}
+
+	// Writing bit 0 releases /EXROM: the ROM leaves the map and the RAM
+	// the KERNAL's memory walk needs to find is visible in its place.
+	plaStore(0xDE00, 0x01)
+	if got := plaLoad(0x8000); got != ramMarker {
+		t.Errorf("after banking out, load(0x8000) = %#02x, want RAM marker %#02x", got, ramMarker)
+	}
+	plaStore(0xDE00, 0x00)
+	if got, want := plaLoad(0x8000), cartROM[0]; got != want {
+		t.Errorf("after banking back in, load(0x8000) = %#02x, want cartridge ROM byte %#02x", got, want)
+	}
+
+	// The expansion port carries /RESET, so the latch is always clear by
+	// the time the KERNAL goes looking for an autostart signature.
+	plaStore(0xDE00, 0x01)
+	cartridge.reset()
+	if got, want := plaLoad(0x8000), cartROM[0]; got != want {
+		t.Errorf("after reset, load(0x8000) = %#02x, want cartridge ROM byte %#02x", got, want)
+	}
+
+	// A cartridge without a latch does not decode I/O1 at all, so the
+	// write lands in the RAM underneath and the ROM stays put.
+	cartridge = Cartridge{ROM: cartROM, Exrom: true, ROML: true}
+	plaStore(0xDE00, 0x01)
+	if got, want := plaLoad(0x8000), cartROM[0]; got != want {
+		t.Errorf("without a latch, load(0x8000) = %#02x, want cartridge ROM byte %#02x", got, want)
+	}
+	if got := ram[0xDE00]; got != 0x01 {
+		t.Errorf("without a latch, ram[0xde00] = %#02x, want the write to fall through to RAM", got)
+	}
+}
