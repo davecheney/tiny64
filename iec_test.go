@@ -163,8 +163,10 @@ func TestAttachIECDoesNotWriteThroughSnapshots(t *testing.T) {
 // position: it must land on a bus-cycle boundary, and it must be exactly
 // one bus cycle on from the tick before it.
 type countingPeripheral struct {
-	addr  uint8
-	ticks int
+	addr       uint8
+	ticks      int
+	startClock uint64
+	wrongClock int
 
 	// last is the previous tick's beam position in dots from the top of
 	// the frame; offPhase and badGaps count the ticks that broke each of
@@ -181,18 +183,18 @@ func (*countingPeripheral) iecDATAOut() bool { return false }
 
 func (c *countingPeripheral) iecTick() {
 	pos := int(vic.rasterLine)*DotsPerLine + int(vic.dot)
+	if cpu.Clock != c.startClock+uint64(c.ticks)+1 {
+		c.wrongClock++
+	}
 	if vic.dot%DotsPerCycle != 0 {
 		c.offPhase++
 	}
-	if c.ticks > 0 {
-		// Modulo a frame, so the wrap from the last cycle of one frame
-		// to the first of the next is one cycle like any other.
-		if gap := (pos - c.last + DotsPerFrame) % DotsPerFrame; gap != DotsPerCycle {
-			if c.badGaps == 0 {
-				c.firstBadGap = gap
-			}
-			c.badGaps++
+	// last starts at the entry position, so the first tick is checked too.
+	if gap := (pos - c.last + DotsPerFrame) % DotsPerFrame; gap != DotsPerCycle {
+		if c.badGaps == 0 {
+			c.firstBadGap = gap
 		}
+		c.badGaps++
 	}
 	c.ticks++
 	c.last = pos
@@ -200,74 +202,59 @@ func (c *countingPeripheral) iecTick() {
 
 func (c *countingPeripheral) iecAddress() uint8 { return c.addr }
 
-// Advancing a frame has to clock the bus, and for a long time there was
-// more than one way to advance one: FinishFrame stepped dot by dot
-// through StepDot while StepFrame took the per-cycle route, so adding
-// iecTick to one and not the other was an easy thing to do and a hard
-// thing to notice. This test compared the two paths against each other to
-// catch exactly that.
-//
-// Only stepCycle advances the machine now, so that divergence cannot be
-// built - but the property the comparison was standing in for still can
-// be broken, and nothing else catches it. Removing iecTick from stepCycle
-// leaves the entire rest of the suite green: the tests drive the machine
-// through paths that still clock the bus, while every device attached to
-// a front end silently stops running. A drive would simply never respond,
-// with no failure anywhere to say why.
-//
-// Presence is not enough to pin that down, though, and this test used to
-// check no more than that: a path that clocked the bus once per frame
-// would have satisfied it. What the drive actually depends on is cadence
-// and phase - one tick per bus cycle, taken at the same point in the
-// cycle - because the 1541 counts bus clocks to time its own serial
-// handshake. So the frame is held to exactly CyclesPerFrame ticks, each
-// landing on a cycle boundary exactly one cycle on from the last. That
-// says directly what comparing two paths used to say by implication, and
-// it keeps saying it now that there is only one path to ask.
-//
-// What this cannot see is a divergence between build configurations. It
-// runs under gc, so a change that alters when the dotclocks run only
-// under TinyGo would leave it green while the TinyGo build differed.
-//
-// That reaches less far than it sounds, though, and it is worth being
-// exact about where the edge is, because believing this guard is blinder
-// than it is invites someone to treat a real failure as out of scope.
-// Work that must run every cycle escaping the every-cycle path is caught
-// here, even when the escape is only reachable on another build. Should
-// the dotclocks ever become conditional - skipped while the beam is
-// outside the rendering window, say - and something on the bus or CPU
-// path be moved inside them, the count assertion below fails under gc on
-// the spot: a frame's ticks drop to the number of cycles that survived
-// the condition.
-//
-// What survives is narrower and differently shaped: a divergence that
-// depends on the two builds' windows differing, rather than on anything
-// being skipped. Work correct across one build's bounds but not the
-// other's, or chip state gated at a crop boundary that only one build
-// has, changes no tick count and moves no tick - so a frame looks
-// identical from the bus. Closing that needs a second, build-tagged test
-// taking the same measurements under the TinyGo constraints.
+// Both public stepping APIs must clock IEC once per cycle, after the CPU,
+// including on blanked lines and across frame wraps. Beam position alone
+// cannot distinguish an IEC tick just before TickPhi2 from one just after it.
+// These assertions cover clock cadence, not TinyGo-specific rendering or
+// inlining: those require validation with that build's window and compiler.
 func TestBusIsClockedOnEveryFramePath(t *testing.T) {
-	// newMachine, not saveBus alone: stepping the VIC means running the
-	// CPU, and it will execute whatever a previous test left in RAM
-	// unless the machine is reset first. It also restores the bus on
-	// cleanup, so nothing stays attached.
-	newMachine(t)
+	for _, tc := range []struct {
+		name        string
+		startCycles int
+		run         func()
+	}{
+		{"StepFrame", 0, StepFrame},
+		{"StepCycle", 0, func() {
+			for range CyclesPerFrame {
+				vic.StepCycle()
+			}
+		}},
+		{"Interleaved", 45*CyclesPerLine + 15, StepFrame},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			m := newMachine(t)
+			m.run(tc.startCycles)
+			startDot, startLine := vic.dot, vic.rasterLine
+			dev := &countingPeripheral{
+				addr:       9,
+				startClock: cpu.Clock,
+				last:       int(startLine)*DotsPerLine + int(startDot),
+			}
+			attachIEC(dev)
+			tc.run()
 
-	dev := &countingPeripheral{addr: 9}
-	attachIEC(dev)
-	vic.StepFrame()
-
-	if dev.ticks == 0 {
-		t.Fatal("StepFrame never clocked the bus: every attached device would stop running, and no other test would say so")
-	}
-	if dev.ticks != CyclesPerFrame {
-		t.Errorf("StepFrame clocked the bus %d times in a frame, want CyclesPerFrame (%d): the bus runs at the CPU's Phi2, so a device sees exactly one tick per bus cycle", dev.ticks, CyclesPerFrame)
-	}
-	if dev.offPhase != 0 {
-		t.Errorf("%d of %d ticks were taken away from a bus-cycle boundary: a device timing off the bus sees the handshake move within the cycle", dev.offPhase, dev.ticks)
-	}
-	if dev.badGaps != 0 {
-		t.Errorf("%d of %d ticks were not one bus cycle on from the tick before (the first was %d dots on, want %d): the bus was clocked the right number of times but not evenly", dev.badGaps, dev.ticks, dev.firstBadGap, DotsPerCycle)
+			if vic.dot != startDot || vic.rasterLine != startLine {
+				t.Errorf("frame ended at dot %d line %d, want dot %d line %d", vic.dot, vic.rasterLine, startDot, startLine)
+			}
+			if dev.ticks != CyclesPerFrame {
+				t.Errorf("IEC ticks = %d, want %d", dev.ticks, CyclesPerFrame)
+			}
+			if got := cpu.Clock - dev.startClock; got != CyclesPerFrame {
+				t.Errorf("CPU clocks = %d, want %d", got, CyclesPerFrame)
+			}
+			if dev.wrongClock != 0 {
+				t.Errorf("%d IEC ticks did not follow the corresponding CPU Phi2", dev.wrongClock)
+			}
+			if dev.offPhase != 0 {
+				t.Errorf("%d IEC ticks were not on a bus-cycle boundary", dev.offPhase)
+			}
+			if dev.badGaps != 0 {
+				t.Errorf("%d IEC ticks were not one cycle apart (first gap = %d dots, want %d)", dev.badGaps, dev.firstBadGap, DotsPerCycle)
+			}
+			vic.StepCycle()
+			if dev.ticks != CyclesPerFrame+1 || dev.wrongClock != 0 || dev.offPhase != 0 || dev.badGaps != 0 {
+				t.Fatal("StepCycle after the frame did not preserve CPU/IEC cadence")
+			}
+		})
 	}
 }
