@@ -1,8 +1,61 @@
 package tiny64
 
+import "sync"
+
 const (
-	dosWedgeOrigin     = 0xC000
-	dosWedgeReactivate = 0xCC00
+	// The wedge is an 8K cartridge: an EPROM on the expansion port's /ROML
+	// chip-select, which the PLA maps at $8000-$9FFF.
+	dosWedgeOrigin = 0x8000
+	dosWedgeSize   = 0x2000
+
+	// A JMP sits at a fixed offset just past the autostart signature, so
+	// the SYS address that re-arms the wedge stays put however the code
+	// behind it moves: SYS 32777.
+	dosWedgeReactivate = dosWedgeOrigin + 9
+
+	// The wedge's mutable state lives in the cassette buffer. tiny64 models
+	// no datasette, and RAMTAS has both pointed $B2/$B3 here and cleared
+	// the page by the time the cartridge's own startup code gets to it.
+	dosWedgeWork        = 0x033C
+	wedgeRestorePending = dosWedgeWork + 0  // $033C
+	wedgeCurrentDevice  = dosWedgeWork + 1  // $033D
+	wedgeDeviceParse    = dosWedgeWork + 2  // $033E
+	wedgeDeviceDigit    = dosWedgeWork + 3  // $033F
+	wedgeStringStart    = dosWedgeWork + 4  // $0340
+	wedgeIOStatus       = dosWedgeWork + 5  // $0341
+	wedgeSavedProgram   = dosWedgeWork + 6  // $0342-$0345, BASIC's $2B-$2E
+	wedgeNameBuffer     = dosWedgeWork + 10 // $0346-$0396, 80 characters and a terminator
+	wedgeWorkEnd        = wedgeNameBuffer + 81
+
+	// The cassette buffer ends at $03FB. If the workspace ever outgrows it
+	// this conversion is negative and the package stops compiling.
+	_ = uint(0x03FC - wedgeWorkEnd)
+
+	// KERNAL entry points the cartridge's startup code uses. These four
+	// have documented jump table entries, so they are stable across ROM
+	// revisions.
+	kernalCINT   = 0xFF81
+	kernalIOINIT = 0xFF84
+	kernalRAMTAS = 0xFF87
+	kernalRESTOR = 0xFF8A
+
+	// The KERNAL's NMI handler runs the same autostart signature check the
+	// reset does, and jumps through $8002 when it matches, so a cartridge
+	// owns NMI whether it wants to or not. This is the instruction right
+	// after that jump - handing NMI straight back makes RESTORE behave as
+	// it does with an empty expansion port. Unlike the four above it has no
+	// jump table entry; TestDOSWedgeEntryPointsMatchROM pins it.
+	kernalNMIResume = 0xFE5E
+
+	// BASIC's cold start, $E394, is three subroutine calls and a jump. The
+	// cartridge makes the same calls, so that it can put its own vector in
+	// $0302 after $E453 has written BASIC's default one there. None of
+	// these have jump table entries either.
+	basicInitVectors  = 0xE453
+	basicInitRAM      = 0xE3BF
+	basicInitMessages = 0xE422
+	basicColdTail     = 0xE386
+
 	basicWarmStart     = 0xA483
 	basicAfterReadLine = 0xA486
 	basicReady         = 0xA474
@@ -12,59 +65,50 @@ const (
 	petsciiLeftArrow   = 0x5F
 )
 
-type dosWedgeState struct {
-	enabled   bool
-	installed bool
-}
+// The image is the same every time, and assembling it costs more than
+// keeping it.
+var dosWedgeROM = sync.OnceValue(buildDOSWedge)
 
-var dosWedge dosWedgeState
-
-// EnableDOSWedge arranges for a small resident DOS wedge to be installed
-// after BASIC initializes its RAM vectors. The wedge occupies $C000-$CFFF
-// and recognizes commands entered at the BASIC prompt.
+// EnableDOSWedge plugs an 8K DOS wedge cartridge into the expansion port.
+//
+// It takes effect at the next Reset, the way pushing a cartridge into a
+// real machine does: during the reset sequence the KERNAL looks for the
+// cartridge's CBM80 signature at $8004 and, finding it, hands over at
+// $FCEC before any of the normal initialization has run. The cartridge
+// performs that initialization itself and points BASIC's $0302 main-loop
+// vector at a handler that executes from cartridge ROM, so nothing is
+// copied into RAM; the wedge's few bytes of state live in the cassette
+// buffer at $033C.
 func EnableDOSWedge() {
-	dosWedge.enabled = true
-	dosWedge.installed = false
+	// /GAME floating, /EXROM asserted, a ROM chip on /ROML: an ordinary 8K
+	// cartridge at $8000-$9FFF.
+	bus.Insert(dosWedgeROM(), false, true, false, true)
 }
 
-// DisableDOSWedge disables the DOS wedge and restores BASIC's standard warm
-// start vector if the wedge is currently installed.
+// DisableDOSWedge unplugs the cartridge. Like pulling one out of a real
+// machine it takes effect at the next Reset; a wedge that is already
+// running stays until then, or until @Q retires it. It empties the
+// expansion port, whatever is in it.
 func DisableDOSWedge() {
-	dosWedge.enabled = false
-	if ram[0x0302] == uint8(dosWedgeOrigin&0xFF) && ram[0x0303] == uint8(dosWedgeOrigin>>8) {
-		ram[0x0302] = uint8(basicWarmStart & 0xFF)
-		ram[0x0303] = uint8(basicWarmStart >> 8)
-	}
-	dosWedge.installed = false
+	bus.Remove()
 }
 
-func resetDOSWedge() {
-	dosWedge.installed = false
-}
+// A fixup is an operand whose value is a label's address, filled in by
+// finish once every label is known. Which part of the address, and how it
+// is encoded, depends on the instruction that wanted it.
+type wedgeFixupKind int
 
-func tickDOSWedge() {
-	if !dosWedge.enabled || dosWedge.installed {
-		return
-	}
-
-	// BASIC installs this vector during its cold start. Waiting for the
-	// standard value avoids racing the ROM's initialization and makes the
-	// wedge work after both cold and warm machine resets.
-	if ram[0x0302] != uint8(basicWarmStart&0xFF) || ram[0x0303] != uint8(basicWarmStart>>8) {
-		return
-	}
-
-	program := buildDOSWedge()
-	copy(ram[dosWedgeOrigin:], program)
-	ram[0x0302] = uint8(dosWedgeOrigin & 0xFF)
-	ram[0x0303] = uint8(dosWedgeOrigin >> 8)
-	dosWedge.installed = true
-}
+const (
+	fixupWord   wedgeFixupKind = iota // two-byte absolute address
+	fixupBranch                       // one-byte offset relative to the next instruction
+	fixupLow                          // low byte of an address, as an immediate
+	fixupHigh                         // high byte of an address, as an immediate
+)
 
 type wedgeFixup struct {
-	at     int
-	label  string
-	branch bool
+	at    int
+	label string
+	kind  wedgeFixupKind
 }
 
 type wedgeAssembler struct {
@@ -108,15 +152,30 @@ func (a *wedgeAssembler) ref(op byte, label string) {
 	a.refWord(label)
 }
 
-func (a *wedgeAssembler) padTo(addr uint16) {
-	for a.pc() < addr {
-		a.emit(0x00)
+// refLow and refHigh emit an immediate operand carrying one byte of a
+// label's address, for code that installs an address somewhere rather than
+// jumping to it.
+func (a *wedgeAssembler) refLow(op byte, label string) {
+	a.emit(op, 0)
+	a.fixups = append(a.fixups, wedgeFixup{at: len(a.code) - 1, label: label, kind: fixupLow})
+}
+
+func (a *wedgeAssembler) refHigh(op byte, label string) {
+	a.emit(op, 0)
+	a.fixups = append(a.fixups, wedgeFixup{at: len(a.code) - 1, label: label, kind: fixupHigh})
+}
+
+// pad fills the image out to size bytes with the value an unprogrammed
+// EPROM cell reads as.
+func (a *wedgeAssembler) pad(size int) {
+	for len(a.code) < size {
+		a.emit(0xFF)
 	}
 }
 
 func (a *wedgeAssembler) branch(op byte, label string) {
 	a.emit(op, 0)
-	a.fixups = append(a.fixups, wedgeFixup{at: len(a.code) - 1, label: label, branch: true})
+	a.fixups = append(a.fixups, wedgeFixup{at: len(a.code) - 1, label: label, kind: fixupBranch})
 }
 
 func (a *wedgeAssembler) finish() []byte {
@@ -125,17 +184,22 @@ func (a *wedgeAssembler) finish() []byte {
 		if !ok {
 			panic("unknown DOS wedge label: " + fixup.label)
 		}
-		if fixup.branch {
+		switch fixup.kind {
+		case fixupBranch:
 			next := a.origin + uint16(fixup.at+1)
 			offset := int(target) - int(next)
 			if offset < -128 || offset > 127 {
 				panic("DOS wedge branch out of range: " + fixup.label)
 			}
 			a.code[fixup.at] = byte(int8(offset))
-			continue
+		case fixupLow:
+			a.code[fixup.at] = byte(target)
+		case fixupHigh:
+			a.code[fixup.at] = byte(target >> 8)
+		default:
+			a.code[fixup.at] = byte(target)
+			a.code[fixup.at+1] = byte(target >> 8)
 		}
-		a.code[fixup.at] = byte(target)
-		a.code[fixup.at+1] = byte(target >> 8)
 	}
 	return a.code
 }
@@ -143,20 +207,77 @@ func (a *wedgeAssembler) finish() []byte {
 func buildDOSWedge() []byte {
 	a := newWedgeAssembler(dosWedgeOrigin)
 
+	// The cartridge header the KERNAL looks for. $8004-$8008 spell CBM80 in
+	// shifted PETSCII; finding them at reset makes the KERNAL jump through
+	// $8000 before it has initialized anything, and finding them during an
+	// NMI makes it jump through $8002.
+	a.refWord("coldStart")
+	a.refWord("nmiEntry")
+	a.emit(0xC3, 0xC2, 0xCD, 0x38, 0x30)
+	a.ref(0x4C, "reactivate") // $8009: SYS 32777
+
+	// The KERNAL reaches here with the stack pointer, the interrupt
+	// disable and the decimal flag set up, but nothing else: the reset
+	// sequence jumps to a cartridge before it calls IOINIT, RAMTAS, RESTOR
+	// or CINT, so the cartridge makes those calls itself and then does
+	// BASIC's cold start the same way $E394 does - with its own vector
+	// going into $0302 after $E453 has put BASIC's default one there.
+	a.label("coldStart")
+	a.emit(0x78, 0xD8)       // SEI; CLD
+	a.emit(0xA2, 0xFF, 0x9A) // LDX #$FF; TXS
+	a.abs(0x8E, 0xD016)      // STX $D016, as the KERNAL does at $FCEF
+	a.abs(0x20, kernalIOINIT)
+	// RAMTAS clears $0002-$03FF, which includes this cartridge's
+	// workspace, and walks up from $0400 until a byte fails to read back
+	// the way it was written. That happens at $8000, where this ROM is, so
+	// the top of BASIC memory ends up below the cartridge without anything
+	// here having to arrange it.
+	a.abs(0x20, kernalRAMTAS)
+	a.abs(0x20, kernalRESTOR)
+	a.abs(0x20, kernalCINT)
+	a.emit(0x58) // CLI
+
+	a.abs(0x20, basicInitVectors) // $0300-$030B, including $0302 = $A483
+	a.refLow(0xA9, "entry")       // LDA #<entry
+	a.abs(0x8D, 0x0302)
+	a.refHigh(0xA9, "entry") // LDA #>entry
+	a.abs(0x8D, 0x0303)      // the wedge owns the prompt from here
+
+	// $E3BF writes just below the stack pointer, so it has to be called at
+	// the same one-JSR depth $E394 calls it at: keep it here rather than
+	// moving any of this into a subroutine.
+	a.abs(0x20, basicInitRAM)
+	a.abs(0x20, basicInitMessages) // sign-on banner and the free-memory line
+
+	// The workspace is initialized after RAMTAS has finished zeroing the
+	// page it lives in.
+	a.emit(0xA9, 0x08)
+	a.abs(0x8D, wedgeCurrentDevice)
+	a.emit(0xA9, 0x00)
+	a.abs(0x8D, wedgeRestorePending)
+	a.ref(0x20, "printBanner")
+
+	a.emit(0xA2, 0xFB, 0x9A) // LDX #$FB; TXS, as $E394 does
+	// $E386 is LDX #$80 followed by JMP ($0300), which reaches READY.
+	// through BASIC's error vector rather than jumping straight at it, so
+	// a program that has hooked $0300 still sees it.
+	a.abs(0x4C, basicColdTail)
+
+	// The KERNAL's NMI handler checks for a cartridge signature just as the
+	// reset does, and jumps through $8002 when it finds one. The wedge has
+	// no interest in NMI, so hand it back at the instruction the KERNAL
+	// would have run next.
+	a.label("nmiEntry")
+	a.abs(0x4C, kernalNMIResume)
+
 	// BASIC jumps through $0302 immediately before reading each direct-mode
 	// line. The wrapper keeps that behavior, but gets first look at the line
 	// after the screen editor returns.
 	a.label("entry")
-	a.ref(0xAD, "bannerPending") // LDA bannerPending
-	a.branch(0xF0, "afterBanner")
-	a.emit(0xA9, 0x00)           // LDA #0
-	a.ref(0x8D, "bannerPending") // STA bannerPending
-	a.ref(0x20, "printBanner")
-	a.label("afterBanner")
-	a.ref(0xAD, "restorePending") // LDA restorePending
+	a.abs(0xAD, wedgeRestorePending)
 	a.branch(0xF0, "readLine")
-	a.emit(0xA9, 0x00)            // LDA #0
-	a.ref(0x8D, "restorePending") // STA restorePending
+	a.emit(0xA9, 0x00) // LDA #0
+	a.abs(0x8D, wedgeRestorePending)
 	a.ref(0x20, "restoreProgram")
 
 	a.label("readLine")
@@ -218,7 +339,7 @@ func buildDOSWedge() []byte {
 	a.ref(0x4C, "deactivate")
 	a.label("openDriveCommand")
 	a.emit(0x98, 0xAA) // TYA; TAX
-	a.ref(0x8E, "stringStart")
+	a.abs(0x8E, wedgeStringStart)
 	a.label("commandLength")
 	a.abs(0xBD, 0x0200) // LDA $0200,X
 	a.branch(0xF0, "openCommand")
@@ -226,12 +347,12 @@ func buildDOSWedge() []byte {
 	a.branch(0xD0, "commandLength")
 	a.label("openCommand")
 	a.emit(0x8A, 0x38) // TXA; SEC
-	a.ref(0xED, "stringStart")
-	a.ref(0xAE, "stringStart") // LDX stringStart
-	a.emit(0xA0, 0x02)         // LDY #2
-	a.abs(0x20, 0xFFBD)        // SETNAM
-	a.emit(0xA9, 0x0F)         // LDA #15
-	a.ref(0xAE, "currentDevice")
+	a.abs(0xED, wedgeStringStart)
+	a.abs(0xAE, wedgeStringStart) // LDX stringStart
+	a.emit(0xA0, 0x02)            // LDY #2
+	a.abs(0x20, 0xFFBD)           // SETNAM
+	a.emit(0xA9, 0x0F)            // LDA #15
+	a.abs(0xAE, wedgeCurrentDevice)
 	a.emit(0xA0, 0x0F)
 	a.abs(0x20, 0xFFBA) // SETLFS 15,dev,15
 	a.abs(0x20, 0xFFC0) // OPEN
@@ -243,10 +364,10 @@ func buildDOSWedge() []byte {
 	a.abs(0x20, 0xFFCF) // CHRIN
 	a.emit(0x48)        // PHA
 	a.abs(0x20, 0xFFB7) // READST
-	a.ref(0x8D, "ioStatus")
+	a.abs(0x8D, wedgeIOStatus)
 	a.emit(0x68)        // PLA
 	a.abs(0x20, 0xFFD2) // CHROUT
-	a.ref(0xAD, "ioStatus")
+	a.abs(0xAD, wedgeIOStatus)
 	a.branch(0xF0, "readStatus")
 	a.label("closeCommand")
 	a.abs(0x20, 0xFFCC) // CLRCHN
@@ -261,7 +382,7 @@ func buildDOSWedge() []byte {
 	a.branch(0xB0, "storeDevice") // carry set: parsed a decimal device number
 	a.abs(0x4C, basicReady)
 	a.label("storeDevice")
-	a.ref(0x8D, "currentDevice")
+	a.abs(0x8D, wedgeCurrentDevice)
 	a.abs(0x4C, basicReady)
 
 	a.label("deactivate")
@@ -317,13 +438,13 @@ func buildDOSWedge() []byte {
 	a.emit(0xA2, 0x00) // LDX #0
 	a.label("copyNameByte")
 	a.abs(0xB9, 0x0200) // LDA $0200,Y
-	a.ref(0x9D, "nameBuffer")
+	a.abs(0x9D, wedgeNameBuffer)
 	a.branch(0xF0, "copyNameDone")
 	a.emit(0xC8, 0xE8) // INY; INX
 	a.emit(0xE0, 0x50) // CPX #80
 	a.branch(0xD0, "copyNameByte")
 	a.emit(0xA9, 0x00)
-	a.ref(0x9D, "nameBuffer") // force termination at the line limit
+	a.abs(0x9D, wedgeNameBuffer) // force termination at the line limit
 	a.label("copyNameDone")
 	a.emit(0x60)
 
@@ -370,7 +491,7 @@ func buildDOSWedge() []byte {
 	a.label("writeNameAndDevice")
 	a.emit(0xA0, 0x00) // LDY #0
 	a.label("copyBufferedName")
-	a.ref(0xB9, "nameBuffer")
+	a.abs(0xB9, wedgeNameBuffer)
 	a.branch(0xF0, "finishName")
 	a.abs(0x99, 0x0205) // STA $0205,Y
 	a.emit(0xC8)
@@ -394,7 +515,7 @@ func buildDOSWedge() []byte {
 	a.label("directory")
 	a.ref(0x20, "saveProgram")
 	a.emit(0x98, 0xAA) // TYA; TAX
-	a.ref(0x8E, "stringStart")
+	a.abs(0x8E, wedgeStringStart)
 	a.label("directoryLength")
 	a.abs(0xBD, 0x0200)
 	a.branch(0xF0, "loadDirectory")
@@ -402,12 +523,12 @@ func buildDOSWedge() []byte {
 	a.branch(0xD0, "directoryLength")
 	a.label("loadDirectory")
 	a.emit(0x8A, 0x38) // TXA; SEC
-	a.ref(0xED, "stringStart")
-	a.ref(0xAE, "stringStart")
+	a.abs(0xED, wedgeStringStart)
+	a.abs(0xAE, wedgeStringStart)
 	a.emit(0xA0, 0x02)
 	a.abs(0x20, 0xFFBD) // SETNAM
 	a.emit(0xA9, 0x01)  // LDA #1
-	a.ref(0xAE, "currentDevice")
+	a.abs(0xAE, wedgeCurrentDevice)
 	a.emit(0xA0, 0x01)
 	a.abs(0x20, 0xFFBA) // SETLFS 1,dev,1
 	a.emit(0xA9, 0x00)
@@ -418,7 +539,7 @@ func buildDOSWedge() []byte {
 	a.emit(0xA9, 0x04, 0x85, 0x2C)
 	a.abs(0x20, basicRelink)
 	a.emit(0xA9, 0x01)
-	a.ref(0x8D, "restorePending") // STA restorePending
+	a.abs(0x8D, wedgeRestorePending) // STA restorePending
 	a.emit(0xA2, 0x00)
 	a.label("copyList")
 	a.ref(0xBD, "listCommand")
@@ -435,13 +556,13 @@ func buildDOSWedge() []byte {
 	a.label("saveProgram")
 	for i := uint16(0); i < 4; i++ {
 		a.abs(0xAD, 0x002B+i)
-		a.ref(0x8D, "savedProgram"+string(rune('0'+i)))
+		a.abs(0x8D, wedgeSavedProgram+i)
 	}
 	a.emit(0x60)
 
 	a.label("restoreProgram")
 	for i := uint16(0); i < 4; i++ {
-		a.ref(0xAD, "savedProgram"+string(rune('0'+i)))
+		a.abs(0xAD, wedgeSavedProgram+i)
 		a.abs(0x8D, 0x002B+i)
 	}
 	a.emit(0x60)
@@ -463,7 +584,7 @@ func buildDOSWedge() []byte {
 	a.emit(0xA9, ',')
 	a.abs(0x99, 0x0205)
 	a.emit(0xC8)
-	a.ref(0xAD, "currentDevice")
+	a.abs(0xAD, wedgeCurrentDevice)
 	a.emit(0xC9, 0x0A) // CMP #10
 	a.branch(0x90, "writeDeviceOnes")
 	a.emit(0xA2, '0') // LDX #'0'
@@ -489,7 +610,7 @@ func buildDOSWedge() []byte {
 	a.emit(0xC9, '9'+1)
 	a.branch(0xB0, "readDecimalFail")
 	a.emit(0x38, 0xE9, '0') // SEC; SBC #'0'
-	a.ref(0x8D, "deviceParse")
+	a.abs(0x8D, wedgeDeviceParse)
 	a.emit(0xC8)
 	a.abs(0xB9, 0x0200) // LDA $0200,Y
 	a.emit(0xC9, '0')
@@ -498,18 +619,18 @@ func buildDOSWedge() []byte {
 	a.branch(0xB0, "readDecimalDone")
 	a.emit(0x38, 0xE9, '0') // SEC; SBC #'0'
 	a.emit(0x48)            // PHA
-	a.ref(0xAD, "deviceParse")
+	a.abs(0xAD, wedgeDeviceParse)
 	a.emit(0x0A) // ASL A, *2
-	a.ref(0x8D, "deviceDigit")
+	a.abs(0x8D, wedgeDeviceDigit)
 	a.emit(0x0A, 0x0A) // *8
 	a.emit(0x18)
-	a.ref(0x6D, "deviceDigit") // *10
-	a.ref(0x8D, "deviceParse")
+	a.abs(0x6D, wedgeDeviceDigit) // *10
+	a.abs(0x8D, wedgeDeviceParse)
 	a.emit(0x68, 0x18) // PLA; CLC
-	a.ref(0x6D, "deviceParse")
-	a.ref(0x8D, "deviceParse")
+	a.abs(0x6D, wedgeDeviceParse)
+	a.abs(0x8D, wedgeDeviceParse)
 	a.label("readDecimalDone")
-	a.ref(0xAD, "deviceParse")
+	a.abs(0xAD, wedgeDeviceParse)
 	a.emit(0x38, 0x60) // SEC; RTS
 	a.label("readDecimalFail")
 	a.emit(0x18, 0x60) // CLC; RTS
@@ -525,50 +646,35 @@ func buildDOSWedge() []byte {
 	a.label("printBannerDone")
 	a.emit(0x60)
 
-	a.label("bannerPending")
-	a.emit(0x01)
-	a.label("restorePending")
-	a.emit(0x00)
-	a.label("currentDevice")
-	a.emit(0x08)
-	a.label("deviceParse")
-	a.emit(0x00)
-	a.label("deviceDigit")
-	a.emit(0x00)
-	a.label("stringStart")
-	a.emit(0x00)
-	a.label("ioStatus")
-	a.emit(0x00)
-	for i := range 4 {
-		a.label("savedProgram" + string(rune('0'+i)))
-		a.emit(0x00)
-	}
+	// Read-only tables. Everything the wedge writes lives in the cassette
+	// buffer instead; see the workspace constants at the top of the file.
 	a.label("loadPrefix")
 	a.emit('L', 'O', 'A', 'D', '"')
 	a.label("savePrefix")
 	a.emit('S', 'A', 'V', 'E', '"')
 	a.label("listCommand")
 	a.emit('L', 'I', 'S', 'T', 0x00)
+	// No carriage returns: the free-memory line printed by $E422 has
+	// already left the cursor at the start of the next row, and READY.
+	// begins with one of its own.
 	a.label("banner")
-	a.emit('\r')
 	a.emit([]byte("DOS WEDGE ACTIVE")...)
-	a.emit('\r', 0x00)
-	a.label("nameBuffer")
-	a.emit(make([]byte, 81)...)
+	a.emit(0x00)
 
-	a.padTo(dosWedgeReactivate)
+	// SYS 32777 lands on the JMP in the header, which arrives here.
 	a.label("reactivate")
-	a.emit(0xA9, byte(dosWedgeOrigin&0xFF))
+	a.refLow(0xA9, "entry")
 	a.abs(0x8D, 0x0302)
-	a.emit(0xA9, byte(dosWedgeOrigin>>8))
+	a.refHigh(0xA9, "entry")
 	a.abs(0x8D, 0x0303)
-	a.emit(0xA9, 0x01)
-	a.ref(0x8D, "bannerPending")
+	// Unlike the cold start this leaves the workspace alone, so the device
+	// selected with @# survives @Q and a later SYS.
+	a.ref(0x20, "printBanner")
 	a.emit(0x60)
 
-	program := a.finish()
-	if len(program) > 0x1000 {
-		panic("DOS wedge exceeds $C000-$CFFF")
+	if len(a.code) > dosWedgeSize {
+		panic("DOS wedge does not fit in an 8K cartridge")
 	}
-	return program
+	a.pad(dosWedgeSize)
+	return a.finish()
 }

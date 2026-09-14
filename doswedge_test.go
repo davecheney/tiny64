@@ -175,7 +175,7 @@ func TestDOSWedgeDeactivateAndReactivate(t *testing.T) {
 		t.Fatal("/HELLO loaded a program after @Q deactivated the wedge")
 	}
 
-	m.typeLine("SYS 52224")
+	m.typeLine("SYS 32777")
 	m.waitForScreen("DOS WEDGE ACTIVE")
 	m.typeLine("/HELLO")
 	m.waitForScreen("SEARCHING FOR HELLO")
