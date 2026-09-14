@@ -215,13 +215,13 @@ func render(cfg config, program, disk []byte) error {
 	for frame := 1; frame <= cfg.frames; frame++ {
 		tiny64.StepFrame()
 		if cfg.outPattern != "" {
-			if err := writePNG(fmt.Sprintf(cfg.outPattern, frame), capture(bounds)); err != nil {
+			if err := writePNG(fmt.Sprintf(cfg.outPattern, frame), capture(tiny64.FrameBufferRGBA(), bounds)); err != nil {
 				return err
 			}
 		}
 	}
 	if cfg.output != "" {
-		return writePNG(cfg.output, capture(bounds))
+		return writePNG(cfg.output, capture(tiny64.FrameBufferRGBA(), bounds))
 	}
 	return nil
 }
@@ -229,7 +229,7 @@ func render(cfg config, program, disk []byte) error {
 func resetMachine(disk []byte, drive string) {
 	clear(tiny64.Ram())
 	clear(tiny64.ColorRam())
-	clear(tiny64.FrameBufferRGBA())
+	tiny64.ClearFrameBuffer()
 	tiny64.Keys().ReleaseAll()
 	tiny64.DetachVirtualDrive()
 	tiny64.AttachDrive(false)
@@ -313,8 +313,9 @@ func startAt(addr uint16) {
 	cpu.Addr2 = 0
 }
 
-func capture(bounds image.Rectangle) *image.RGBA {
-	src := tiny64.FrameBufferRGBA()
+// capture crops bounds out of src, a whole visible frame in row-major RGBA
+// order as returned by tiny64.FrameBufferRGBA.
+func capture(src []byte, bounds image.Rectangle) *image.RGBA {
 	dst := image.NewRGBA(image.Rect(0, 0, bounds.Dx(), bounds.Dy()))
 	const stride = tiny64.VisibleDotsPerLine * 4
 	for y := bounds.Min.Y; y < bounds.Max.Y; y++ {

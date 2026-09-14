@@ -27,6 +27,12 @@ func FrameBufferRGB565BE() []byte {
 	return unsafe.Slice((*byte)(unsafe.Pointer(&fb[0])), len(fb)*2)
 }
 
+// ClearFrameBuffer blanks the whole frame, including the parts of it
+// outside the visible picture.
+func ClearFrameBuffer() {
+	clear(frameBufferRGB565BE[:])
+}
+
 func writePixelToBuffer(x, y uint16, colorIndex byte) {
 	x -= rgb565CropX
 	y -= rgb565CropY

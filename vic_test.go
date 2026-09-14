@@ -40,7 +40,7 @@ func TestVICStepFrameMatchesStepDot(t *testing.T) {
 		keyboard = savedKeyboard
 		ram, colorRAM = savedRAM, savedColorRAM
 
-		clearFrameBufferRGBA()
+		ClearFrameBuffer()
 		step()
 
 		gotVIC, gotCPU := vic, cpu
