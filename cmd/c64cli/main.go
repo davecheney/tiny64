@@ -80,6 +80,18 @@ func main() {
 		colorRAM[i] = byte(rand.Uint() & 0x0F)
 	}
 
+	// There is one expansion port, and -wedge is a cartridge now too, so
+	// two of these would silently unplug each other.
+	carts := 0
+	for _, inserted := range []bool{*destestmax, *deadtest, *wedge} {
+		if inserted {
+			carts++
+		}
+	}
+	if carts > 1 {
+		log.Fatal("only one of -destestmax, -deadtest and -wedge can be used: there is one cartridge port")
+	}
+
 	if *destestmax {
 		tiny64.GetBus().Insert(rom.DiagCart, true, false, true, false)
 	}

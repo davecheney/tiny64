@@ -36,15 +36,20 @@ which attaches the virtual drive automatically.
 
     go run ./cmd/c64 -disk demo.d64
 
-The desktop and headless front ends also have an opt-in `-wedge` flag. It
-installs a small resident program at `$C000` after BASIC initializes, without
-requiring freezer hardware or a cartridge ROM:
+The desktop and headless front ends also have an opt-in `-wedge` flag. It plugs
+an 8K autostart cartridge into the expansion port before reset, the way a
+fastload or utility cartridge of the period arrived: the KERNAL finds the
+`CBM80` signature at `$8004` during its reset sequence and hands the cartridge
+control before BASIC has started, and the cartridge initializes the machine
+itself and points BASIC's main-loop vector at a handler that runs from ROM at
+`$8000-$9FFF`:
 
     go run ./cmd/c64 -disk demo.d64 -wedge
     go run ./cmd/c64cli -disk demo.d64 -drive=virtual -wedge
 
-The wedge prints `DOS WEDGE ACTIVE` at the first prompt and accepts the
-historical direct-mode DOS Wedge / DOS Manager 5.1 shorthands:
+The cartridge prints `DOS WEDGE ACTIVE` as it starts up, just above the first
+`READY.`, and accepts the historical direct-mode DOS Wedge / DOS Manager 5.1
+shorthands:
 
 - `$` or `@$` loads and lists the directory without replacing the current BASIC
   program; directory patterns such as `$:DEMO*` are also passed to the drive
@@ -57,14 +62,23 @@ historical direct-mode DOS Wedge / DOS Manager 5.1 shorthands:
   returns to the BASIC prompt
 - `%NAME` expands to `LOAD"NAME",dev,1` for machine-code programs
 - `←NAME` expands to `SAVE"NAME",dev`
-- `@Q` deactivates the wedge; `SYS 52224` reactivates the resident copy
+- `@Q` deactivates the wedge; `SYS 32777` reactivates it, through a `JMP` at a
+  fixed offset in the cartridge header
 
 All disk traffic still uses the emulated KERNAL and IEC bus, so the normal
 load, save, directory, and command-channel messages remain visible. The wedge
-is disabled by default and is installed as a direct-mode prompt hook. Stored
-BASIC program lines are deliberately left to BASIC rather than intercepted by a
+is disabled by default, and when it is enabled it is the cartridge's own 6502
+startup code that installs it, as a direct-mode prompt hook. Stored BASIC
+program lines are deliberately left to BASIC rather than intercepted by a
 CHRGET hook, so wedge tokens in a numbered line retain normal BASIC syntax
 behaviour instead of becoming hidden disk operations.
+
+Nothing is copied into RAM, so `$C000-$CFFF` stays free; the wedge's few bytes
+of state live in the cassette buffer at `$033C`. Two things follow from the
+cartridge being real rather than simulated: BASIC reports 30719 bytes free
+instead of 38911, because the KERNAL's memory test walks up from `$0400` and
+finds the cartridge sitting where RAM would be, and a program that banks the
+cartridge out by clearing LORAM banks the wedge out with it.
 
 ## Inspecting programs
 
