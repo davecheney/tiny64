@@ -153,69 +153,81 @@ func TestAttachIECDoesNotWriteThroughSnapshots(t *testing.T) {
 	}
 }
 
-// countingPeripheral records how many times the bus clocked it, and where
-// the beam stood each time.
+// countingPeripheral records how many times the bus clocked it, and
+// checks where the beam stood each time.
 //
 // The count alone only says the bus was clocked often enough; it does not
 // say it was clocked at the right moments. A path that clocked every
 // device twice on half the cycles would have the same total as one that
-// clocked it once on each. The fingerprint folds the beam position of
-// every tick, in order, into a single value, so two paths agree on it only
-// if they clocked the bus the same number of times, in the same order, at
-// the same point in the frame.
+// clocked it once on each. So each tick is also held to its beam
+// position: it must land on a bus-cycle boundary, and it must be exactly
+// one bus cycle on from the tick before it.
 type countingPeripheral struct {
-	addr        uint8
-	ticks       int
-	fingerprint uint64
+	addr  uint8
+	ticks int
+
+	// last is the previous tick's beam position in dots from the top of
+	// the frame; offPhase and badGaps count the ticks that broke each of
+	// the two rules above, with firstBadGap keeping the first offending
+	// distance for the failure message.
+	last        int
+	offPhase    int
+	badGaps     int
+	firstBadGap int
 }
 
 func (*countingPeripheral) iecCLKOut() bool  { return false }
 func (*countingPeripheral) iecDATAOut() bool { return false }
 
 func (c *countingPeripheral) iecTick() {
-	c.ticks++
-	// FNV-1a over the beam position, which is order sensitive: the same
-	// set of positions visited in a different order hashes differently.
-	for _, b := range []byte{
-		byte(vic.dot), byte(vic.dot >> 8),
-		byte(vic.rasterLine), byte(vic.rasterLine >> 8),
-	} {
-		c.fingerprint = (c.fingerprint ^ uint64(b)) * 1099511628211
+	pos := int(vic.rasterLine)*DotsPerLine + int(vic.dot)
+	if vic.dot%DotsPerCycle != 0 {
+		c.offPhase++
 	}
+	if c.ticks > 0 {
+		// Modulo a frame, so the wrap from the last cycle of one frame
+		// to the first of the next is one cycle like any other.
+		if gap := (pos - c.last + DotsPerFrame) % DotsPerFrame; gap != DotsPerCycle {
+			if c.badGaps == 0 {
+				c.firstBadGap = gap
+			}
+			c.badGaps++
+		}
+	}
+	c.ticks++
+	c.last = pos
 }
 
 func (c *countingPeripheral) iecAddress() uint8 { return c.addr }
 
-// Every path that advances a frame has to clock the bus, and there is more
-// than one: FinishFrame steps dot by dot through StepDot, while StepFrame
-// takes the faster per-cycle route through stepCycle. They are separate
-// call sites, so adding iecTick to one and not the other is an easy thing
-// to do and a hard thing to notice.
+// Advancing a frame has to clock the bus, and for a long time there was
+// more than one way to advance one: FinishFrame stepped dot by dot
+// through StepDot while StepFrame took the per-cycle route, so adding
+// iecTick to one and not the other was an easy thing to do and a hard
+// thing to notice. This test compared the two paths against each other to
+// catch exactly that.
 //
-// It is hard to notice because nothing else catches it. Removing iecTick
-// from stepCycle leaves the entire rest of the suite green - the tests
-// drive the machine through paths that still clock the bus - while the GUI
-// front ends, which are the callers that use StepFrame, silently stop
-// clocking every device attached. A drive would simply never respond, with
-// no failure anywhere to say why.
+// Only stepCycle advances the machine now, so that divergence cannot be
+// built - but the property the comparison was standing in for still can
+// be broken, and nothing else catches it. Removing iecTick from stepCycle
+// leaves the entire rest of the suite green: the tests drive the machine
+// through paths that still clock the bus, while every device attached to
+// a front end silently stops running. A drive would simply never respond,
+// with no failure anywhere to say why.
 //
 // Presence is not enough to pin that down, though, and this test used to
 // check no more than that: a path that clocked the bus once per frame
 // would have satisfied it. What the drive actually depends on is cadence
-// and phase - one tick per bus cycle, taken at the same point in the cycle
-// - because the 1541 counts bus clocks to time its own serial handshake.
-// So each path is held to an exact CyclesPerFrame ticks, and the two are
-// required to agree on a fingerprint of where the beam stood at every one
-// of them. The fingerprints are compared against each other rather than
-// against a constant: the property worth guarding is that the two front
-// ends clock the bus identically, and a hardcoded hash would say nothing
-// about that to whoever has to change it later.
+// and phase - one tick per bus cycle, taken at the same point in the
+// cycle - because the 1541 counts bus clocks to time its own serial
+// handshake. So the frame is held to exactly CyclesPerFrame ticks, each
+// landing on a cycle boundary exactly one cycle on from the last. That
+// says directly what comparing two paths used to say by implication, and
+// it keeps saying it now that there is only one path to ask.
 //
-// What comparing the two paths with each other cannot see is a divergence
-// between build configurations. Both front ends compile the same way under
-// gc, so a change that alters when the dotclocks run only under TinyGo
-// would leave the two fingerprints agreeing with each other while the
-// TinyGo build differed from both.
+// What this cannot see is a divergence between build configurations. It
+// runs under gc, so a change that alters when the dotclocks run only
+// under TinyGo would leave it green while the TinyGo build differed.
 //
 // That reaches less far than it sounds, though, and it is worth being
 // exact about where the edge is, because believing this guard is blinder
@@ -224,10 +236,9 @@ func (c *countingPeripheral) iecAddress() uint8 { return c.addr }
 // here, even when the escape is only reachable on another build. Should
 // the dotclocks ever become conditional - skipped while the beam is
 // outside the rendering window, say - and something on the bus or CPU
-// path be moved inside them, the count assertion above fails under gc on
+// path be moved inside them, the count assertion below fails under gc on
 // the spot: a frame's ticks drop to the number of cycles that survived
-// the condition, and the fingerprints are never reached. That was
-// measured against such a change rather than assumed.
+// the condition.
 //
 // What survives is narrower and differently shaped: a divergence that
 // depends on the two builds' windows differing, rather than on anything
@@ -235,52 +246,28 @@ func (c *countingPeripheral) iecAddress() uint8 { return c.addr }
 // other's, or chip state gated at a crop boundary that only one build
 // has, changes no tick count and moves no tick - so a frame looks
 // identical from the bus. Closing that needs a second, build-tagged test
-// taking the same fingerprint under the TinyGo constraints and comparing
-// it with this one.
+// taking the same measurements under the TinyGo constraints.
 func TestBusIsClockedOnEveryFramePath(t *testing.T) {
-	// clockedFrame runs one frame through the given path with a counting
-	// device on the bus, and reports how that path clocked it.
-	clockedFrame := func(t *testing.T, run func(v *VICII)) *countingPeripheral {
-		t.Helper()
-		// newMachine, not saveBus alone: stepping the VIC means
-		// running the CPU, and it will execute whatever a previous
-		// test left in RAM unless the machine is reset first. It also
-		// restores the bus on cleanup, so nothing stays attached.
-		newMachine(t)
+	// newMachine, not saveBus alone: stepping the VIC means running the
+	// CPU, and it will execute whatever a previous test left in RAM
+	// unless the machine is reset first. It also restores the bus on
+	// cleanup, so nothing stays attached.
+	newMachine(t)
 
-		dev := &countingPeripheral{addr: 9, fingerprint: 14695981039346656037}
-		attachIEC(dev)
-		run(&vic)
-		return dev
+	dev := &countingPeripheral{addr: 9}
+	attachIEC(dev)
+	vic.StepFrame()
+
+	if dev.ticks == 0 {
+		t.Fatal("StepFrame never clocked the bus: every attached device would stop running, and no other test would say so")
 	}
-
-	fingerprints := map[string]uint64{}
-	frameOK := true
-	for _, tc := range []struct {
-		name string
-		run  func(v *VICII)
-	}{
-		{"StepFrame", func(v *VICII) { v.StepFrame() }},
-		{"FinishFrame", func(v *VICII) { v.FinishFrame() }},
-	} {
-		ok := t.Run(tc.name, func(t *testing.T) {
-			dev := clockedFrame(t, tc.run)
-
-			if dev.ticks == 0 {
-				t.Fatalf("%s never clocked the bus: every attached device would stop running, and no other test would say so", tc.name)
-			}
-			if dev.ticks != CyclesPerFrame {
-				t.Errorf("%s clocked the bus %d times in a frame, want CyclesPerFrame (%d): the bus runs at the CPU's Phi2, so a device sees exactly one tick per bus cycle", tc.name, dev.ticks, CyclesPerFrame)
-			}
-			fingerprints[tc.name] = dev.fingerprint
-		})
-		frameOK = frameOK && ok
+	if dev.ticks != CyclesPerFrame {
+		t.Errorf("StepFrame clocked the bus %d times in a frame, want CyclesPerFrame (%d): the bus runs at the CPU's Phi2, so a device sees exactly one tick per bus cycle", dev.ticks, CyclesPerFrame)
 	}
-
-	if !frameOK {
-		return // the fingerprints of a wrong frame say nothing useful
+	if dev.offPhase != 0 {
+		t.Errorf("%d of %d ticks were taken away from a bus-cycle boundary: a device timing off the bus sees the handshake move within the cycle", dev.offPhase, dev.ticks)
 	}
-	if a, b := fingerprints["StepFrame"], fingerprints["FinishFrame"]; a != b {
-		t.Errorf("StepFrame clocked the bus at beam positions fingerprinting %#x, FinishFrame at %#x: the two paths agree on how many ticks a frame takes but not on when they happen, so a device timed off the bus behaves differently depending on which front end drives it", a, b)
+	if dev.badGaps != 0 {
+		t.Errorf("%d of %d ticks were not one bus cycle on from the tick before (the first was %d dots on, want %d): the bus was clocked the right number of times but not evenly", dev.badGaps, dev.ticks, dev.firstBadGap, DotsPerCycle)
 	}
 }

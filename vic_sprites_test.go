@@ -43,7 +43,7 @@ func TestVICSpriteSingleColorRendering(t *testing.T) {
 
 	// Advance VIC to line 55, dot 48 (start of sprite 0)
 	for v.rasterLine != 56 || v.dot != 48 {
-		v.StepDot()
+		v.StepCycle()
 	}
 
 	// Step 8 dots (pixels 0-7, byte 0 = 0xFF -> all red = color 2)
@@ -94,7 +94,7 @@ func TestVICSpriteMulticolorRendering(t *testing.T) {
 	v.control1 = 0x1B
 	v.control2 = 0x08
 	for v.rasterLine != 56 || v.dot != 48 {
-		v.StepDot()
+		v.StepCycle()
 	}
 
 	// Paint 8 dots (4 pairs of 2 dots each)
@@ -158,7 +158,7 @@ func TestVICSpriteExpansionXY(t *testing.T) {
 	// single line and every later row occupy two.
 	for line := uint16(56); line <= 59; line++ {
 		for v.rasterLine != line || v.dot != 48 {
-			v.StepDot()
+			v.StepCycle()
 		}
 		for dot := uint16(48); dot <= 51; dot++ {
 			v.dot = dot
@@ -210,7 +210,7 @@ func TestVICSpritePriority(t *testing.T) {
 	v.control1 = 0x1B
 	v.control2 = 0x08
 	for v.rasterLine != 56 || v.dot != 48 {
-		v.StepDot()
+		v.StepCycle()
 	}
 
 	red := C64Palette[2]
@@ -268,7 +268,7 @@ func TestVICSpriteSpriteCollision(t *testing.T) {
 	v.control1 = 0x1B
 	v.control2 = 0x08
 	for v.rasterLine != 56 || v.dot != 48 {
-		v.StepDot()
+		v.StepCycle()
 	}
 	v.dot = 48
 	v.paintGraphicsPixel()
@@ -308,7 +308,7 @@ func TestVICSpriteDataCollision(t *testing.T) {
 	v.control1 = 0x1B
 	v.control2 = 0x08
 	for v.rasterLine != 56 || v.dot != 48 {
-		v.StepDot()
+		v.StepCycle()
 	}
 	v.dot = 48
 	v.paintGraphicsPixel()
@@ -350,7 +350,7 @@ func TestVICSpriteXMSBForSprites1To7(t *testing.T) {
 	v.control2 = 0x08
 
 	for v.rasterLine != 56 || v.dot != 280 {
-		v.StepDot()
+		v.StepCycle()
 	}
 
 	for range 8 {
@@ -510,7 +510,7 @@ func TestVICSpriteShapeIsLatchedPerLine(t *testing.T) {
 	v.control2 = 0x08
 
 	for v.rasterLine != 56 || v.dot != 48 {
-		v.StepDot()
+		v.StepCycle()
 	}
 
 	// Pull the shape out from under the sprite mid-line, exactly as a
@@ -536,7 +536,7 @@ func TestVICSpriteShapeIsLatchedPerLine(t *testing.T) {
 	// The latch is per line, not a one-off: line 57 fetches again during
 	// line 56 and so must pick up the new, blank shape.
 	for v.rasterLine != 57 || v.dot != 48 {
-		v.StepDot()
+		v.StepCycle()
 	}
 	for range 8 {
 		v.paintGraphicsPixel()
@@ -612,11 +612,15 @@ func TestSpriteDMAPullsBALow(t *testing.T) {
 	// of that line's fetch block. Bad Line BA is confined to slots 1-43,
 	// which leaves slots 44 and up to the sprites alone.
 	for v.rasterLine != 56 || v.dot != 0 {
-		v.StepDot()
+		v.StepCycle()
 	}
 	for slot := uint16(43); slot <= 50; slot++ {
-		for v.dot != slot*8+5 {
-			v.StepDot()
+		// BA is driven by the slot's phi0low, four dots into the cycle,
+		// and nothing touches it again until the next cycle's phi0low -
+		// phi0high only copies it into AEC. Sampling at the end of the
+		// slot's cycle therefore reads the value phi0low just set.
+		for v.dot != (slot+1)*DotsPerCycle {
+			v.StepCycle()
 		}
 		want := slot < 44 || slot > 48 // BA high outside sprite 0's window
 		if v.BA != want {

@@ -27,25 +27,24 @@ func loadTestProgram() {
 	cpu.PC = 0x0800
 }
 
-// BenchmarkStepDot measures the cost of VIC.StepDot() calls (which also
-// drives the CPU via TickPhi2 every 8th dot) while executing a fixed,
-// panic-free instruction loop, to guide where further optimization
-// effort is worth spending - desktop numbers won't match TinyGo/Cortex-
-// M0+ absolute timings, but the relative proportions of work should
-// carry over.
-func BenchmarkStepDot(b *testing.B) {
+// BenchmarkStepCycle measures the cost of one bus cycle - eight dots of
+// VIC-II work plus the CPU's Phi2 - while executing a fixed, panic-free
+// instruction loop, to guide where further optimization effort is worth
+// spending. Desktop numbers won't match TinyGo/Cortex-M0+ absolute
+// timings, but the relative proportions of work should carry over.
+func BenchmarkStepCycle(b *testing.B) {
 	Reset()
 	loadTestProgram()
 
 	b.ResetTimer()
 	for range b.N {
-		vic.StepDot()
+		vic.StepCycle()
 	}
 }
 
 // BenchmarkTickPhi2 isolates just the CPU side (opcode fetch/execute),
 // bypassing the VIC-II's per-dot bookkeeping entirely, for comparison
-// against BenchmarkStepDot.
+// against BenchmarkStepCycle.
 func BenchmarkTickPhi2(b *testing.B) {
 	Reset()
 	loadTestProgram()

@@ -168,24 +168,27 @@ func TestVICSideBorderOpen40To38Trick(t *testing.T) {
 	// The left comparison at dot 48
 	// clears the main border flip-flop on the way.
 	// In 40-column mode, this comparison does not latch mainBorder.
-	for v.dot != rightComp38-1 {
-		v.StepDot()
+	for v.dot != rightComp38 {
+		v.StepCycle()
 	}
-	v.StepDot()
 	if v.mainBorder {
 		t.Fatalf("mainBorder=true at dot %d in 40-column mode, want false", rightComp38)
 	}
-	v.StepDot()
 
 	// Switch CSEL to 0 after the 38-column comparison and before the
-	// 40-column comparison.
+	// 40-column comparison. The two comparisons are one bus cycle apart
+	// and a CPU write completes at the end of a cycle, so dot 408 is
+	// where the write lands - after dotclock7 has run that dot's
+	// comparison. sampleSideBorderAtWrite sees the coincidence but takes
+	// no action on it: the 38-column path there needs rightBorderAt to be
+	// rightEdge38, and 40-column mode set it to rightEdge40 back at dot
+	// 368.
 	v.WriteRegister(0xD016, 0x00) // CSEL=0
 
 	// Since CSEL is now 0, the 40-column comparison is bypassed.
-	for v.dot != rightComp40-1 {
-		v.StepDot()
+	for v.dot != rightComp40 {
+		v.StepCycle()
 	}
-	v.StepDot()
 	if v.mainBorder {
 		t.Fatalf("mainBorder=true at dot %d with CSEL=0 trick, want false (side border opened)", rightComp40)
 	}
@@ -200,7 +203,7 @@ func TestVICSideBorderOpen40To38Trick(t *testing.T) {
 	vNormal.syncLineVisibility()
 
 	for vNormal.dot != rightComp40 {
-		vNormal.StepDot()
+		vNormal.StepCycle()
 	}
 	if !vNormal.mainBorder {
 		t.Fatalf("mainBorder=false at dot %d in normal 40-column mode, want true", rightComp40)
@@ -222,19 +225,21 @@ func TestVICSideBorderOpen38To40Trick(t *testing.T) {
 
 	// Since CSEL=1, the 38-column comparison will not trigger mainBorder.
 	for v.dot != rightComp38 {
-		v.StepDot()
+		v.StepCycle()
 	}
 	if v.mainBorder {
 		t.Fatalf("mainBorder=true at dot %d with CSEL=1, want false", rightComp38)
 	}
-	v.StepDot()
 
-	// Switch back to CSEL=0 before the 40-column comparison.
+	// Switch back to CSEL=0 before the 40-column comparison - the write
+	// lands on dot 408, the last dot of its cycle, which is after that
+	// dot's comparison has run and is inert for the same reason as in
+	// TestVICSideBorderOpen40To38Trick.
 	v.WriteRegister(0xD016, 0x00) // CSEL=0 (38 cols)
 
 	// Since CSEL=0, the 40-column comparison will not trigger it either.
 	for v.dot != rightComp40 {
-		v.StepDot()
+		v.StepCycle()
 	}
 	if v.mainBorder {
 		t.Fatalf("mainBorder=true at dot %d with CSEL=0, want false (side border opened)", rightComp40)
@@ -301,7 +306,9 @@ func TestVICSideBorderWriteAtCompareDot(t *testing.T) {
 	v.syncLineVisibility()
 	v.dot = leftComp40 - 1
 
-	v.StepDot() // reaches the 40-column left compare with CSEL still clear
+	// dotclock7 is the phase that owns the 40-column left comparison, so
+	// run just that one rather than a whole cycle around it.
+	v.dotclock7() // reaches the 40-column left compare with CSEL still clear
 	if !v.mainBorder {
 		t.Fatal("mainBorder=false before same-dot register write")
 	}
