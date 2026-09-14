@@ -2,25 +2,40 @@
 
 package tiny64
 
-const visibleFrameOffset = FirstVisibleLine * VisibleDotsPerLine * 4
+// This sink is the indexed one with the pixel write reached through a
+// function value rather than called directly, so the cost of that
+// indirection can be measured against it.
 
-var frameBufferRGBA [VisibleDotsPerLine * RasterLinesPerFrame * 4]byte
+const visibleFrameOffset = FirstVisibleLine * VisibleDotsPerLine
 
-var writePixelToBuffer = writePixelToRGBA
+var frameBufferIndexed [VisibleDotsPerLine * RasterLinesPerFrame]byte
 
-// FrameBufferRGBA returns the current visible frame in row-major RGBA order.
+var writePixelToBuffer = writePixelToIndexed
+
+// FrameBufferIndexed returns the current visible frame in row-major order,
+// one C64Palette index per pixel.
+func FrameBufferIndexed() []byte {
+	return frameBufferIndexed[visibleFrameOffset : visibleFrameOffset+VisibleDotsPerLine*VisibleLines]
+}
+
+var frameBufferRGBAExpanded [VisibleDotsPerLine * VisibleLines * 4]byte
+
+// FrameBufferRGBA expands the current visible frame into row-major RGBA
+// order. The buffer is a snapshot taken at the moment of the call, not a
+// live view of the frame being drawn.
 func FrameBufferRGBA() []byte {
-	return frameBufferRGBA[visibleFrameOffset : visibleFrameOffset+VisibleDotsPerLine*VisibleLines*4]
+	for i, colorIndex := range FrameBufferIndexed() {
+		copy(frameBufferRGBAExpanded[i*4:i*4+4], C64Palette[colorIndex&0x0f][:])
+	}
+	return frameBufferRGBAExpanded[:]
 }
 
 // ClearFrameBuffer blanks the whole frame, including the parts of it
 // outside the visible picture.
 func ClearFrameBuffer() {
-	clear(frameBufferRGBA[:])
+	clear(frameBufferIndexed[:])
 }
 
-func writePixelToRGBA(x, y uint16, colorIndex byte) {
-	const stride = VisibleDotsPerLine * 4
-	idx := int(y)*stride + int(x)*4
-	copy(frameBufferRGBA[idx:idx+4], C64Palette[colorIndex&0x0f][:])
+func writePixelToIndexed(x, y uint16, colorIndex byte) {
+	frameBufferIndexed[int(y)*VisibleDotsPerLine+int(x)] = colorIndex & 0x0f
 }

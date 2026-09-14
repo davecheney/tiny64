@@ -1,5 +1,3 @@
-//go:build paletted
-
 package desktop
 
 import (

@@ -1,12 +1,12 @@
-//go:build !tinygo && !headless && !pixelsink_func && paletted
+//go:build !tinygo && !headless && !pixelsink_func
 
 package tiny64
 
 // This sink stores what the VIC-II actually produces: a four bit colour
 // index per pixel. Expanding those indices into RGBA is the display's job,
 // and on the desktop the GPU does it (see cmd/internal/desktop), so the
-// frame buffer is a quarter the size of the RGBA one and a pixel write is
-// a single byte store rather than a four byte copy.
+// frame buffer is a quarter the size of a RGBA one and a pixel write is a
+// single byte store rather than a four byte copy.
 
 const visibleFrameOffset = FirstVisibleLine * VisibleDotsPerLine
 
