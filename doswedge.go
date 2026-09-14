@@ -68,17 +68,18 @@ type wedgeFixup struct {
 }
 
 type wedgeAssembler struct {
+	origin uint16
 	code   []byte
 	labels map[string]uint16
 	fixups []wedgeFixup
 }
 
-func newWedgeAssembler() *wedgeAssembler {
-	return &wedgeAssembler{labels: make(map[string]uint16)}
+func newWedgeAssembler(origin uint16) *wedgeAssembler {
+	return &wedgeAssembler{origin: origin, labels: make(map[string]uint16)}
 }
 
 func (a *wedgeAssembler) pc() uint16 {
-	return dosWedgeOrigin + uint16(len(a.code))
+	return a.origin + uint16(len(a.code))
 }
 
 func (a *wedgeAssembler) label(name string) {
@@ -93,9 +94,18 @@ func (a *wedgeAssembler) abs(op byte, addr uint16) {
 	a.emit(op, byte(addr), byte(addr>>8))
 }
 
-func (a *wedgeAssembler) ref(op byte, label string) {
-	a.emit(op, 0, 0)
+// refWord emits a two-byte little-endian address slot for finish to fill
+// in once the label is known. The cartridge header's reset and NMI vectors
+// are bare addresses rather than instruction operands, so they need this
+// rather than ref.
+func (a *wedgeAssembler) refWord(label string) {
+	a.emit(0, 0)
 	a.fixups = append(a.fixups, wedgeFixup{at: len(a.code) - 2, label: label})
+}
+
+func (a *wedgeAssembler) ref(op byte, label string) {
+	a.emit(op)
+	a.refWord(label)
 }
 
 func (a *wedgeAssembler) padTo(addr uint16) {
@@ -116,7 +126,7 @@ func (a *wedgeAssembler) finish() []byte {
 			panic("unknown DOS wedge label: " + fixup.label)
 		}
 		if fixup.branch {
-			next := dosWedgeOrigin + uint16(fixup.at+1)
+			next := a.origin + uint16(fixup.at+1)
 			offset := int(target) - int(next)
 			if offset < -128 || offset > 127 {
 				panic("DOS wedge branch out of range: " + fixup.label)
@@ -131,26 +141,22 @@ func (a *wedgeAssembler) finish() []byte {
 }
 
 func buildDOSWedge() []byte {
-	a := newWedgeAssembler()
+	a := newWedgeAssembler(dosWedgeOrigin)
 
 	// BASIC jumps through $0302 immediately before reading each direct-mode
 	// line. The wrapper keeps that behavior, but gets first look at the line
 	// after the screen editor returns.
 	a.label("entry")
-	a.abs(0xAD, 0) // patched below: LDA bannerPending
-	bannerLoad := len(a.code) - 2
+	a.ref(0xAD, "bannerPending") // LDA bannerPending
 	a.branch(0xF0, "afterBanner")
-	a.emit(0xA9, 0x00) // LDA #0
-	a.abs(0x8D, 0)     // patched below: STA bannerPending
-	bannerStore := len(a.code) - 2
+	a.emit(0xA9, 0x00)           // LDA #0
+	a.ref(0x8D, "bannerPending") // STA bannerPending
 	a.ref(0x20, "printBanner")
 	a.label("afterBanner")
-	a.abs(0xAD, 0) // patched below: LDA restorePending
-	restoreLoad := len(a.code) - 2
+	a.ref(0xAD, "restorePending") // LDA restorePending
 	a.branch(0xF0, "readLine")
-	a.emit(0xA9, 0x00) // LDA #0
-	a.abs(0x8D, 0)     // patched below: STA restorePending
-	restoreStore := len(a.code) - 2
+	a.emit(0xA9, 0x00)            // LDA #0
+	a.ref(0x8D, "restorePending") // STA restorePending
 	a.ref(0x20, "restoreProgram")
 
 	a.label("readLine")
@@ -412,8 +418,7 @@ func buildDOSWedge() []byte {
 	a.emit(0xA9, 0x04, 0x85, 0x2C)
 	a.abs(0x20, basicRelink)
 	a.emit(0xA9, 0x01)
-	a.abs(0x8D, 0) // patched below: STA restorePending
-	directoryPendingStore := len(a.code) - 2
+	a.ref(0x8D, "restorePending") // STA restorePending
 	a.emit(0xA2, 0x00)
 	a.label("copyList")
 	a.ref(0xBD, "listCommand")
@@ -562,17 +567,6 @@ func buildDOSWedge() []byte {
 	a.emit(0x60)
 
 	program := a.finish()
-	patchWord := func(at int, label string) {
-		addr := a.labels[label]
-		program[at] = byte(addr)
-		program[at+1] = byte(addr >> 8)
-	}
-	patchWord(bannerLoad, "bannerPending")
-	patchWord(bannerStore, "bannerPending")
-	patchWord(restoreLoad, "restorePending")
-	patchWord(restoreStore, "restorePending")
-	patchWord(directoryPendingStore, "restorePending")
-
 	if len(program) > 0x1000 {
 		panic("DOS wedge exceeds $C000-$CFFF")
 	}
