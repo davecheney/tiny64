@@ -21,6 +21,12 @@ func plaLoad(addr uint16) uint8 {
 	loram, hiram, charen := cpu.bankBits()
 
 	switch {
+	case addr >= 0x8000 && addr <= 0x9FFF && cartridge.eightK() && cartridge.ROML && loram && hiram:
+		// An 8K cartridge's /ROML image. The PLA only asserts /ROML when
+		// both LORAM and HIRAM are high, which is why software banks a
+		// cartridge out by clearing LORAM rather than by anything the
+		// cartridge itself provides.
+		return cartridge.ROM[addr-0x8000]
 	case addr >= 0xA000 && addr <= 0xBFFF && loram && hiram:
 		return rom.Basic[addr-0xA000]
 	case addr >= 0xD000 && addr <= 0xDFFF && (loram || hiram):
@@ -42,7 +48,11 @@ func plaLoad(addr uint16) uint8 {
 // plaStore writes addr through the memory map currently selected by the
 // CPU's bank-switching lines. RAM is always writable underneath BASIC/
 // KERNAL ROM; character ROM is read-only (RAM is disabled behind it), and
-// I/O is dispatched to whichever chip is selected.
+// I/O is dispatched to whichever chip is selected. Cartridge ROM is not a
+// case here for the same reason: a ROM chip cannot be written, and the PLA
+// leaves the RAM underneath it enabled for writes. That is what lets the
+// KERNAL's RAMTAS find a cartridge - it writes $55, reads the ROM byte
+// back instead, and stops its memory walk there.
 func plaStore(addr uint16, val uint8) {
 	loram, hiram, charen := cpu.bankBits()
 
