@@ -22,7 +22,6 @@ func saveMachine(t *testing.T) {
 	savedRAM, savedColorRAM := ram, colorRAM
 	savedDisk := diskImage
 	savedVirtualDriveAttached := virtualDriveAttached
-	savedDOSWedge := dosWedge
 	// The bus is its own state, not a shadow of virtualDriveAttached: a
 	// peripheral can sit on it without setting that flag at all. Snapshot
 	// the slice header and its contents, since a test may replace an
@@ -34,7 +33,6 @@ func saveMachine(t *testing.T) {
 		ram, colorRAM = savedRAM, savedColorRAM
 		InsertDisk(savedDisk)
 		virtualDriveAttached = savedVirtualDriveAttached
-		dosWedge = savedDOSWedge
 		// Last, because InsertDisk above attaches the virtual drive of
 		// its own.
 		iecBus = savedBus
