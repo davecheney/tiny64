@@ -7,7 +7,7 @@ import (
 // TestVICSpriteSingleColorRendering verifies that a single-color sprite
 // draws at the configured X/Y position with the individual sprite color.
 func TestVICSpriteSingleColorRendering(t *testing.T) {
-	clearFrameBufferRGBA()
+	ClearFrameBuffer()
 
 	v := &VICII{}
 	v.Reset()
@@ -67,7 +67,7 @@ func TestVICSpriteSingleColorRendering(t *testing.T) {
 // TestVICSpriteMulticolorRendering verifies multicolor sprite bit pairs:
 // 01 -> Extra Color 0 ($D025), 10 -> Sprite Color ($D027), 11 -> Extra Color 1 ($D026).
 func TestVICSpriteMulticolorRendering(t *testing.T) {
-	clearFrameBufferRGBA()
+	ClearFrameBuffer()
 
 	v := &VICII{}
 	v.Reset()
@@ -213,10 +213,8 @@ func TestVICSpritePriority(t *testing.T) {
 		v.StepDot()
 	}
 
-	buf := FrameBufferRGBA()
 	red := C64Palette[2]
 	white := C64Palette[1]
-	idx := (int(56-FirstVisibleLine)*VisibleDotsPerLine + 48) * 4
 
 	// Test 1: Priority = 0 (sprite in front of graphics). Sprite (Red) shows over foreground graphics (White).
 	v.WriteRegister(0xD01B, 0x00)
@@ -224,7 +222,7 @@ func TestVICSpritePriority(t *testing.T) {
 	v.videoBuffer = 0x0100 // color 1 (White)
 	v.dot = 48
 	v.paintGraphicsPixel()
-	if got := [4]byte{buf[idx], buf[idx+1], buf[idx+2], buf[idx+3]}; got != red {
+	if got := [4]byte(frameBufferPixelRGBA(48, 56)); got != red {
 		t.Errorf("priority=0 sprite pixel over foreground = %v, want Red %v", got, red)
 	}
 
@@ -234,7 +232,7 @@ func TestVICSpritePriority(t *testing.T) {
 	v.videoBuffer = 0x0100 // color 1 (White)
 	v.dot = 48
 	v.paintGraphicsPixel()
-	if got := [4]byte{buf[idx], buf[idx+1], buf[idx+2], buf[idx+3]}; got != white {
+	if got := [4]byte(frameBufferPixelRGBA(48, 56)); got != white {
 		t.Errorf("priority=1 sprite pixel under foreground = %v, want White %v", got, white)
 	}
 
@@ -243,7 +241,7 @@ func TestVICSpritePriority(t *testing.T) {
 	v.gdSequencer = 0x00 // background graphics pixel
 	v.dot = 48
 	v.paintGraphicsPixel()
-	if got := [4]byte{buf[idx], buf[idx+1], buf[idx+2], buf[idx+3]}; got != red {
+	if got := [4]byte(frameBufferPixelRGBA(48, 56)); got != red {
 		t.Errorf("priority=1 sprite pixel over background = %v, want Red %v", got, red)
 	}
 }
@@ -330,7 +328,7 @@ func TestVICSpriteDataCollision(t *testing.T) {
 // TestVICSpriteXMSBForSprites1To7 verifies that setting bit i in $D010 places
 // sprite i (1..7) at X = x + 256 rather than scaling by 2^i.
 func TestVICSpriteXMSBForSprites1To7(t *testing.T) {
-	clearFrameBufferRGBA()
+	ClearFrameBuffer()
 
 	v := &VICII{}
 	v.Reset()
@@ -372,7 +370,7 @@ func TestVICSpriteXMSBForSprites1To7(t *testing.T) {
 }
 
 func TestVICWrappedSpritesFillLeftBorderBlock(t *testing.T) {
-	clearFrameBufferRGBA()
+	ClearFrameBuffer()
 
 	v := &VICII{
 		dot:           0,
@@ -493,7 +491,7 @@ func TestVICSpriteDMATriggerIsOneShot(t *testing.T) {
 // is still being drawn, so a VIC that re-read the pointer per pixel would
 // switch shape mid-line and truncate the sprite.
 func TestVICSpriteShapeIsLatchedPerLine(t *testing.T) {
-	clearFrameBufferRGBA()
+	ClearFrameBuffer()
 
 	v := &VICII{}
 	v.Reset()

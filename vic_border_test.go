@@ -10,7 +10,7 @@ import "testing"
 // at real X coordinate $18 (24) on the left and $158 (344) on the right.
 func TestVICBorderPlacement(t *testing.T) {
 	v := &VICII{}
-	clearFrameBufferRGBA()
+	ClearFrameBuffer()
 	v.Reset()
 
 	v.WriteRegister(0xD020, 0x0E) // border: light blue (14)
@@ -104,7 +104,7 @@ func TestVICBorderColorWriteSamplesCurrentPhi2Span(t *testing.T) {
 func TestVICGAccessPixelAlignment(t *testing.T) {
 	v := &VICII{}
 	const targetRow = 52 // within the first Bad Line's row (raster $33-$3A)
-	clearFrameBufferRGBA()
+	ClearFrameBuffer()
 	v.Reset()
 
 	v.WriteRegister(0xD020, 0x0E) // border: light blue (14)

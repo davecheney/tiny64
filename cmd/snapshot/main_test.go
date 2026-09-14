@@ -66,7 +66,7 @@ func TestLoadInputSelectsFirstPRG(t *testing.T) {
 }
 
 func TestCaptureBounds(t *testing.T) {
-	fb := tiny64.FrameBufferRGBA()
+	fb := make([]byte, tiny64.VisibleDotsPerLine*tiny64.VisibleLines*4)
 	for y := range tiny64.VisibleLines {
 		for x := range tiny64.VisibleDotsPerLine {
 			i := (y*tiny64.VisibleDotsPerLine + x) * 4
@@ -74,11 +74,11 @@ func TestCaptureBounds(t *testing.T) {
 		}
 	}
 
-	full := capture(borderBounds)
+	full := capture(fb, borderBounds)
 	if got := full.Bounds(); got != imageRect(405, 284) {
 		t.Fatalf("border bounds = %v", got)
 	}
-	cropped := capture(activeBounds)
+	cropped := capture(fb, activeBounds)
 	if got := cropped.Bounds(); got != imageRect(320, 200) {
 		t.Fatalf("crop bounds = %v", got)
 	}

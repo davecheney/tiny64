@@ -13,6 +13,12 @@ func FrameBufferRGBA() []byte {
 	return frameBufferRGBA[visibleFrameOffset : visibleFrameOffset+VisibleDotsPerLine*VisibleLines*4]
 }
 
+// ClearFrameBuffer blanks the whole frame, including the parts of it
+// outside the visible picture.
+func ClearFrameBuffer() {
+	clear(frameBufferRGBA[:])
+}
+
 func writePixelToRGBA(x, y uint16, colorIndex byte) {
 	const stride = VisibleDotsPerLine * 4
 	idx := int(y)*stride + int(x)*4

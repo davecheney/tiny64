@@ -41,10 +41,6 @@ func saveMachine(t *testing.T) {
 	})
 }
 
-func clearFrameBufferRGBA() {
-	clear(FrameBufferRGBA())
-}
-
 func frameBufferPixelRGBA(x, y uint16) []byte {
 	const stride = VisibleDotsPerLine * 4
 	idx := int(y-FirstVisibleLine)*stride + int(x)*4
@@ -85,7 +81,7 @@ func newMachine(t *testing.T) *machine {
 		ram[i] = 0
 	}
 	colorRAM = [1024]byte{}
-	clearFrameBufferRGBA()
+	ClearFrameBuffer()
 	Reset()
 	return &machine{t: t}
 }
