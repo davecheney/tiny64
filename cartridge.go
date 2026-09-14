@@ -17,9 +17,22 @@ var cartridge Cartridge
 // the way the DiSTestMAX build instructions describe: /GAME low, /EXROM
 // high or floating. This overrides the CPU's LORAM/HIRAM/CHAREN banking
 // entirely on real hardware, but for now tiny64 only special-cases the
-// $E000-$FFFF KERNAL area (see plaLoad).
+// $E000-$FFFF KERNAL area (see plaLoad). The other two things MAX mode
+// does - mapping /ROML at $8000-$9FFF and disabling RAM above $1000 - are
+// not modeled, because no cartridge tiny64 runs in MAX mode populates
+// /ROML or reads RAM up there.
 func (c *Cartridge) ultimax() bool {
 	return c.Game && !c.Exrom
+}
+
+// eightK reports whether the cartridge is wired the way an ordinary 8K
+// cartridge is: /EXROM pulled low (asserted), /GAME left floating. The PLA
+// then maps the /ROML image at $8000-$9FFF whenever the CPU is driving
+// LORAM and HIRAM high, which is the state IOINIT leaves the CPU port in -
+// so such a cartridge stays visible for a whole session rather than only
+// while its own startup code runs.
+func (c *Cartridge) eightK() bool {
+	return c.Exrom && !c.Game
 }
 
 // Insert plugs a cartridge into the expansion port. rom is the raw ROM
