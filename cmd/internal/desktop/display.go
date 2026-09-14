@@ -1,5 +1,3 @@
-//go:build paletted
-
 package desktop
 
 import (
@@ -22,8 +20,8 @@ const (
 )
 
 // display hands the GPU one byte per pixel and lets the shader turn those
-// palette indices into colours. The frame buffer, the upload, and the
-// texture are all a quarter of the size of their RGBA equivalents.
+// palette indices into colours, which keeps the frame buffer, the upload
+// and the texture to a quarter of the size of their RGBA equivalents.
 type display struct {
 	shader   *ebiten.Shader
 	frame    *ebiten.Image
