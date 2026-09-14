@@ -1,4 +1,4 @@
-//go:build !tinygo && !headless && !pixelsink_func
+//go:build !tinygo && !headless && !pixelsink_func && !paletted
 
 package tiny64
 
