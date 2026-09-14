@@ -152,6 +152,34 @@ IEC and KERNAL `LOAD` path. The compact device serves the PRG directly rather
 than allocating a full 175KB D64 image, which would not fit alongside the
 Tufty's 320x240 framebuffer in RP2040 RAM.
 
+## Paletted frame buffer (experimental)
+
+The VIC-II produces a four bit colour index per pixel; the default desktop
+build expands each one into RGBA as it is drawn, so a frame costs 405x312x4
+bytes of RAM and a 460KB upload to the GPU every frame.
+
+Building with `-tags paletted` keeps the indices instead, and hands the
+expansion to a Kage shader:
+
+    go run -tags paletted ./cmd/c64
+
+The frame buffer becomes one byte per pixel, and four horizontally adjacent
+pixels are packed into the RGBA channels of a single texel, so the texture
+uploaded each frame is a quarter of the picture's width: 116KB rather than
+460KB. `cmd/internal/desktop/palette.kage` unpacks a pixel's lane out of the
+texel covering it and looks the colour up in the palette, which the shader
+holds as a uniform.
+
+The two paths are pixel for pixel identical — a screen grab of the boot
+screen is byte identical either way — and emulation speed is unchanged;
+what this buys is a quarter of the memory and a quarter of the bandwidth,
+which is the shape the TinyGo targets already have to live in.
+
+Under this tag `FrameBufferRGBA` still expands a frame for the callers that
+want whole pixels on the CPU (the tests, `cmd/snapshot`), but what it
+returns is a snapshot taken at the moment of the call rather than a live
+view of the frame being drawn.
+
 ## Status
 
 This is a work in progress. See `docs/` for the reference material used
