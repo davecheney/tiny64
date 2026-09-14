@@ -1,129 +1,10 @@
 package tiny64
 
-import (
-	"reflect"
-	"testing"
-)
+import "testing"
 
-// stepFrame runs the VIC-II for exactly one full PAL frame's worth of dots.
+// stepFrame runs the VIC-II for exactly one full PAL frame.
 func stepFrame(v *VICII) {
 	v.StepFrame()
-}
-
-// TestVICStepFrameMatchesStepDot pins down the unrolled frame loop:
-// StepFrame decides which dot of a bus cycle carries Phi1 and which
-// carries Phi2 from its position in stepCycle rather than from dot&7, so
-// it must produce exactly the same machine state, and exactly the same
-// pixels, as driving the same number of dots one at a time through
-// StepDot.
-//
-// The test vector is a frame of a machine already booted to the BASIC
-// prompt, not a freshly reset one: during the first frame after reset the
-// KERNAL hasn't set DEN yet, so there are no Bad Lines, no c- or
-// g-accesses, and every pixel is border - which any arrangement of
-// stepCycle would reproduce.
-func TestVICStepFrameMatchesStepDot(t *testing.T) {
-	m := newMachine(t)
-	m.waitForLine(5, "READY.")
-
-	// Snapshot the booted machine so both runs start from bit-identical
-	// state, rather than booting twice and trusting that to be
-	// reproducible.
-	savedCPU, savedVIC := cpu, vic
-	savedCIA1, savedCIA2 := cia1, cia2
-	savedKeyboard := keyboard
-	savedRAM, savedColorRAM := ram, colorRAM
-
-	run := func(startVIC VICII, step func()) (VICII, CPU, []byte) {
-		cpu, vic = savedCPU, startVIC
-		cia1, cia2 = savedCIA1, savedCIA2
-		keyboard = savedKeyboard
-		ram, colorRAM = savedRAM, savedColorRAM
-
-		ClearFrameBuffer()
-		step()
-
-		gotVIC, gotCPU := vic, cpu
-		return gotVIC, gotCPU, append([]byte(nil), FrameBufferRGBA()...)
-	}
-
-	// StepDot must select the implementation for the next dot from every
-	// possible current phase, including both bus hand-off phases.
-	for phase := uint16(0); phase < DotsPerCycle; phase++ {
-		startVIC := savedVIC
-		startVIC.dot = startVIC.dot&^7 | phase
-
-		gotVIC, gotCPU, gotPixels := run(startVIC, func() { vic.StepDot() })
-		wantVIC, wantCPU, wantPixels := run(startVIC, func() {
-			switch phase {
-			case 0:
-				vic.dotclock0()
-			case 1:
-				vic.dotclock1()
-			case 2:
-				vic.dotclock2()
-			case 3:
-				vic.dotclock3()
-				vic.phi0low()
-			case 4:
-				vic.dotclock4()
-			case 5:
-				vic.dotclock5()
-			case 6:
-				vic.dotclock6()
-			case 7:
-				vic.dotclock7()
-				vic.phi0high()
-				cpu.TickPhi2()
-			}
-		})
-
-		if !reflect.DeepEqual(gotVIC, wantVIC) ||
-			!reflect.DeepEqual(gotCPU, wantCPU) ||
-			!reflect.DeepEqual(gotPixels, wantPixels) {
-			t.Errorf("StepDot from phase %d did not match dotclock%d and its bus action", phase, phase)
-		}
-	}
-
-	frameVIC, frameCPU, framePixels := run(savedVIC, func() { vic.StepFrame() })
-	dotVIC, dotCPU, dotPixels := run(savedVIC, func() {
-		for range DotsPerFrame {
-			vic.StepDot()
-		}
-	})
-
-	// Guard against the comparison below passing on a vector that can't
-	// tell the two apart: a live display paints more than one colour, and
-	// only reaches the second one via a Bad Line's c- and g-accesses.
-	colors := map[[4]byte]bool{}
-	for i := 0; i < len(framePixels); i += 4 {
-		color := [4]byte(framePixels[i : i+4])
-		if color[3] != 0 {
-			colors[color] = true
-		}
-	}
-	if len(colors) < 2 {
-		t.Fatalf("frame painted %d distinct colours, want at least 2 (the display isn't active, so this proves nothing)", len(colors))
-	}
-
-	if !reflect.DeepEqual(frameVIC, dotVIC) {
-		t.Errorf("VIC state after StepFrame differs from %d StepDot calls:\n StepFrame: %+v\n   StepDot: %+v",
-			DotsPerFrame, frameVIC, dotVIC)
-	}
-	if !reflect.DeepEqual(frameCPU, dotCPU) {
-		t.Errorf("CPU state after StepFrame differs from %d StepDot calls:\n StepFrame: %+v\n   StepDot: %+v",
-			DotsPerFrame, frameCPU, dotCPU)
-	}
-	if len(framePixels) != len(dotPixels) {
-		t.Fatalf("StepFrame emitted %d pixels, %d StepDot calls emitted %d",
-			len(framePixels), DotsPerFrame, len(dotPixels))
-	}
-	for i := range framePixels {
-		if framePixels[i] != dotPixels[i] {
-			t.Fatalf("pixel %d: StepFrame emitted %+v, StepDot emitted %+v",
-				i, framePixels[i], dotPixels[i])
-		}
-	}
 }
 
 // TestVICResetIsIdle checks that Reset() puts the video logic in idle
@@ -207,26 +88,6 @@ func TestVICStaysIdleWithoutDEN(t *testing.T) {
 	}
 }
 
-func TestVICFinishFrameAdvancesToNextFrameBoundary(t *testing.T) {
-	v := &VICII{}
-	v.Reset()
-
-	v.dot = 123
-	v.rasterLine = 45
-	// Moving the beam directly bypasses dotclock7's line wrap, which is
-	// what normally keeps the cached visibility flags in step with rasterLine.
-	v.syncLineVisibility()
-	v.FinishFrame()
-	if v.dot != 0 || v.rasterLine != 0 {
-		t.Fatalf("after FinishFrame from mid-frame, dot=%d raster=%d, want top of frame", v.dot, v.rasterLine)
-	}
-
-	v.FinishFrame()
-	if v.dot != 0 || v.rasterLine != 0 {
-		t.Fatalf("after FinishFrame from frame boundary, dot=%d raster=%d, want next frame boundary", v.dot, v.rasterLine)
-	}
-}
-
 // TestVICBadLineEntersDisplayState checks that setting DEN produces a Bad
 // Line Condition at raster $33 (with YSCROLL=3), which flips the video
 // logic into display state and starts advancing RC; that Bad Lines recur
@@ -240,12 +101,13 @@ func TestVICBadLineEntersDisplayState(t *testing.T) {
 	v.control1 = 0x13 // DEN=1, YSCROLL=3, RSEL=0
 
 	// Steps into the next raster line, far enough that its first phi0low
-	// (on dot 4, since bus cycles aren't phase-aligned to dot 0) has run
-	// and evaluated the Bad Line Condition.
+	// (four dots into the cycle) has run and evaluated the Bad Line
+	// Condition. That is true as soon as the line's first whole cycle
+	// has been stepped.
 	stepLine := func() {
 		startLine := v.rasterLine
-		for v.rasterLine == startLine || v.dot < 4 {
-			v.StepDot()
+		for v.rasterLine == startLine || v.dot < DotsPerCycle {
+			v.StepCycle()
 		}
 	}
 
@@ -253,7 +115,7 @@ func TestVICBadLineEntersDisplayState(t *testing.T) {
 	// low 3 bits match YSCROLL=3 once allowBadLine has latched (which
 	// happens at the end of raster line $30, per section 3.5).
 	for v.rasterLine != 0x32 || v.dot != 0 {
-		v.StepDot()
+		v.StepCycle()
 	}
 	if !v.idle {
 		t.Fatalf("idle = false before raster $33, want true")
@@ -285,7 +147,7 @@ func TestVICBadLineEntersDisplayState(t *testing.T) {
 	// $F7), no more Bad Lines occur and the video logic must return to
 	// idle state instead of staying stuck in display state forever.
 	for v.rasterLine <= badLineRasterEnd {
-		v.StepDot()
+		v.StepCycle()
 	}
 	if !v.idle {
 		t.Errorf("idle = false past raster $F7, want true (no more Bad Lines can occur)")
@@ -305,11 +167,11 @@ func TestVICGAccessCountPerRow(t *testing.T) {
 
 	// Run to the start of the first Bad Line's row ($33).
 	for v.rasterLine != 0x33 || v.dot != 0 {
-		v.StepDot()
+		v.StepCycle()
 	}
 	vcBefore := v.VC
 	for v.rasterLine == 0x33 {
-		v.StepDot()
+		v.StepCycle()
 	}
 	if got := v.VC - vcBefore; got != 40 {
 		t.Errorf("VC advanced by %d across one Bad Line row, want 40", got)
@@ -336,9 +198,8 @@ func TestVICVideoMatrixAddress(t *testing.T) {
 	}
 
 	maxVC := uint16(0)
-	const dotsPerFrame = DotsPerLine * RasterLinesPerFrame
-	for range dotsPerFrame {
-		v.StepDot()
+	for range CyclesPerFrame {
+		v.StepCycle()
 		if v.VC > maxVC {
 			maxVC = v.VC
 		}
@@ -361,7 +222,7 @@ func TestVICRasterIRQ(t *testing.T) {
 
 	// Step lines until line 50 is reached.
 	for v.rasterLine != 50 {
-		v.StepDot()
+		v.StepCycle()
 	}
 
 	if !v.IRQ {
@@ -433,21 +294,23 @@ func TestVICRasterLineZeroIRQTriggersInCycleTwo(t *testing.T) {
 	v := &VICII{}
 	v.Reset()
 	v.rasterLine = RasterLinesPerFrame - 1
-	v.dot = DotsPerLine - 1
+	// The last whole cycle of the last line of the frame, so the cycle
+	// stepped below is the one that wraps the beam to line 0 - cycle 1 of
+	// the new frame.
+	v.dot = DotsPerLine - DotsPerCycle
 
-	v.dotclock7()
+	v.StepCycle()
+	if v.rasterLine != 0 || v.dot != 0 {
+		t.Fatalf("dot=%d raster=%d after the wrapping cycle, want the top of the frame", v.dot, v.rasterLine)
+	}
 	if v.interruptStatus&0x01 != 0 {
 		t.Fatal("line-zero raster IRQ triggered in cycle 1")
 	}
 
-	for range DotsPerCycle - 1 {
-		v.StepDot()
+	v.StepCycle()
+	if v.dot != DotsPerCycle {
+		t.Fatalf("dot=%d after cycle 2, want %d", v.dot, DotsPerCycle)
 	}
-	if v.interruptStatus&0x01 != 0 {
-		t.Fatal("line-zero raster IRQ triggered before cycle 2")
-	}
-
-	v.StepDot()
 	if v.interruptStatus&0x01 == 0 {
 		t.Fatal("line-zero raster IRQ did not trigger in cycle 2")
 	}
@@ -478,8 +341,8 @@ func TestVICRasterIRQReachesCPU(t *testing.T) {
 	vic.WriteRegister(0xD012, 2)
 	vic.WriteRegister(0xD01A, 0x01)
 
-	for i := 0; i < DotsPerLine*4 && ram[0x0010] == 0; i++ {
-		vic.StepDot()
+	for i := 0; i < CyclesPerLine*4 && ram[0x0010] == 0; i++ {
+		vic.StepCycle()
 	}
 
 	if ram[0x0010] == 0 {

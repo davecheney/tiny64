@@ -674,65 +674,15 @@ func (v *VICII) ReadRegister(addr uint16) uint8 {
 	return 0xFF
 }
 
-func (v *VICII) StepDot() {
-	// Compute the next pixel with the implementation for its phase. The
-	// phase is derived from the current beam position so StepDot remains
-	// correct when called from any point within a bus cycle.
-	//
-	// dotclock0 through dotclock6 carry no vblank test of their own: their
-	// caller owns it, because stepCycle can answer it once per cycle for
-	// all of them at a time. dotclock7 still tests itself, because its
-	// line wrap is what changes the answer. On a blanked line there is
-	// nothing to paint, so the beam just advances.
-	if v.lineVisible || v.dot&7 == 7 {
-		switch v.dot & 7 {
-		case 0:
-			v.dotclock0()
-		case 1:
-			v.dotclock1()
-		case 2:
-			v.dotclock2()
-		case 3:
-			v.dotclock3()
-		case 4:
-			v.dotclock4()
-		case 5:
-			v.dotclock5()
-		case 6:
-			v.dotclock6()
-		case 7:
-			v.dotclock7()
-		}
-	} else {
-		v.dot++
-		v.advanceGraphicsData()
-	}
-
-	// Every 8 dots represents 1 full CPU cycle (Phi1 + Phi2). The
-	// cycle boundary sits 4 dots off dot=0 (the chip's bus cycles aren't
-	// phase-aligned to the left edge of the picture), so phi0low lands on
-	// dot&7==4 and phi0high, 4 dots later, on the next dot&7==0.
-	switch v.dot & 7 {
-	case 4:
-		v.phi0low()
-	case 0:
-		v.phi0high()
-		cpu.TickPhi2()
-		iecTick()
-	}
-}
-
 // StepFrame advances the VIC-II, and therefore the rest of the machine it
 // clocks, by exactly one PAL frame: CyclesPerFrame bus cycles, each of
-// which is stepCycle's DotsPerCycle dots. This is a relative step: if
-// StepFrame is interleaved with StepDot, it preserves the current beam
-// phase and lands one frame later at the same dot/raster position rather
-// than synchronizing to the next frame boundary.
+// which is stepCycle's DotsPerCycle dots. This is a relative step: it
+// lands one frame later at whatever dot and raster position it started
+// from, rather than synchronizing to the next frame boundary.
 //
-// It assumes the beam sits on a bus-cycle boundary (dot divisible by
-// DotsPerCycle) on entry, which is where Reset and FinishFrame both leave
-// it. Callers that interleave StepDot must return to a cycle boundary
-// before using this optimized frame path.
+// Reset leaves the beam on a bus-cycle boundary and stepCycle keeps it
+// there, so that position is always a multiple of DotsPerCycle unless a
+// caller has assigned to dot itself.
 //
 // Earlier attempts at this loop regressed on the Gopher Badge and are
 // recorded in stepCycle's comment; this shape (a single flat loop calling
@@ -746,7 +696,16 @@ func (v *VICII) StepFrame() {
 
 // stepCycle advances the beam by exactly one bus cycle: DotsPerCycle
 // dots, with the VIC-II's own Phi1 accesses on the 4th and the CPU's Phi2
-// on the 8th (see StepDot).
+// on the 8th.
+//
+// It is the only way the machine advances. That is not just tidiness: the
+// CPU reaches the VIC solely through a store, and a store only completes
+// in TickPhi2 at the very end of this function, so nothing outside the
+// chip can observe or change it between the first dot of a cycle and the
+// last. A per-dot entry point would therefore expose no state a caller
+// could act on, which is why the one that used to exist - StepDot, an
+// 8-way dispatch on dot&7 so a cycle could be resumed from any phase - is
+// gone.
 //
 // Two earlier attempts at a per-cycle helper regressed on the Gopher
 // Badge, both while calling the single shared dotclock 8 times:
@@ -759,7 +718,7 @@ func (v *VICII) StepFrame() {
 //     threshold, turning each call into a real BL/BX into a 352-byte
 //     function.
 //
-// Both regressions trace back to repeatedly entering the general per-dot
+// Both regressions trace back to repeatedly entering that general per-dot
 // path. This version instead gives each of the 8 dots in a cycle its own
 // function - dotclock0 through dotclock7 - so that each has exactly one
 // call site. That is the whole trick: LLVM inlines an internal function
@@ -811,30 +770,24 @@ func (v *VICII) stepCycle() {
 	iecTick()
 }
 
-// FinishFrame advances the VIC-II, and therefore the rest of the machine it
-// clocks, until the beam reaches the top of the next frame. Unlike StepFrame,
-// this synchronizes to dot 0, raster line 0; if already at that position, it
-// still advances one full frame.
-func (v *VICII) FinishFrame() {
-	for {
-		v.StepDot()
-		if v.dot == 0 && v.rasterLine == 0 {
-			return
-		}
-	}
+// StepCycle advances the VIC-II, and therefore the rest of the machine it
+// clocks, by exactly one bus cycle. It is stepCycle under an exported
+// name, for front ends that want to watch the machine a cycle at a time
+// rather than a frame at a time; a cycle is the finest grain at which
+// there is anything new to see.
+//
+// The indirection is deliberate. StepFrame's loop calls stepCycle, whose
+// inlining into it is load-bearing (see stepCycle), and exporting that
+// function outright would put its linkage at the mercy of whether the
+// linker can still prove it internal.
+func (v *VICII) StepCycle() {
+	v.stepCycle()
 }
 
 // StepFrame advances the singleton machine by exactly one PAL frame. See
-// VICII.StepFrame for the behaviour when interleaving it with lower-level
-// StepDot calls.
+// VICII.StepFrame for where in the frame it starts and stops.
 func StepFrame() {
 	vic.StepFrame()
-}
-
-// FinishFrame advances the singleton machine to dot 0, raster line 0 at the
-// top of the next frame. See VICII.FinishFrame for boundary behaviour.
-func FinishFrame() {
-	vic.FinishFrame()
 }
 
 // dotclock0 through dotclock5 execute the interior phases of a bus cycle.

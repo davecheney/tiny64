@@ -24,9 +24,8 @@ func TestVICBorderPlacement(t *testing.T) {
 		colorRAM[col] = 0x01
 	}
 
-	const dotsPerFrame = DotsPerLine * RasterLinesPerFrame
-	for range dotsPerFrame {
-		v.StepDot()
+	for range CyclesPerFrame {
+		v.StepCycle()
 	}
 
 	// Raster line 100 is safely inside the 25-row display window
@@ -123,9 +122,8 @@ func TestVICGAccessPixelAlignment(t *testing.T) {
 	}
 	ram[0x0400+39] = 1 // last column uses char 1 (also solid)
 
-	const dotsPerFrame = DotsPerLine * RasterLinesPerFrame
-	for range dotsPerFrame {
-		v.StepDot()
+	for range CyclesPerFrame {
+		v.StepCycle()
 	}
 
 	const foreground = 0x01

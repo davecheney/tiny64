@@ -138,13 +138,11 @@ func main() {
 	var stalled int64
 	var lastPC uint16
 	for {
-		vic.StepDot()
-
-		// A CPU cycle completes once every 8 dots, right after the VIC-II's
-		// phi0high hands the bus to the CPU for its Phi2 (see 6569.go).
-		if vic.Dot()%8 != 4 {
-			continue
-		}
+		// StepCycle returns with the CPU's Phi2 for this cycle already
+		// taken: phi0high hands it the bus and TickPhi2 runs as the last
+		// thing in the cycle (see 6569.go). So everything below reports
+		// the cycle this iteration just ran, not the one before it.
+		vic.StepCycle()
 		n++
 		if !vic.AEC {
 			stalled++

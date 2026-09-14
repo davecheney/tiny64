@@ -84,12 +84,11 @@ func newMachine(t *testing.T) *machine {
 	return &machine{t: t}
 }
 
-// run advances the machine by n CPU cycles. One CPU cycle is eight VIC-II
-// dots, and the VIC-II is what drives the CPU, so dots are the unit that
-// actually ticks.
+// run advances the machine by n CPU cycles. The VIC-II is what drives the
+// CPU, and a bus cycle is the unit it steps in.
 func (m *machine) run(cycles int) {
-	for range cycles * 8 {
-		vic.StepDot()
+	for range cycles {
+		vic.StepCycle()
 	}
 }
 
