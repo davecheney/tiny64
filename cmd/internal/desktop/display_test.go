@@ -19,25 +19,20 @@ func TestPaletteShaderCompiles(t *testing.T) {
 	shader.Deallocate()
 }
 
-// TestPack checks each palette index arrives in the channel of the texel
-// that the shader will go looking for it in. The two halves of that deal
-// are written in different languages, so this is where they are held
-// against each other: the arithmetic below is the shader's, in Go.
-func TestPack(t *testing.T) {
-	fb := make([]byte, ScreenWidth*ScreenHeight)
-	for i := range fb {
-		fb[i] = byte(i % 16)
-	}
-
-	d := display{packed: make([]byte, packedStride*ScreenHeight)}
-	d.pack(fb)
-
+// TestFrameBufferLayout checks each palette index in FrameBufferIndexed
+// lands in the texel and channel that the shader will sample for it,
+// verifying that no per-frame packing or stride conversion is needed.
+func TestFrameBufferLayout(t *testing.T) {
+	fb := tiny64.FrameBufferIndexed()
 	for y := range ScreenHeight {
 		for x := range ScreenWidth {
 			texel, lane := x/4, x%4
-			got := d.packed[y*packedStride+texel*4+lane]
-			if want := fb[y*ScreenWidth+x]; got != want {
-				t.Fatalf("pixel (%d,%d) packed as %d, want %d", x, y, got, want)
+			offset := y*tiny64.FrameBufferStride + texel*4 + lane
+			if want := y*tiny64.FrameBufferStride + x; offset != want {
+				t.Fatalf("pixel (%d,%d) offset = %d, want %d", x, y, offset, want)
+			}
+			if offset >= len(fb) {
+				t.Fatalf("pixel (%d,%d) offset %d exceeds buffer length %d", x, y, offset, len(fb))
 			}
 		}
 	}

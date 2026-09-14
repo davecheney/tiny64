@@ -6,16 +6,19 @@ package tiny64
 // function value rather than called directly, so the cost of that
 // indirection can be measured against it.
 
-const visibleFrameOffset = FirstVisibleLine * VisibleDotsPerLine
+const (
+	FrameBufferStride  = (VisibleDotsPerLine + 3) &^ 3
+	visibleFrameOffset = FirstVisibleLine * FrameBufferStride
+)
 
-var frameBufferIndexed [VisibleDotsPerLine * RasterLinesPerFrame]byte
+var frameBufferIndexed [FrameBufferStride * RasterLinesPerFrame]byte
 
 var writePixelToBuffer = writePixelToIndexed
 
 // FrameBufferIndexed returns the current visible frame in row-major order,
-// one C64Palette index per pixel.
+// one C64Palette index per pixel, padded to FrameBufferStride bytes per line.
 func FrameBufferIndexed() []byte {
-	return frameBufferIndexed[visibleFrameOffset : visibleFrameOffset+VisibleDotsPerLine*VisibleLines]
+	return frameBufferIndexed[visibleFrameOffset : visibleFrameOffset+FrameBufferStride*VisibleLines]
 }
 
 var frameBufferRGBAExpanded [VisibleDotsPerLine * VisibleLines * 4]byte
@@ -24,8 +27,13 @@ var frameBufferRGBAExpanded [VisibleDotsPerLine * VisibleLines * 4]byte
 // order. The buffer is a snapshot taken at the moment of the call, not a
 // live view of the frame being drawn.
 func FrameBufferRGBA() []byte {
-	for i, colorIndex := range FrameBufferIndexed() {
-		copy(frameBufferRGBAExpanded[i*4:i*4+4], C64Palette[colorIndex&0x0f][:])
+	src := FrameBufferIndexed()
+	for y := range VisibleLines {
+		srcRow := src[y*FrameBufferStride : y*FrameBufferStride+VisibleDotsPerLine]
+		dstRow := frameBufferRGBAExpanded[y*VisibleDotsPerLine*4 : (y+1)*VisibleDotsPerLine*4]
+		for x, colorIndex := range srcRow {
+			copy(dstRow[x*4:x*4+4], C64Palette[colorIndex&0x0f][:])
+		}
 	}
 	return frameBufferRGBAExpanded[:]
 }
@@ -37,5 +45,5 @@ func ClearFrameBuffer() {
 }
 
 func writePixelToIndexed(x, y uint16, colorIndex byte) {
-	frameBufferIndexed[int(y)*VisibleDotsPerLine+int(x)] = colorIndex & 0x0f
+	frameBufferIndexed[int(y)*FrameBufferStride+int(x)] = colorIndex & 0x0f
 }

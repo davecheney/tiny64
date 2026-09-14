@@ -5,17 +5,27 @@ package tiny64
 // This sink stores what the VIC-II actually produces: a four bit colour
 // index per pixel. Expanding those indices into RGBA is the display's job,
 // and on the desktop the GPU does it (see cmd/internal/desktop), so the
-// frame buffer is a quarter the size of a RGBA one and a pixel write is a
+// frame buffer is a quarter the size of an RGBA one and a pixel write is a
 // single byte store rather than a four byte copy.
+//
+// The frame buffer row stride is padded from 405 (VisibleDotsPerLine) to
+// 408 (FrameBufferStride, 102 texels * 4 channels) so each raster line is
+// already aligned to whole RGBA texels. The three padding bytes per line
+// fall in the horizontal blanking interval and are never written by the
+// VIC-II, allowing the GPU texture to be updated with a single direct
+// WritePixels call without any per-frame CPU packing or line expansion.
 
-const visibleFrameOffset = FirstVisibleLine * VisibleDotsPerLine
+const (
+	FrameBufferStride  = (VisibleDotsPerLine + 3) &^ 3
+	visibleFrameOffset = FirstVisibleLine * FrameBufferStride
+)
 
-var frameBufferIndexed [VisibleDotsPerLine * RasterLinesPerFrame]byte
+var frameBufferIndexed [FrameBufferStride * RasterLinesPerFrame]byte
 
 // FrameBufferIndexed returns the current visible frame in row-major order,
-// one C64Palette index per pixel.
+// one C64Palette index per pixel, padded to FrameBufferStride bytes per line.
 func FrameBufferIndexed() []byte {
-	return frameBufferIndexed[visibleFrameOffset : visibleFrameOffset+VisibleDotsPerLine*VisibleLines]
+	return frameBufferIndexed[visibleFrameOffset : visibleFrameOffset+FrameBufferStride*VisibleLines]
 }
 
 // frameBufferRGBAExpanded backs FrameBufferRGBA. It exists for the callers
@@ -27,8 +37,13 @@ var frameBufferRGBAExpanded [VisibleDotsPerLine * VisibleLines * 4]byte
 // order. Unlike the RGBA sink's, this buffer is a snapshot taken at the
 // moment of the call, not a live view of the frame being drawn.
 func FrameBufferRGBA() []byte {
-	for i, colorIndex := range FrameBufferIndexed() {
-		copy(frameBufferRGBAExpanded[i*4:i*4+4], C64Palette[colorIndex&0x0f][:])
+	src := FrameBufferIndexed()
+	for y := range VisibleLines {
+		srcRow := src[y*FrameBufferStride : y*FrameBufferStride+VisibleDotsPerLine]
+		dstRow := frameBufferRGBAExpanded[y*VisibleDotsPerLine*4 : (y+1)*VisibleDotsPerLine*4]
+		for x, colorIndex := range srcRow {
+			copy(dstRow[x*4:x*4+4], C64Palette[colorIndex&0x0f][:])
+		}
 	}
 	return frameBufferRGBAExpanded[:]
 }
@@ -40,5 +55,5 @@ func ClearFrameBuffer() {
 }
 
 func writePixelToBuffer(x, y uint16, colorIndex byte) {
-	frameBufferIndexed[int(y)*VisibleDotsPerLine+int(x)] = colorIndex & 0x0f
+	frameBufferIndexed[int(y)*FrameBufferStride+int(x)] = colorIndex & 0x0f
 }

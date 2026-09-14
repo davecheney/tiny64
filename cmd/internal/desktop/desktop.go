@@ -31,8 +31,7 @@ const resizeSettleFrames = 12 // ~200ms
 type emulator struct {
 	frames int
 
-	// display is whichever presentation path this build selected: the
-	// straight RGBA blit, or the palette shader.
+	// display hands the GPU palette indices to expand into colours.
 	display
 
 	// winW, winH are the window's dimensions as of the previous frame;
