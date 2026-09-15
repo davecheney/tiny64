@@ -532,6 +532,30 @@ func TestIRQUndocumentedInstructions(t *testing.T) {
 	}
 }
 
+// TestIRQMaskWriteUnmasksLatchedFlag covers the CIA interrupt check's
+// third call site. Neither timer underflows here, so nothing inside Tick
+// can notice that the flag became eligible: only the mask write itself
+// can. Entry must still land on the instruction after the write, because
+// the write cycle's own poll samples the pin before the store takes
+// effect.
+func TestIRQMaskWriteUnmasksLatchedFlag(t *testing.T) {
+	c := newIRQTestCPU(t, "6510")
+	cpu.Port = 6          // Expose I/O so the store reaches CIA1.
+	cpu.A = 0x81          // Set (not clear) mask bit 0, Timer A.
+	cia1 = CIA{icr: 0x01} // Timer A fired earlier while masked off.
+	c.program(0x0200, 0x8D, 0x0D, 0xDC, 0xEA)
+
+	c.cycles(4) // STA $DC0D: the write lands on the fourth cycle.
+	if !cia1.IRQ {
+		t.Fatal("unmasking an already latched flag did not assert IRQ")
+	}
+	if cia1.icr&0x80 == 0 {
+		t.Fatalf("icr = %#02x after unmasking, want bit 7 set", cia1.icr)
+	}
+	c.cycles(2)
+	c.checkEntry(t, true, 0x0204)
+}
+
 func TestIRQPeripheralSampling(t *testing.T) {
 	for _, core := range []string{"6510", "6502"} {
 		t.Run(core+"/timer", func(t *testing.T) {
