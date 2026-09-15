@@ -62,6 +62,9 @@ cycle-accurate VIC-II/6502-opcode push (the commits below).
 | `8177007` | tiny64: make the paletted frame buffer the only one | **skip** | Makes indexing the default for host builds, not TinyGo. Requires the skipped presentation and framebuffer-lifetime migrations. |
 | `0ae9df8` | desktop: pad framebuffer row stride to avoid per-frame CPU packing | **skip** | Pads the host indexed buffer to 408 bytes per row for GPU upload. Does not alter the device RGB565BE layout or draw path. |
 | `672c3f8` | Consolidate indexed framebuffer storage and verify shader output | **skip** | Consolidates host sinks, corrects tag overlap and documents shared snapshot storage; adds layout and GPU readback tests. TinyGo remains on its existing sink. No complete desktop-series or GPU test run was needed for this device-scope exclusion. |
+| `aa710d2` | vic: remove StepDot, leaving stepCycle as the only driver | **picked (adapted)** | Removes per-dot/frame-synchronization entry points, exposes StepCycle and migrates existing callers/tests. Preserves the TinyGo renderer, virtual drive and all retained VIC function bodies; omits absent snapshot, sprite and IRQ surfaces. |
+| `98a2b37` | Fix StepCycle review coverage and document API migration | **picked (adapted)** | Retains applicable ordering/beam coverage and README migration guidance. Does not import the sprite test or indexed framebuffer changes absent from this branch. |
+| `dceb721` | Pin StepCycle CPU, VIC, IEC and CLI timing contracts | **picked (adapted)** | Includes final CPU/VIC pixel ordering, stalled CPU/CIA clock, same-cycle CIA2/IEC and CLI trace tests, plus corrected comments. Explicitly sets the pixel test's border fixture because this branch resets its border flip-flops open. Firmware remains byte-identical; details below. |
 
 ## Review and Tufty A/B/A: 2026-09-15
 
@@ -148,8 +151,8 @@ capture ending at frames 500 through 950 measured 74.797738ms/frame
 
 ## Upstream branch review: 2026-09-15
 
-Fetched at 00:28:01 UTC with `origin/main` at `672c3f8`. The table above
-now covers all 37 commits from `78e8f0e` through that pinned mainline tip.
+Fetched at 00:28:01 UTC with `origin/main` at `672c3f8`. This checkpoint
+covered all 37 commits from `78e8f0e` through that pinned mainline tip.
 Trials below used the accepted cartridge baseline `b65f8ab`; none of these
 new source candidates was adopted during this review.
 
@@ -199,6 +202,37 @@ On 2026-09-15 the maintainer authorized backporting the finalized series
 separate Step cycle review is adding regression tests and comment fixes;
 the final merged revision must be reconciled with this candidate and
 validated again. At 00:36:03 UTC GitHub reported PR #49 open, not merged.
+
+### Final StepCycle backport after merge
+
+At 00:48:10 UTC, GitHub REST reported PR #49 merged at 00:42:19 UTC,
+with final merged commit `dceb72121d24223509b9913a9fd88093b63492b5`.
+After fetching, `git merge-base --is-ancestor` verified that commit on
+`origin/main`. The merged series is `aa710d2`, `98a2b37`, `dceb721`;
+its final tree equals reviewed head `c7124de`. These are the final
+mainline hashes, not the superseded pre-rebase review hashes.
+
+Backported the complete applicable series onto `9211293`, preserving the
+earlier review log. Coverage now reaches all 40 mainline commits through
+`dceb721`. The first two commits use the tested adaptation above; the
+final commit adds its new tests and corrected comments. No sprite, IRQ,
+indexed framebuffer or real-drive implementation was introduced.
+
+The new CPU-to-VIC pixel test initially failed because upstream resets
+its border flip-flops closed, whereas this branch resets them open.
+The test now explicitly sets `verticalBorder` to keep its pixel samples
+in the border. Production reset/rendering behavior is unchanged. Moving
+the CPU tick before the pixels made the adapted test fail at dot 41;
+restoring the correct order made it pass.
+
+`go test ./...`, `go build ./...`, `go vet ./...`, repeated timing tests
+and repeated CLI trace tests passed. Both target-specific TinyGo builds
+passed, and their extracted loadable image hashes exactly match the
+accepted baseline hashes in the table above (Tufty also checked with
+`cmp`). All retained VIC function bodies remain unchanged.
+No new hardware measurement or flash was necessary for byte-identical
+firmware. This satisfies the default no-regression gate without another
+exception. The backport is local only; nothing was pushed.
 
 ### Cartridge bank-out candidate
 
@@ -263,8 +297,9 @@ Tufty is not (text +408 bytes, BSS +28 bytes). No CRT candidate was flashed.
 At 00:35:34 UTC GitHub reported PR #39 closed without merging.
 
 All review-owned detached worktrees were removed. Tested StepCycle,
-bank-out and corrected CRT patches were preserved as session artifacts;
-they are not source backports on this branch.
+bank-out and corrected CRT patches were preserved as session artifacts.
+Bank-out and CRT remain unadopted; StepCycle was subsequently backported
+after its verified merge as recorded above.
 
 ## Performance investigation: frame-time gap vs main's ~70ms target
 

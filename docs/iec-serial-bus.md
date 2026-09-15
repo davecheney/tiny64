@@ -401,10 +401,10 @@ be idempotent about it, because both will arrive.
 `attachIEC` replaces a device of the same concrete type rather than adding a
 second, so two drives cannot end up fighting over the lines at one address.
 
-`iecTick()` is called from `6569.go` on each of the two paths that produce a
-system Phi2 (`StepDot` case 0 and `stepCycle`), immediately after
-`cpu.TickPhi2()`. That is deliberately the machine clock rather than
-`CPU.TickPhi2` itself, which unit tests also call directly.
+`iecTick()` is called from `6569.go` by `stepCycle`, the one function that
+produces a system Phi2, immediately after `cpu.TickPhi2()`. That is deliberately
+the machine clock rather than `CPU.TickPhi2` itself, which unit tests also call
+directly.
 
 Two devices implement the interface:
 

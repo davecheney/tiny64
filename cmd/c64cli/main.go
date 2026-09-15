@@ -125,13 +125,9 @@ func main() {
 	var stalled int64
 	var lastPC uint16
 	for {
-		vic.StepDot()
-
-		// A CPU cycle completes once every 8 dots, right after the VIC-II's
-		// phi0high hands the bus to the CPU for its Phi2 (see 6569.go).
-		if vic.Dot()%8 != 4 {
-			continue
-		}
+		// StepCycle completes the VIC phases, CPU Phi2, and IEC tick before
+		// returning, so report the cycle just executed.
+		vic.StepCycle()
 		n++
 		if !vic.AEC {
 			stalled++
