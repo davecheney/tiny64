@@ -73,6 +73,7 @@ func TestCPUWriteCyclesMatchesMicrocode(t *testing.T) {
 	}
 
 	for op := 0; op < 256; op++ {
+		// Keep the derived mask wider than the table to detect overflow.
 		var got uint16
 		for _, v := range operands {
 			m, ok := deriveWriteMask(uint8(op), v[0], v[1], v[2], v[3])
@@ -81,7 +82,10 @@ func TestCPUWriteCyclesMatchesMicrocode(t *testing.T) {
 			}
 			got |= m
 		}
-		if got != cpuWriteCycles[op] {
+		if got > 0xFF {
+			t.Errorf("opcode $%02X: microcode write mask $%04X does not fit in uint8", op, got)
+		}
+		if got != uint16(cpuWriteCycles[op]) {
 			t.Errorf("opcode $%02X: microcode writes on TStates $%04X, cpuWriteCycles has $%04X",
 				op, got, cpuWriteCycles[op])
 		}
