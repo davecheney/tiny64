@@ -101,8 +101,9 @@ an 8K autostart cartridge into the expansion port before reset, the way a
 fastload or utility cartridge of the period arrived: the KERNAL finds the
 `CBM80` signature at `$8004` during its reset sequence and hands the cartridge
 control before BASIC has started, and the cartridge initializes the machine
-itself and points BASIC's main-loop vector at a handler that runs from ROM at
-`$8000-$9FFF`:
+itself and installs a small cassette-buffer dispatcher. Cartridge ROM is
+switched in at `$8000-$9FFF` only while servicing wedge commands; BASIC,
+the screen editor, KERNAL disk operations, and loaded programs see normal RAM:
 
     go run ./cmd/c64 -disk demo.d64 -wedge
     go run ./cmd/c64cli -disk demo.d64 -drive=virtual -wedge
@@ -122,8 +123,9 @@ shorthands:
   returns to the BASIC prompt
 - `%NAME` expands to `LOAD"NAME",dev,1` for machine-code programs
 - `←NAME` expands to `SAVE"NAME",dev`
-- `@Q` deactivates the wedge; `SYS 32777` reactivates it, through a `JMP` at a
-  fixed offset in the cartridge header
+- `@Q` removes the prompt hook and switches the cartridge off until hardware
+  reset. Neither RESTORE nor RUN/STOP+RESTORE reactivates it. Software
+  reactivation with `SYS 32777` is no longer supported: `$8009` is program RAM.
 
 All disk traffic still uses the emulated KERNAL and IEC bus, so the normal
 load, save, directory, and command-channel messages remain visible. The wedge
@@ -133,12 +135,58 @@ program lines are deliberately left to BASIC rather than intercepted by a
 CHRGET hook, so wedge tokens in a numbered line retain normal BASIC syntax
 behaviour instead of becoming hidden disk operations.
 
-Nothing is copied into RAM, so `$C000-$CFFF` stays free; the wedge's few bytes
-of state live in the cassette buffer at `$033C`. Two things follow from the
-cartridge being real rather than simulated: BASIC reports 30719 bytes free
-instead of 38911, because the KERNAL's memory test walks up from `$0400` and
-finds the cartridge sitting where RAM would be, and a program that banks the
-cartridge out by clearing LORAM banks the wedge out with it.
+**BASIC reports the normal 38911 bytes free.** The cartridge banks ROM out
+while the real KERNAL memory test runs; it neither reserves BASIC memory nor
+changes the memory-size result. Its own emulated 6502 firmware installs the
+dispatcher, call gate, and workspace at `$033C-$03D1` in the cassette buffer.
+No code is injected by the host, and `$8000-$9FFF` and `$C000-$CFFF` remain
+available to programs.
+
+Programs do not need a manual cartridge-disable step. For example, with
+Uncle Agnus McFungus mounted as the first PRG, type `/*`, wait for a successful
+load and `READY.`, then type `RUN`. The up-arrow shortcut `↑*` also works.
+That shortcut retains its historical queued-`RUN` behavior: it can run the
+previous program after a failed LOAD, so use `/NAME` and a separate `RUN`
+when you need to check load success first.
+
+The wedge uses a small custom cartridge mapper, not a patched KERNAL or an
+FC3 clone. While active, `$DF00-$DFFF` exposes the final 256 bytes of cartridge
+ROM through IO2, independently of ROML. Writes to `$DFFF` control a latch:
+bit 0 asserts `/EXROM`, and bit 7 releases `/EXROM` and locks out both ROM
+windows until hardware reset; other bits are ignored. Thus `$00` hides ROML,
+`$01` exposes it, and `$80` switches the cartridge off. Normal CPU-port I/O
+banking applies. These registers exist only for the wedge cartridge.
+The bootstrap executes in IO2 while RAMTAS clears low RAM; runtime handoffs
+execute in cassette RAM or IO2 so they cannot remove their own instructions.
+Use `@Q`, not a direct latch POKE, to retire the hook safely.
+
+IRQ is masked during short ROM-only work, with the incoming interrupt state
+restored for external calls made with ROML hidden. The cartridge's NMI path
+preserves normal RESTORE behavior and hides ROM before a RUN/STOP+RESTORE
+warm start abandons the interrupted firmware. Hardware reset reinstalls the
+wedge and resets its selected device to 8. The host `EnableDOSWedge` and
+`DisableDOSWedge` APIs change the expansion port immediately; call `Reset`
+before continuing after either operation.
+
+The cassette buffer and IO2 are still cartridge resources. Software that
+overwrites that workspace, takes over cartridge I/O, or installs an NMI
+handler that assumes no cartridge is present may need `@Q` first. This is
+memory-compatible disk shorthand, not a JiffyDOS fastloader. The
+[FC3 hardware description](https://www.c64-wiki.com/wiki/Final_Cartridge_3#The_Hardware)
+provides precedent for I/O-controlled GAME/EXROM banking, but the wedge does
+not implement its freezer, banking register layout, or firmware.
+
+An optional local regression uses the original Uncle PRG without distributing
+it. Run each mode in a fresh process:
+
+    for mode in stock load-run up-arrow; do
+        TINY64_UNCLE_AGNUS_PRG=/path/to/uncle-angus_mcfungus.prg \
+            go test . -run "^TestDOSWedgeUncleAgnus/$mode$" -count=1 -v
+    done
+
+It checks the fixture hash, actual KERNAL-loaded bytes, the formerly failing
+`$9F9A` read, decompressed memory against the stock result, and 1100 frames
+of subsequent execution. The ordinary suite uses original synthetic programs.
 
 ## Inspecting programs
 

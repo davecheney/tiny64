@@ -2,6 +2,8 @@ package tiny64
 
 import (
 	"bytes"
+	"fmt"
+	"slices"
 	"strings"
 	"testing"
 
@@ -25,6 +27,7 @@ func (m *machine) waitForScreen(want string) {
 		if screenHas(want) {
 			return
 		}
+
 		m.run(100_000)
 	}
 	var screen strings.Builder
@@ -36,6 +39,29 @@ func (m *machine) waitForScreen(want string) {
 	}
 	m.t.Fatalf("after %d cycles, screen does not contain %q; PC=$%04X screen:%s",
 		budget, want, cpu.PC, screen.String())
+}
+
+func (m *machine) runUntil(what string, budget int, reached func() bool) {
+	m.t.Helper()
+	for range budget {
+		if reached() {
+			return
+		}
+		vic.StepCycle()
+	}
+	m.t.Fatalf("did not reach %s; PC=$%04X", what, cpu.PC)
+}
+
+func assertWedgeRAM(t *testing.T) {
+	t.Helper()
+	if cartridge.Exrom {
+		t.Fatal("cartridge still asserts EXROM")
+	}
+	for addr := uint16(0x8000); addr < 0xA000; addr++ {
+		if got := plaLoad(addr); got != ram[addr] {
+			t.Fatalf("load($%04X)=$%02X, RAM=$%02X", addr, got, ram[addr])
+		}
+	}
 }
 
 func TestDOSWedgeDisabledByDefault(t *testing.T) {
@@ -167,21 +193,292 @@ func TestDOSWedgeSavesBASICProgram(t *testing.T) {
 	}
 }
 
-func TestDOSWedgeDeactivateAndReactivate(t *testing.T) {
+func TestDOSWedgeQuitUntilReset(t *testing.T) {
 	m := newWedgeMachine(t, virtualDriveDisk(t, "HELLO", helloPRG))
 
-	m.typeLine("@Q")
+	m.press(false, KeyAt)
+	m.press(false, KeyQ)
+	keyboard.Press(KeyReturn)
+	m.runUntil("CPU cartridge-kill write", 100_000, func() bool {
+		return !bus.RW && bus.Address == dosWedgeLatch && bus.Data == dosWedgeKill
+	})
+	if cpu.PC < wedgeRAMKill || cpu.PC > wedgeRAMKill+3 {
+		t.Fatalf("cartridge killed from PC=$%04X, not the RAM trampoline", cpu.PC)
+	}
+	if hook := uint16(ram[0x0302]) | uint16(ram[0x0303])<<8; hook != basicWarmStart {
+		t.Fatalf("kill left prompt hook at $%04X", hook)
+	}
+	keyboard.ReleaseAll()
+	m.run(cyclesPerKeyPhase)
+	assertWedgeRAM(t)
 	m.typeLine("/HELLO")
 	m.waitForScreen("?SYNTAX  ERROR")
 	if bytes.Equal(ram[0x0801:0x0801+len(helloPRG)-2], helloPRG[2:]) {
 		t.Fatal("/HELLO loaded a program after @Q deactivated the wedge")
 	}
 
-	m.typeLine("SYS 32777")
+	if !cartridge.killed || cartridge.Exrom {
+		t.Fatal("@Q did not lock out the cartridge")
+	}
+	for _, stop := range []bool{false, true} {
+		if stop {
+			keyboard.Press(KeyRunStop)
+		}
+		keyboard.Restore()
+		m.run(cyclesPerKeyPhase)
+		keyboard.ReleaseAll()
+		m.run(cyclesPerKeyPhase)
+		if !cartridge.killed {
+			t.Fatal("RESTORE reactivated the cartridge")
+		}
+	}
+	m.reset(5, "READY.")
 	m.waitForScreen("DOS WEDGE ACTIVE")
 	m.typeLine("/HELLO")
 	m.waitForScreen("SEARCHING FOR HELLO")
 	waitForLoad(m)
+}
+
+func TestDOSWedgeFullMemoryProgramAndSave(t *testing.T) {
+	// A BASIC program whose last line lives above $8000, followed by string
+	// allocation near $A000. The lines and string must not read cartridge ROM.
+	prg := []byte{0x01, 0x08}
+	for line := 1; line <= 200; line++ {
+		text := append([]byte{0x8F}, bytes.Repeat([]byte{'X'}, 150)...) // REM
+		if line == 200 {
+			text = []byte{0x99, '"', 'P', 'A', 'S', 'S', '"'} // PRINT"PASS"
+		}
+		next := 0x0801 + len(prg) - 2 + 4 + len(text) + 1
+		prg = append(prg, byte(next), byte(next>>8), byte(line), byte(line>>8))
+		prg = append(prg, text...)
+		prg = append(prg, 0)
+	}
+	prg = append(prg, 0, 0)
+	m := newWedgeMachine(t, virtualDriveDisk(t, "BIG", prg))
+	m.typeLine("/BIG")
+	m.waitForScreen("LOADING")
+	waitForLoad(m)
+	end := int(ram[0x2D]) | int(ram[0x2E])<<8
+	if end <= 0x8000 || !bytes.Equal(ram[0x0801:end], prg[2:]) {
+		t.Fatalf("full-memory BASIC load failed; end=$%04X", end)
+	}
+	assertWedgeRAM(t)
+	m.typeLine("RUN")
+	m.waitForScreen("PASS")
+	m.typeLine(`A$="AB"+"CD":PRINT A$`)
+	m.waitForScreen("ABCD")
+	if stringsBottom := uint16(ram[0x33]) | uint16(ram[0x34])<<8; stringsBottom < 0x8000 {
+		t.Fatalf("string allocation did not exercise high RAM: $%04X", stringsBottom)
+	}
+	m.typeLine("←COPY")
+	m.waitForScreen("SAVING COPY")
+	waitForLoad(m)
+	entry, ok := diskFind("COPY", ftypePRG)
+	if !ok || !bytes.Equal(diskReadFile(entry), prg) {
+		t.Fatal("SAVE did not preserve BASIC bytes above $8000")
+	}
+	assertWedgeRAM(t)
+}
+
+func TestDOSWedgeFailedLoadsLeaveRAMVisible(t *testing.T) {
+	for _, command := range []string{"/MISSING", "%MISSING", "↑MISSING"} {
+		t.Run(command, func(t *testing.T) {
+			m := newWedgeMachine(t, FormatDisk("EMPTY", "00"))
+			m.typeLine("10 POKE49152,42")
+			m.typeLine(command)
+			m.waitForScreen("?FILE NOT FOUND")
+			m.run(500_000)
+			assertWedgeRAM(t)
+			want := byte(0)
+			if command == "↑MISSING" {
+				want = 42 // historical queued RUN also runs after a failed LOAD
+			}
+			if ram[0xC000] != want {
+				t.Fatalf("stale program marker=%d, want %d", ram[0xC000], want)
+			}
+		})
+	}
+}
+
+func TestDOSWedgeRESTOREDuringCommand(t *testing.T) {
+	for _, phase := range []string{"entry", "ROM", "call", "service", "return", "exit"} {
+		for _, stop := range []bool{false, true} {
+			t.Run(fmt.Sprintf("%s/stop=%v", phase, stop), func(t *testing.T) {
+				m := newWedgeMachine(t, virtualDriveDisk(t, "HELLO", helloPRG))
+				m.press(false, KeyAt)
+				keyboard.Press(KeyReturn)
+				m.runUntil(phase, 2_000_000, func() bool {
+					if cpu.TState != 0 {
+						return false
+					}
+					switch phase {
+					case "entry":
+						return cpu.PC >= dosWedgeIO && cartridge.Exrom
+					case "ROM":
+						return cpu.PC >= 0x8000 && cpu.PC < 0x9F00
+					case "call":
+						return cpu.PC == wedgeRAMGate
+					case "service":
+						return cpu.PC == 0xFFBD
+					case "return":
+						return cpu.PC == wedgeRAMCall+3
+					case "exit":
+						return cpu.PC >= dosWedgeIO && bus.RW == false && bus.Address == dosWedgeLatch && bus.Data == 0
+					}
+					return false
+				})
+				keyboard.ReleaseAll()
+				if stop {
+					keyboard.Press(KeyRunStop)
+				}
+				keyboard.Restore()
+				m.run(cyclesPerKeyPhase)
+				keyboard.ReleaseAll()
+				m.run(500_000)
+				if stop {
+					m.waitForLine(1, "READY.")
+				} else {
+					m.waitForScreen("73,CBM DOS V2.6 1541,00,00")
+				}
+				assertWedgeRAM(t)
+				m.typeLine("/HELLO")
+				m.waitForScreen("LOADING")
+				waitForLoad(m)
+				if !bytes.Equal(ram[0x0801:0x0801+len(helloPRG)-2], helloPRG[2:]) {
+					t.Fatal("wedge did not recover after NMI")
+				}
+			})
+		}
+	}
+}
+
+func TestDOSWedgeNMIGateBoundaries(t *testing.T) {
+	m := newWedgeMachine(t, FormatDisk("EMPTY", "00"))
+	prompt := uint16(ram[wedgeRAMEntry+1]) | uint16(ram[wedgeRAMEntry+2])<<8
+	m.press(false, KeyAt)
+	keyboard.Press(KeyReturn)
+	var boundaries []uint16
+	m.runUntil("command returning to prompt", 2_000_000, func() bool {
+		if cpu.TState == 0 && cpu.PC >= wedgeRAMGate && cpu.PC < wedgeWorkEnd && !slices.Contains(boundaries, cpu.PC) {
+			boundaries = append(boundaries, cpu.PC)
+		}
+		return len(boundaries) != 0 && cpu.TState == 0 && cpu.PC == prompt
+	})
+	keyboard.ReleaseAll()
+	slices.Sort(boundaries)
+	if len(boundaries) < 20 {
+		t.Fatalf("only observed %d gate instruction boundaries", len(boundaries))
+	}
+	for _, boundary := range boundaries {
+		for _, stop := range []bool{false, true} {
+			t.Run(fmt.Sprintf("%04X/stop=%v", boundary, stop), func(t *testing.T) {
+				m := newWedgeMachine(t, FormatDisk("EMPTY", "00"))
+				m.press(false, KeyAt)
+				keyboard.Press(KeyReturn)
+				m.runUntil("gate instruction", 2_000_000, func() bool {
+					return cpu.TState == 0 && cpu.PC == boundary
+				})
+				keyboard.ReleaseAll()
+				if stop {
+					keyboard.Press(KeyRunStop)
+				}
+				keyboard.Restore()
+				m.run(cyclesPerKeyPhase)
+				keyboard.ReleaseAll()
+				m.run(500_000)
+				if stop {
+					m.waitForLine(1, "READY.")
+				} else {
+					m.waitForScreen("73,CBM DOS V2.6 1541,00,00")
+				}
+				assertWedgeRAM(t)
+				m.typeLine("@#9")
+				if ram[wedgeCurrentDevice] != 9 {
+					t.Fatal("prompt did not recover after NMI")
+				}
+			})
+		}
+	}
+}
+
+func TestDOSWedgeServiceGatePreservesRegisters(t *testing.T) {
+	service := newWedgeAssembler(0x9000)
+	service.abs(0x8D, 0xC010)
+	service.abs(0x8E, 0xC011)
+	service.abs(0x8C, 0xC012)
+	service.emit(0x08, 0x68) // PHP; PLA
+	service.abs(0x8D, 0xC013)
+	service.emit(0xA2, 0x42, 0xA0, 0x24, 0xA9, 0x80, 0x38, 0x60)
+
+	a := newWedgeAssembler(0x080D)
+	a.emit(0xA2, byte(len(service.code)-1))
+	a.label("copy")
+	a.ref(0xBD, "service")
+	a.abs(0x9D, 0x9000)
+	a.emit(0xCA)
+	a.branch(0x10, "copy")
+	a.emit(0xA2, 0x41, 0xA0, 0x43, 0xA9, 0x37, 0xB8, 0x38) // CLV; SEC
+	a.service(0x9000)
+	a.emit(0x08)
+	a.abs(0x8D, 0xC020)
+	a.abs(0x8E, 0xC021)
+	a.abs(0x8C, 0xC022)
+	a.emit(0x68)
+	a.abs(0x8D, 0xC023)
+	a.emit(0xA9, 0)
+	a.abs(0x8D, dosWedgeLatch)
+	a.emit(0x58, 0x60) // CLI; RTS
+	a.label("service")
+	a.emit(service.finish()...)
+	prg := append(append([]byte(nil), helloPRG...), a.finish()...)
+	m := newWedgeMachine(t, virtualDriveDisk(t, "GATE", prg))
+	m.typeLine("↑GATE")
+	m.runUntil("service result", 5_000_000, func() bool { return ram[0xC023] != 0 })
+	m.run(100_000)
+	if got, want := ram[0xC010:0xC014], []byte{0x37, 0x41, 0x43, 0x31}; !bytes.Equal(got, want) {
+		t.Fatalf("service arguments A/X/Y/P = % X, want % X", got, want)
+	}
+	if got, want := ram[0xC020:0xC024], []byte{0x80, 0x42, 0x24, 0xB5}; !bytes.Equal(got, want) {
+		t.Fatalf("service result A/X/Y/P = % X, want % X (IRQ masked on return to firmware)", got, want)
+	}
+	assertWedgeRAM(t)
+}
+
+func TestDOSWedgeIRQHandlerInHighRAM(t *testing.T) {
+	handler := []byte{
+		0xEE, 0x00, 0xC0, // INC $C000
+		0xD0, 0x03,
+		0xEE, 0x01, 0xC0,
+		0x4C, 0x31, 0xEA, // JMP KERNAL IRQ
+	}
+	a := newWedgeAssembler(0x080D)
+	a.emit(0x78, 0xA2, byte(len(handler)-1))
+	a.label("copy")
+	a.ref(0xBD, "handler")
+	a.abs(0x9D, 0x9000)
+	a.emit(0xCA)
+	a.branch(0x10, "copy")
+	a.emit(0xA9, 0)
+	a.abs(0x8D, 0x0314)
+	a.emit(0xA9, 0x90)
+	a.abs(0x8D, 0x0315)
+	a.emit(0x58, 0x60)
+	a.label("handler")
+	a.emit(handler...)
+	prg := append(append([]byte(nil), helloPRG...), a.finish()...)
+	m := newWedgeMachine(t, virtualDriveDisk(t, "IRQ", prg))
+	m.typeLine("↑IRQ")
+	m.runUntil("RAM IRQ", 5_000_000, func() bool { return ram[0xC000] != 0 })
+	for _, command := range []string{"@", "@$", "@", "←COPY", "@", "/IRQ"} {
+		before := uint16(ram[0xC000]) | uint16(ram[0xC001])<<8
+		m.typeLine(command)
+		waitForLoad(m)
+		after := uint16(ram[0xC000]) | uint16(ram[0xC001])<<8
+		if after <= before {
+			t.Fatalf("IRQ stopped during %s: before=%d after=%d", command, before, after)
+		}
+		assertWedgeRAM(t)
+	}
 }
 
 func TestDOSWedgeDoesNotInterceptStoredBASICLines(t *testing.T) {
@@ -197,7 +494,7 @@ func TestDOSWedgeDoesNotInterceptStoredBASICLines(t *testing.T) {
 
 // TestDOSWedgeCartridgeImage checks the parts of the ROM image the KERNAL
 // and the user reach by fixed address rather than by following a vector:
-// the autostart signature, and the JMP that SYS 32777 lands on.
+// the autostart signature and its bootstrap/NMI entry points in I/O ROM.
 func TestDOSWedgeCartridgeImage(t *testing.T) {
 	img := buildDOSWedge()
 
@@ -207,27 +504,21 @@ func TestDOSWedgeCartridgeImage(t *testing.T) {
 	if got, want := img[4:9], []byte{0xC3, 0xC2, 0xCD, 0x38, 0x30}; !bytes.Equal(got, want) {
 		t.Errorf("signature at $8004 = % X, want % X (CBM80)", got, want)
 	}
-	if got := img[dosWedgeReactivate-dosWedgeOrigin]; got != 0x4C {
-		t.Errorf("byte at SYS %d = %#02x, want %#02x (JMP)", dosWedgeReactivate, got, 0x4C)
-	}
 	if got := img[len(img)-1]; got != 0xFF {
 		t.Errorf("last byte = %#02x, want %#02x - the image must be padded to fill the EPROM", got, 0xFF)
 	}
 
-	// The cold start and NMI vectors, and the target of that JMP, all have
-	// to point at code inside the cartridge rather than at the zeros a
-	// half-built image would leave behind.
+	// The vectors execute in I/O ROM so releasing EXROM cannot remove them.
 	for _, vec := range []struct {
 		at   int
 		name string
 	}{
 		{0, "cold start vector"},
 		{2, "NMI vector"},
-		{dosWedgeReactivate - dosWedgeOrigin + 1, "SYS reactivate target"},
 	} {
 		addr := uint16(img[vec.at]) | uint16(img[vec.at+1])<<8
-		if addr < dosWedgeOrigin+12 || addr > dosWedgeOrigin+dosWedgeSize-1 {
-			t.Errorf("%s = $%04X, want an address inside the cartridge", vec.name, addr)
+		if addr < dosWedgeIO || addr >= dosWedgeLatch {
+			t.Errorf("%s = $%04X, want an address inside cartridge I/O", vec.name, addr)
 		}
 	}
 }
@@ -249,7 +540,9 @@ func TestDOSWedgeEntryPointsMatchROM(t *testing.T) {
 	}{
 		{0xFCEC, []byte{0x6C, 0x00, 0x80}, "reset hands a CBM80 cartridge control through $8000"},
 		{0xFE5B, []byte{0x6C, 0x02, 0x80}, "the NMI handler jumps through $8002 as well"},
-		{kernalNMIResume, []byte{0x20, 0xBC, 0xF6}, "kernalNMIResume is the instruction after that jump"},
+		{0xFE5E, []byte{0x20, 0xBC, 0xF6, 0x20, 0xE1, 0xFF, 0xD0, 0x0C}, "NMI scans STOP before choosing return or warm start"},
+		{kernalNMIWarm, []byte{0x20, 0x15, 0xFD}, "NMI warm start restores vectors"},
+		{kernalNMIReturn, []byte{0x98, 0x2D, 0xA1, 0x02}, "NMI return processes CIA2 status"},
 		{0xE394, []byte{0x20, 0x53, 0xE4, 0x20, 0xBF, 0xE3, 0x20, 0x22, 0xE4}, "BASIC's cold start is the three calls the cartridge makes"},
 		{basicColdTail, []byte{0xA2, 0x80, 0x6C, 0x00, 0x03}, "the cold start tail reaches READY. through $0300"},
 		{0xE449, []byte{0x83, 0xA4}, "$E453 copies $A483 into $0302, which the cartridge then replaces"},
@@ -262,17 +555,17 @@ func TestDOSWedgeEntryPointsMatchROM(t *testing.T) {
 
 // TestDOSWedgeBootsFromCartridgeSignature checks that the machine really
 // did boot the way a machine with a cartridge in it boots: nothing in Go
-// touches $0302, so finding it pointing into the cartridge's own ROM means
+// touches $0302, so finding it pointing into the installed dispatcher means
 // the KERNAL found the signature and handed over.
 func TestDOSWedgeBootsFromCartridgeSignature(t *testing.T) {
 	newWedgeMachine(t, virtualDriveDisk(t, "HELLO", helloPRG))
 
 	main := uint16(ram[0x0302]) | uint16(ram[0x0303])<<8
-	if main < dosWedgeOrigin || main > dosWedgeOrigin+dosWedgeSize-1 {
-		t.Errorf("$0302 = $%04X, want an address in cartridge ROM", main)
+	if main != wedgeRAMEntry {
+		t.Errorf("$0302 = $%04X, want cassette dispatcher $%04X", main, wedgeRAMEntry)
 	}
-	if got, want := bus.Load(0x8004), byte(0xC3); got != want {
-		t.Errorf("load($8004) = %#02x, want %#02x - the cartridge must be visible to the CPU", got, want)
+	if got, want := bus.Load(0x8004), ram[0x8004]; got != want || cartridge.Exrom {
+		t.Errorf("load($8004) = %#02x, want RAM %#02x with ROML hidden", got, want)
 	}
 }
 
@@ -300,13 +593,16 @@ func TestDOSWedgeLeavesRAMAlone(t *testing.T) {
 }
 
 // TestDOSWedgeReportsCartridgeMemoryTop checks the free-memory line, which
-// nothing in the emulator arranges: RAMTAS walks up from $0400 writing and
-// reading back, finds this cartridge where RAM should be, and sets the top
-// of BASIC memory below it. 38911 - 8192 = 30719.
+// nothing in the emulator arranges: RAMTAS must see RAM, not cartridge ROM.
 func TestDOSWedgeReportsCartridgeMemoryTop(t *testing.T) {
 	m := newWedgeMachine(t, virtualDriveDisk(t, "HELLO", helloPRG))
-	if !screenHas("30719 BASIC BYTES FREE") {
-		t.Errorf("boot screen does not report 30719 bytes free: row 3 is %q", screenLine(3))
+	if !screenHas("38911 BASIC BYTES FREE") {
+		t.Errorf("boot screen does not report 38911 bytes free: row 3 is %q", screenLine(3))
+	}
+	for _, addr := range []uint16{0x0283, 0x0037} {
+		if top := uint16(ram[addr]) | uint16(ram[addr+1])<<8; top != 0xA000 {
+			t.Errorf("memory top at $%04X = $%04X, want $A000", addr, top)
+		}
 	}
 
 	// And with an empty expansion port, all of it is still there.
@@ -330,7 +626,7 @@ func TestDOSWedgeSurvivesRestore(t *testing.T) {
 	m.run(cyclesPerKeyPhase)
 
 	// The wedge is still there afterwards - warm start does not rewrite
-	// $0302, and the cartridge is still mapped.
+	// $0302, and the cartridge can still service commands.
 	m.typeLine("/HELLO")
 	m.waitForScreen("SEARCHING FOR HELLO")
 	waitForLoad(m)

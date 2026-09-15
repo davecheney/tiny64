@@ -9,9 +9,40 @@ type Cartridge struct {
 	Exrom bool // /EXROM line: true = pulled low (asserted)
 	ROMH  bool // /ROMH chip-select populated with a physical ROM chip
 	ROML  bool // /ROML chip-select populated with a physical ROM chip
+
+	dosWedge bool
+	killed   bool
 }
 
 var cartridge Cartridge
+
+// The DOS wedge's custom PCB decodes IO2 for a ROM bootstrap aperture and
+// a write-only latch. Bit 0 asserts /EXROM; bit 7 releases it and locks out
+// both ROM and I/O until RESET. This is not an FC3 register implementation.
+const (
+	dosWedgeIO     = 0xDF00
+	dosWedgeLatch  = 0xDFFF
+	dosWedgeMap    = 0x01
+	dosWedgeKill   = 0x80
+	dosWedgeIOSize = 0x100
+	dosWedgeIOBank = dosWedgeSize - dosWedgeIOSize
+)
+
+func (c *Cartridge) reset() {
+	if c.dosWedge {
+		c.killed = false
+		c.Exrom = true
+	}
+}
+
+func (c *Cartridge) wedgeIO() bool {
+	return c.dosWedge && !c.killed
+}
+
+func (c *Cartridge) writeWedgeLatch(val byte) {
+	c.killed = val&dosWedgeKill != 0
+	c.Exrom = !c.killed && val&dosWedgeMap != 0
+}
 
 // ultimax reports whether the cartridge's /GAME and /EXROM lines are wired
 // the way the DiSTestMAX build instructions describe: /GAME low, /EXROM
@@ -29,8 +60,7 @@ func (c *Cartridge) ultimax() bool {
 // cartridge is: /EXROM pulled low (asserted), /GAME left floating. The PLA
 // then maps the /ROML image at $8000-$9FFF whenever the CPU is driving
 // LORAM and HIRAM high, which is the state IOINIT leaves the CPU port in -
-// so such a cartridge stays visible for a whole session rather than only
-// while its own startup code runs.
+// unless the cartridge's own hardware releases /EXROM.
 func (c *Cartridge) eightK() bool {
 	return c.Exrom && !c.Game
 }
