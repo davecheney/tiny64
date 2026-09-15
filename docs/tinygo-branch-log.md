@@ -662,7 +662,7 @@ Gopher Badge uses `-target=gopher-badge -opt=2 -scheduler=cores`. The final
 Tufty UF2 is byte-identical to the physically measured wedge image. Badge
 flash/RAM are 145920/226752 bytes; no Badge hardware timing was performed.
 
-## Queued after PR #55: clocked IRQ and RESTORE (#54, #56, #57)
+## Queued after PR #55: IRQ, RESTORE and compact masks (#54, #56, #57, #58)
 
 On 2026-09-15 the user requested PR #56, "Avoid idle IRQ work with
 per-source interrupt notifications", be recorded for backport inclusion
@@ -690,7 +690,7 @@ completed backport or authorize an additional regression.
 The user subsequently confirmed that #56 must include its #54 prerequisite
 (clocked IRQ sampling, instruction-specific polls and RDY handling), then
 added #57, "Latch RESTORE as a direct NMI trigger instead of a Phi2-clocked
-pulse". The requested order is **existing #55, then #54 + #56 + #57**.
+pulse". The requested order is **existing #55, then #54 + #56 + #57 + #58**.
 Offline preparation compares the #55 baseline, #54 alone, #54+#56, and
 the full #54+#56+#57 candidate, retaining separate CPU-tick and device
 size/RAM measurements. Hardware validation is deferred until available.
@@ -702,6 +702,59 @@ That is a behavior change, not just branch removal: test and document
 overlapping sources as well as ordinary RESTORE, RUN/STOP+RESTORE and
 wedge service handoffs. Upstream's native benchmark results were broadly
 flat; no TinyGo speedup or hardware acceptance is implied by inclusion.
+
+The user added PR #58, "Shrink CPU write-cycle masks to uint8", to the
+backport set. Its merged commit is
+`db2fec6a83f4fbb7dd4890455a56d7e6a0ecfff7` (reviewed head `565aba8`).
+Apply it after the IRQ/RESTORE adaptations: retain the mask literals,
+use `[256]uint8`, and preserve the widened microcode-derived comparison
+and eight-bit range guard in the tests. Upstream Tufty builds measured
+256 fewer flash bytes with unchanged data/BSS; verify the actual saving
+again on the combined TinyGo candidate rather than treating that as an
+already-measured backport result. Inclusion is queued, not yet applied.
+Only offline builds, size analysis and correctness tests are requested
+until hardware is available; do not resume native performance benchmarks.
+
+## Offline IRQ build checkpoint: 2026-09-15
+
+Prepared isolated stages against `374465f` (the existing #55 backport).
+No hardware was accessed and no IRQ candidate was adopted into this branch.
+After the delegated preparation was asked to stop, the final #57 stage
+was prepared directly in a separate worktree, reusing its committed
+#54 (`0c6eeba`) and #56 (`57a6a5b`) adaptations. The final isolated
+candidate is `6838252`. It keeps CIA1 IRQ/CIA2 NMI notifications without
+adding the absent VIC raster IRQ source or real drive.
+
+Tufty, TinyGo 0.42.0, `-opt=2 -scheduler=none`; all sizes are bytes:
+
+| stage | flash (`-size=short`) | ELF `.data` | ELF `.bss` | reported RAM |
+|---|---:|---:|---:|---:|
+| A: #55 baseline | 199580 | 328 | 223344 | 227768 |
+| B: +#54 | 200420 | 328 | 223328 | 227752 |
+| C: +#54+#56 | 200836 | 328 | 223328 | 227752 |
+| D: +#54+#56+#57 | 200820 | 328 | 223324 | 227748 |
+
+The combined candidate adds 1240 flash bytes and reduces reported static
+RAM by 20 bytes against A. Reported RAM includes two 2048-byte stack
+reservations as well as `.data` and `.bss`; it is not measured runtime
+heap use or proven free-memory headroom. GNU size's aggregate `text`
+also counts those stack sections, so use the explicit TinyGo flash
+figure rather than treating GNU `text + data` as flash consumption.
+
+The directly prepared D stage passed `go test -count=1 ./...`,
+`go build ./...` and `go vet ./...`, and both device builds. Badge
+(`-opt=2 -scheduler=cores`) reports flash 146752 and RAM 226728 bytes.
+D's Tufty loadable SHA-256 is
+`96a79c77c1f5ca0a60ff5f6925c3f3d8773c5e36da570cf93f6b601b75438899`.
+The combined patch is preserved as `irq-54-56-57-direct.patch` and
+ELFs as `irq-D-tufty.elf` / `irq-D-badge.elf` in session artifacts.
+The direct trial remains isolated for further validation.
+
+This is a build checkpoint, not performance acceptance. Native benchmark
+artifacts from the delegated run still require assessment; none of these
+size figures establishes a CPU-tick speedup. Hardware A/B/A must compare
+A against D using the same MAZE windows and target flags when the Tufty
+becomes available.
 
 ## Flashing and Monitoring Workflow (Tufty 2040)
 
