@@ -92,6 +92,12 @@ at `e00f58b`; they were not discarded when this independent candidate began.
 
 ## PR #63 CIA interrupt-check hoist: 2026-09-15
 
+**Accepted:** at 22:26 AEST the user explicitly accepted #63 as a backport
+to `origin/tinygo`, after reviewing the 2.428753% Tufty improvement.
+The implementation `e207856` and measurement record `cb4dae0` are published
+on that branch. This acceptance is for the lightweight adaptation, not a
+merge of the upstream PR into main.
+
 At the user's explicit request, adapt #63's head `a710211` onto the accepted
 #57-only TinyGo baseline `0a95e47`; upstream #63 was open at inspection.
 Local source commit is `e207856`. Keep the lightweight CIA's direct
