@@ -24,6 +24,9 @@ jobs:
       - name: Test
         run: go test ./...
 
+      - name: Snapshot integration tests
+        run: go test -tags integration ./cmd/snapshot -run '^TestSnapshotFixtures$' -count=1 -timeout=15m
+
       # There's no golangci-lint in the repo yet, so "lint" is what the
       # standard toolchain offers: vet, plus a formatting check, written
       # out longhand because gofmt -l only lists offending files and

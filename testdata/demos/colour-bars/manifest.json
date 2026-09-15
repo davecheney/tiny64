@@ -1,0 +1,12 @@
+{
+  "version": 1,
+  "program": {
+    "file": "colour-bars.prg",
+    "sha256": "3c8d3dd045a4cfaffd43301288d607eb8bc62133ddba056909171d1b948cc25d"
+  },
+  "crop": false,
+  "checkpoints": [
+    {"frame": 2, "png": "frame-000002.png"},
+    {"frame": 10, "png": "frame-000010.png"}
+  ]
+}

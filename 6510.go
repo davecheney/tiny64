@@ -32,25 +32,11 @@ type CPU struct {
 	nmiLine   bool // last-seen state of the CPU's NMI pin, for edge detection
 	nmiLatch  bool // latched by a 0->1 transition of nmiLine, until serviced
 
-	// Clock counts elapsed Phi2 cycles, used to time the 2-cycle delay real
-	// hardware needs to recognize an asserted IRQ/NMI line (VICE calls this
-	// INTERRUPT_DELAY).
-	Clock uint64
-
-	// irqLine is the last-seen state of CIA1's IRQ line, for edge detection;
-	// irqAssertClock/nmiLatchClock record the Clock value of the most recent
-	// rising edge, so recognition can be held off for 2 cycles after it.
-	irqLine        bool
-	irqAssertClock uint64
-	nmiLatchClock  uint64
-
-	// effectiveI is the Interrupt Disable flag's value as seen by interrupt
-	// recognition, lagging c.regP's I bit by one instruction: SEI/CLI/PLP
-	// change regP immediately, but (due to 6502 pipelining) their effect on
-	// whether an interrupt can be taken isn't visible until the instruction
-	// after next. RTI and the CPU's own interrupt entry are exceptions and
-	// update effectiveI immediately (see their microcode).
-	effectiveI uint8
+	// Clock counts elapsed Phi2 cycles, including cycles held by RDY.
+	// The existing NMI recognition model uses it; IRQ uses clocked state.
+	Clock         uint64
+	nmiLatchClock uint64
+	irq           irqState
 
 	// Port and PortDDR implement the 6510's on-chip I/O port at $0001/$0000,
 	// a feature the plain 6502 does not have.
@@ -110,7 +96,7 @@ func (c *CPU) Reset() {
 	c.Interrupt = 0
 	c.nmiLatch = false
 	c.regP |= P_INTERRUPT
-	c.effectiveI = P_INTERRUPT
+	c.irq = irqState{}
 	c.SP -= 3
 
 	lo := c.load(0xFFFC)
@@ -190,11 +176,7 @@ func (c *CPU) TickPhi2() {
 	}
 	c.nmiLine = nmi
 
-	irq := cia1.IRQ || vic.IRQ
-	if irq && !c.irqLine {
-		c.irqAssertClock = c.Clock
-	}
-	c.irqLine = irq
+	opcode, tstate, i := c.Opcode, c.TState, c.regP&P_INTERRUPT
 
 	// BA low does not freeze the CPU outright. It drives the 6510's RDY
 	// pin, which only halts the processor on a *read* cycle; a write cycle
@@ -210,21 +192,31 @@ func (c *CPU) TickPhi2() {
 	// whatever instruction happens to be executing, which shows up as
 	// timing jitter in raster code that reprograms sprites mid-screen.
 	if !vic.AEC && cpuWriteCycles[c.Opcode]>>c.TState&1 == 0 {
+		c.irq.clock(cia1.IRQ || vic.IRQ, i, false, true)
+		// CLI/SEI's I update is not held by RDY: their first terminal
+		// cycle polls with old I, later repetitions see the new value.
+		// PLP differs: it needs the completing stack read to restore P.
+		if c.TState == 1 {
+			switch c.Opcode {
+			case 0x58:
+				c.regP &^= P_INTERRUPT
+			case 0x78:
+				c.regP |= P_INTERRUPT
+			}
+		}
 		return
 	}
 
 	switch c.TState {
 	// T0: Fetch the opcode, unless a pending interrupt takes over instead.
 	// NMI is edge-triggered (CIA2 and the RESTORE monostable, latched);
-	// IRQ is level-triggered (CIA1, masked by the (delayed) I flag) - both
-	// are serviced via BRK's microcode. Real hardware needs an asserted
-	// IRQ/NMI line to be stable for 2 cycles before it's recognized (see
-	// Clock/irqAssertClock/nmiLatchClock).
+	// IRQ acceptance was latched by the preceding instruction's poll.
+	// Both are serviced via BRK's microcode.
 	case 0:
 		switch {
 		case c.nmiLatch && c.Clock >= c.nmiLatchClock+2:
 			// NMI is checked before IRQ because it wins when both are
-			// pending, and it is deliberately not gated on effectiveI: the
+			// pending, and it is deliberately not gated on the I flag: the
 			// I flag masks IRQ only, which is what makes this interrupt
 			// non-maskable.
 			//
@@ -239,10 +231,8 @@ func (c *CPU) TickPhi2() {
 			c.Interrupt = 2
 			c.Opcode = 0x00
 			c.TState = 1
-		// IRQ is sampled at the end of Phi2. irqAssertClock records the
-		// first TickPhi2 that observed the line, two ticks before that
-		// assertion can affect the instruction-boundary poll.
-		case irq && c.effectiveI == 0 && c.Clock >= c.irqAssertClock+4:
+		case c.irq.pending:
+			c.load(c.PC) // Discarded opcode fetch; PC must not advance.
 			c.Interrupt = 1
 			c.Opcode = 0x00
 			c.TState = 1
@@ -252,12 +242,7 @@ func (c *CPU) TickPhi2() {
 			c.PC++
 			c.TState = 1
 		}
-		// SEI/CLI/PLP change regP immediately, but (6502 pipelining) their
-		// effect on interrupt recognition lags by one instruction: this
-		// syncs effectiveI to regP's current I bit only now, after it was
-		// used for the check above, so it still reflects the PC flag's
-		// value from before whichever instruction just changed it.
-		c.effectiveI = c.regP & P_INTERRUPT
+		c.irq.pending = false // NMI also discards an accepted IRQ.
 	case 1:
 		// T1: Execute the instruction based on the opcode
 		switch c.Opcode {
@@ -1876,10 +1861,6 @@ func (c *CPU) TickPhi2() {
 			c.TState = 4
 		case 0x40: // RTI: pull status from incremented SP, then increment SP
 			c.regP = c.pop()
-			// Unlike SEI/CLI/PLP, RTI's restored I flag takes effect
-			// immediately for the very next instruction (no pipelining
-			// delay), since the status register is restored early.
-			c.effectiveI = c.regP & P_INTERRUPT
 			c.TState = 4
 		case 0x41: // EOR (Indirect,X): fetch effective address low byte
 			c.Operand = uint16(c.load(uint16(c.Pointer + c.X))) // zero-page wraparound
@@ -2298,11 +2279,6 @@ func (c *CPU) TickPhi2() {
 				status |= 0x10
 			}
 			c.push(status)
-			c.regP |= 0x04 // Set Interrupt Disable flag
-			// The CPU's own interrupt entry forces I=1 immediately (not
-			// subject to the SEI/CLI/PLP pipelining delay), so a nested
-			// interrupt can't be taken until this handler does CLI/RTI.
-			c.effectiveI = P_INTERRUPT
 			c.TState = 5
 		case 0x01: // ORA (Indirect,X): fetch effective address high byte
 			c.Operand |= uint16(c.load(uint16(c.Pointer+c.X+1))) << 8 // zero-page wraparound
@@ -2612,6 +2588,7 @@ func (c *CPU) TickPhi2() {
 				vec = 0xFFFA
 			}
 			c.Operand = uint16(c.load(vec)) // Stash new PCL until T6
+			c.regP |= P_INTERRUPT
 			c.TState = 6
 		case 0x81: // STA (Indirect,X): write A
 			c.store(c.Operand, c.A)
@@ -2804,6 +2781,7 @@ func (c *CPU) TickPhi2() {
 	default:
 		panic("Invalid T-state: " + fmt.Sprintf("%d", c.TState))
 	}
+	c.irq.clock(cia1.IRQ || vic.IRQ, i, irqPoll(opcode, tstate, c.TState), false)
 }
 
 // pch returns the high byte of PC
