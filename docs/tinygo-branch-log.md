@@ -662,6 +662,31 @@ Gopher Badge uses `-target=gopher-badge -opt=2 -scheduler=cores`. The final
 Tufty UF2 is byte-identical to the physically measured wedge image. Badge
 flash/RAM are 145920/226752 bytes; no Badge hardware timing was performed.
 
+## Queued after PR #55: interrupt notifications (PR #56)
+
+On 2026-09-15 the user requested PR #56, "Avoid idle IRQ work with
+per-source interrupt notifications", be recorded for backport inclusion
+on top of the transparent DOS wedge from PR #55. Apply and validate #55
+first, then adapt #56 against that wedge-enabled TinyGo baseline.
+GitHub REST at 07:49:49 UTC reported both PRs merged; the reviewed PR #56
+head was `3f2fdcc4288ef6d8fdcb23c74b783f5c0fb0ab42`.
+
+Status: **queued for backport, not implemented or validated here**.
+The change tracks interrupt producers in a CPU-owned source mask and
+avoids idle interrupt clocking while preserving pending requests. Its
+upstream desktop benchmark improvements are not TinyGo hardware evidence.
+Assess dependencies on main's IRQ/RDY/NMI semantics explicitly rather
+than transplanting notification logic into this branch's different CPU
+path without its prerequisites. Preserve the virtual drive and do not
+restore unrelated VIC or real-1541 machinery.
+
+The acceptance gate remains host tests/build/vet, both target-specific
+device builds, and Tufty frame-time validation against the #55 baseline
+at `-opt=2 -scheduler=none`. Badge uses `-opt=2 -scheduler=cores`.
+The performance exception granted for #55 does not extend to #56.
+This entry records the requested inclusion order; it does not claim a
+completed backport or authorize an additional regression.
+
 ## Flashing and Monitoring Workflow (Tufty 2040)
 
 - **Build & Flash**: `tinygo flash -target=tufty2040 -opt=2 -scheduler=none ./cmd/tufty2040` (compiles and flashes in a single step).
