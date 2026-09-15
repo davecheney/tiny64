@@ -65,6 +65,47 @@ cycle-accurate VIC-II/6502-opcode push (the commits below).
 | `aa710d2` | vic: remove StepDot, leaving stepCycle as the only driver | **picked (adapted)** | Removes per-dot/frame-synchronization entry points, exposes StepCycle and migrates existing callers/tests. Preserves the TinyGo renderer, virtual drive and all retained VIC function bodies; omits absent snapshot, sprite and IRQ surfaces. |
 | `98a2b37` | Fix StepCycle review coverage and document API migration | **picked (adapted)** | Retains applicable ordering/beam coverage and README migration guidance. Does not import the sprite test or indexed framebuffer changes absent from this branch. |
 | `dceb721` | Pin StepCycle CPU, VIC, IEC and CLI timing contracts | **picked (adapted)** | Includes final CPU/VIC pixel ordering, stalled CPU/CIA clock, same-cycle CIA2/IEC and CLI trace tests, plus corrected comments. Explicitly sets the pixel test's border fixture because this branch resets its border flip-flops open. Firmware remains byte-identical; details below. |
+| `979195d` | vic: benchmark frames with the screen and sprites on | **skip** | Benchmark prerequisite preceding PR #50. The full suite depends on absent sprite state and rendering. Blank/display benchmarks could be adapted separately, but are not a prerequisite or evidence of benefit for this branch's already-specialized reload path. |
+| `2af7107` | vic: decide the sequencer reload once per cycle | **skip** | PR #50 removes eight calls to `advanceGraphicsData` in main's XSCROLL/multicolor renderer. This branch has neither that helper nor `loadGraphicsData`: only `dotclock7` commits pending data, guarded by one slot-range check. No redundant per-dot reload decision exists to hoist. |
+| `cae6672` | test: retain exhaustive VIC reload timing oracle | **skip** | Exhaustively verifies the new `reloadDot` against main's old XSCROLL/multicolor phase rule. Neither the helper nor those graphics-mode semantics exist here; `vic_modes_test.go` is absent. |
+
+## PR #50 reload-hoist review: 2026-09-15
+
+At 03:20:36 UTC, GitHub REST confirmed PR #50 merged at 03:20:13 UTC,
+with final commit `cae667202833b35baa44f04857c04a76b5cf32a5`. Fetch and
+`git merge-base --is-ancestor` verified that commit on `origin/main`.
+Reviewed both PR commits plus preceding benchmark commit `979195d`;
+the table covers all 43 mainline commits through this checkpoint.
+The TinyGo baseline was `2ed36d5`.
+
+Main's reload phase depends on XSCROLL and multicolor mode. Previously,
+each dot called `advanceGraphicsData` to decide whether to load; PR #50
+computes the target dot once and passes it to all eight dotclocks.
+The performance figures in the PR concern that different implementation,
+not a measured improvement on this branch.
+
+TinyGo's standard-text path already specializes the fixed phase:
+`cycleGAccess` latches pending graphics data during Phi1, and `dotclock7`
+alone commits it at the next phase-zero boundary, four dots later.
+Its single `slot >= 6 && slot <= 45` check needs no dynamic phase
+calculation. Dotclocks 0 through 6 have no reload checks or helper calls
+to remove. Introducing `reloadDot` and comparisons in every dotclock
+would add machinery rather than perform the proposed optimization.
+Restoring the skipped graphics-mode implementation just to enable this
+hoist would violate the scope of the backport.
+
+The combined PR patch fails `git apply --check` in `6569.go` and
+`vic_test.go`, and requires absent `vic_modes_test.go`. This is a semantic
+exclusion, not just a patch-conflict decision. The retained tests passed:
+
+```sh
+go test -count=1 -run 'TestVIC(GAccessPixelAlignment|StepCycleCPUWriteFollowsPixels|StepCycleStalledReadClocksCIAs)' .
+```
+
+No source changes, candidate firmware, or hardware timing run were needed.
+The upstream exhaustive oracle tests an absent helper; it is not a
+standalone test backport. Record PR #50 as skipped, not as a measured
+regression or a new TinyGo speedup.
 
 ## Review and Tufty A/B/A: 2026-09-15
 
