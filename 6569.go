@@ -20,10 +20,10 @@ const (
 	firstVBlankLine = 300
 	lastVBlankLine  = 15
 
-	// The picture occupies raster lines 16-299; writePixelToBuffer is
-	// never called outside FirstVisibleLine..FirstVisibleLine+VisibleLines
-	// horizontally 0..VisibleDotsPerLine, so a display only needs a buffer
-	// that size.
+	// The picture occupies raster lines 16-299; the pixel sink is never
+	// handed a line outside FirstVisibleLine..FirstVisibleLine+VisibleLines
+	// or a dot outside 0..VisibleDotsPerLine, so a display only needs a
+	// buffer that size.
 	FirstVisibleLine = lastVBlankLine + 1
 	VisibleLines     = firstVBlankLine - FirstVisibleLine
 
@@ -260,12 +260,14 @@ func (v *VICII) setIRQ(asserted bool) {
 	}
 }
 
-// syncLineVisibility recomputes the cached line visibility flags from rasterLine.
-// It must be called whenever rasterLine is changed by anything other than
-// dotclock7's line wrap, which updates the flags itself.
+// syncLineVisibility recomputes the state cached per raster line - the two
+// visibility flags, and the row the pixel sink paints into - from
+// rasterLine. It must be called whenever rasterLine is changed by anything
+// other than dotclock7's line wrap, which updates all three itself.
 func (v *VICII) syncLineVisibility() {
 	v.lineVisible = v.rasterLine < firstVBlankLine && v.rasterLine > lastVBlankLine
 	v.lineDrawable = v.rasterLine >= renderFirstLine && v.rasterLine < renderLineAfter
+	selectPixelRow(v.rasterLine)
 }
 
 func (v *VICII) WriteRegister(addr uint16, value uint8) {
@@ -404,12 +406,12 @@ func (v *VICII) finishSideBorder() {
 	}
 	if v.rightBorderAt != 0 {
 		for dot := v.rightBorderAt; dot < VisibleDotsPerLine; dot++ {
-			writePixelToBuffer(dot, v.rasterLine, v.rightBorder[dot-rightEdge38])
+			writePixelToRow(dot, v.rightBorder[dot-rightEdge38])
 		}
 	} else if !v.rightBorderOpen {
 		// Preserve the VIC's boundary pixel when a visible CSEL trick opens
 		// the rest of the right border. A later hblank write can open it too.
-		writePixelToBuffer(rightEdge40, v.rasterLine, v.rightBorder[rightEdge40-rightEdge38])
+		writePixelToRow(rightEdge40, v.rightBorder[rightEdge40-rightEdge38])
 	}
 	v.rightBorderAt = 0
 	v.rightBorderOpen = false
@@ -610,12 +612,11 @@ func (v *VICII) paintGraphicsPixel() {
 		if v.mainBorder {
 			graphicsColor = v.borderColor
 		}
-		writePixelToBuffer(v.dot, v.rasterLine, graphicsColor&0x0F)
+		writePixelToRow(v.dot, graphicsColor&0x0F)
 		return
 	}
 
 	d := v.dot
-	r := v.rasterLine
 	expandXReg := v.registers19To1F[4]    // $D01D
 	multicolorReg := v.registers19To1F[3] // $D01C
 	priorityReg := v.registers19To1F[2]   // $D01B
@@ -719,7 +720,7 @@ func (v *VICII) paintGraphicsPixel() {
 		}
 	}
 
-	writePixelToBuffer(d, r, finalColor&0x0F)
+	writePixelToRow(d, finalColor&0x0F)
 }
 
 // ReadRegister reads a VIC-II register, mirrored every 64 bytes across
@@ -1090,9 +1091,13 @@ func (v *VICII) dotclock7(reload uint16) {
 		}
 		v.rasterIRQTriggered = false
 		// The only place rasterLine changes in the hot path, so the only
-		// place the cached visibility answers can go stale.
+		// place the cached visibility answers, or the row the sink paints
+		// into, can go stale. finishSideBorder above still wanted the row
+		// of the line that just ended, so the new one is selected here and
+		// not before it.
 		v.lineVisible = v.rasterLine < firstVBlankLine && v.rasterLine > lastVBlankLine
 		v.lineDrawable = v.rasterLine >= renderFirstLine && v.rasterLine < renderLineAfter
+		selectPixelRow(v.rasterLine)
 		if v.rasterLine != 0 {
 			v.checkRasterIRQ()
 		}

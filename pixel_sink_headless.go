@@ -6,4 +6,6 @@ package tiny64
 // outside the visible picture.
 func ClearFrameBuffer() {}
 
-func writePixelToBuffer(x, y uint16, colorIndex byte) {}
+func selectPixelRow(y uint16) {}
+
+func writePixelToRow(x uint16, colorIndex byte) {}

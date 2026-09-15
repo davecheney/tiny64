@@ -28,8 +28,9 @@ func TestFrameBufferIndexedLayout(t *testing.T) {
 		frameBufferIndexed[i] = 0xff
 	}
 	for y := range VisibleLines {
+		selectPixelRow(uint16(y + FirstVisibleLine))
 		for x := range VisibleDotsPerLine {
-			writePixelToBuffer(uint16(x), uint16(y+FirstVisibleLine), 0xf0|byte((x+y)%16))
+			writePixelToRow(uint16(x), 0xf0|byte((x+y)%16))
 		}
 	}
 	for y := range RasterLinesPerFrame {
@@ -66,11 +67,12 @@ func TestFrameBufferRGBALifetime(t *testing.T) {
 	saveFrameBuffers(t)
 	ClearFrameBuffer()
 	indexed := FrameBufferIndexed()
-	writePixelToBuffer(0, FirstVisibleLine, 2)
+	selectPixelRow(FirstVisibleLine)
+	writePixelToRow(0, 2)
 	rgba := FrameBufferRGBA()
 	retained := bytes.Clone(rgba)
 
-	writePixelToBuffer(0, FirstVisibleLine, 3)
+	writePixelToRow(0, 3)
 	if indexed[0] != 3 {
 		t.Fatalf("indexed view did not update: got %d, want 3", indexed[0])
 	}

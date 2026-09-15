@@ -44,6 +44,23 @@ func ClearFrameBuffer() {
 	clear(frameBufferIndexed[:])
 }
 
-func writePixelToIndexed(x, y uint16, colorIndex byte) {
-	frameBufferIndexed[int(y)*FrameBufferStride+int(x)] = colorIndex & 0x0f
+// pixelRowIndexed is the storage for the raster line the beam is on,
+// which selectPixelRow last pointed it at. Which row that is depends only
+// on rasterLine, so it goes stale exactly when lineVisible and
+// lineDrawable do, and is refreshed in the same two places: dotclock7's
+// line wrap, and syncLineVisibility for every other write to rasterLine.
+// Holding the row means a pixel write is an index into it rather than a
+// multiply from the base of the frame, on every one of the ~115,000
+// pixels a frame paints.
+var pixelRowIndexed []byte
+
+// selectPixelRow points the sink at raster line y. It is the row cache's
+// only writer; see pixelRowIndexed for what invalidates it.
+func selectPixelRow(y uint16) {
+	base := int(y) * FrameBufferStride
+	pixelRowIndexed = frameBufferIndexed[base : base+VisibleDotsPerLine]
+}
+
+func writePixelToIndexedRow(x uint16, colorIndex byte) {
+	pixelRowIndexed[x] = colorIndex & 0x0f
 }
