@@ -68,6 +68,49 @@ cycle-accurate VIC-II/6502-opcode push (the commits below).
 | `979195d` | vic: benchmark frames with the screen and sprites on | **skip** | Benchmark prerequisite preceding PR #50. The full suite depends on absent sprite state and rendering. Blank/display benchmarks could be adapted separately, but are not a prerequisite or evidence of benefit for this branch's already-specialized reload path. |
 | `2af7107` | vic: decide the sequencer reload once per cycle | **skip** | PR #50 removes eight calls to `advanceGraphicsData` in main's XSCROLL/multicolor renderer. This branch has neither that helper nor `loadGraphicsData`: only `dotclock7` commits pending data, guarded by one slot-range check. No redundant per-dot reload decision exists to hoist. |
 | `cae6672` | test: retain exhaustive VIC reload timing oracle | **skip** | Exhaustively verifies the new `reloadDot` against main's old XSCROLL/multicolor phase rule. Neither the helper nor those graphics-mode semantics exist here; `vic_modes_test.go` is absent. |
+| `4a37e5b` | vic: decode the graphics colours ahead of the dots that use them | **skip** | PR #51 caches main's graphics-mode colour decode and foreground classification at reload/background writes. TinyGo has no mode dispatch, multicolor sequencer or sprite foreground classification: each dot directly selects background0 or the latched standard-text foreground. The targeted repeated decode is absent. |
+
+## PR #51 palette-cache review: 2026-09-15
+
+At 03:40:01 UTC, GitHub REST confirmed PR #51 merged at 03:39:46 UTC,
+as `4a37e5b82d66d594cab283f9a8758472fcfaa966`. Fetch and
+`git merge-base --is-ancestor` verified the commit on `origin/main`.
+Reviewed the complete implementation and all three new tests against
+TinyGo at `a77dcba`. The table now covers all 44 mainline commits through
+this checkpoint.
+
+Main replaces `nextGraphicsColor`'s per-dot graphics-mode dispatch with
+a four-entry `gdColor` cache and a `gdForeground` bit mask. It refreshes
+them on reset, graphics-data reload, and writes to `$D021-$D024`. The
+exhaustive test covers the old mode decode, the frame test checks cache
+invalidation, and the background-write test checks next-cycle visibility.
+
+This branch has no `nextGraphicsColor`, `loadGraphicsData`, graphics-mode
+dispatch, multicolor shift state, or sprite collision/priority consumer.
+Its dotclocks already perform only the standard-text choice:
+`background0` when the sequencer's high bit is clear, otherwise
+`byte(videoBuffer >> 8)`, followed by a shift and border override.
+`$D021` writes update the value read directly by subsequent pixels.
+`dotclock7` latches `videoBufferPending` once at each active cell boundary.
+There is no repeated mode decode to lift out of this path.
+
+The patch fails `git apply --check` in `6569.go` and requires absent
+`vic_modes_test.go`. Importing the cache wholesale would require graphics
+features deliberately excluded from this branch. A reduced two-colour
+lookup could be investigated independently, but would introduce cache
+maintenance and change generated code/layout; this review neither measures
+nor claims a benefit or regression for that different optimization.
+
+The existing alignment, CPU-to-VIC pixel ordering, and border tests passed:
+
+```sh
+go test -count=1 -run 'TestVIC(GAccessPixelAlignment|StepCycleCPUWriteFollowsPixels|BorderPlacement)' .
+```
+
+No production or test source was changed, and no firmware was built or
+flashed for this semantic exclusion. The PR's performance figures do not
+establish a TinyGo speedup. Its separately noted VC-wrap bug is not fixed
+by this PR and was not included in this backport assessment.
 
 ## PR #50 reload-hoist review: 2026-09-15
 
