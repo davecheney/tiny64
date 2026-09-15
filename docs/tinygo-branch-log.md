@@ -70,6 +70,68 @@ cycle-accurate VIC-II/6502-opcode push (the commits below).
 | `cae6672` | test: retain exhaustive VIC reload timing oracle | **skip** | Exhaustively verifies the new `reloadDot` against main's old XSCROLL/multicolor phase rule. Neither the helper nor those graphics-mode semantics exist here; `vic_modes_test.go` is absent. |
 | `4a37e5b` | vic: decode the graphics colours ahead of the dots that use them | **skip** | PR #51 caches main's graphics-mode colour decode and foreground classification at reload/background writes. TinyGo has no mode dispatch, multicolor sequencer or sprite foreground classification: each dot directly selects background0 or the latched standard-text foreground. The targeted repeated decode is absent. |
 
+## Two-colour lookup experiment: 2026-09-15
+
+After the PR #51 review, the maintainer requested a separate standard-text
+lookup experiment. Tested in an isolated worktree based on `3a8df3e`,
+without importing main's graphics modes, reload helper or sprite logic.
+
+The candidate adds `gdColor [2]uint8` beside the sequencer and replaces
+each dotclock's background/foreground branch with
+`gdColor[gdSequencer >> 7]`. Reset initializes both entries, `$D021`
+writes (including register mirrors) update entry zero, and the existing
+`dotclock7` cell-boundary latch updates entry one from the foreground byte.
+Sequencer shifts, border overrides and final four-bit colour masking remain
+unchanged.
+
+Host tests/build/vet and both device builds passed with Go 1.27.1 and
+TinyGo 0.42.0 / LLVM 22.1.4. Added experimental tests exercise all 256
+background values, all 256 foreground values, both high-bit choices and
+all eight dotclock implementations against the original colour rule.
+They also check reset initialization, a real CPU `$D021` store's pixel
+timing, and cache consistency after every cycle of a frame containing
+mirrored background writes and character reloads. Removing the background
+refresh fails consistency at cycle 11; removing the foreground refresh
+fails the colour oracle. Both mutations were restored before the accepted
+candidate capture, and a rebuilt loadable image matched the original
+candidate byte-for-byte.
+
+Tufty A/B/A used the existing MAZE demo, `-opt=2 -scheduler=none`, and
+ten 50-frame windows ending at frames 500 through 950:
+
+| run | mean ms/frame | minimum window mean | maximum window mean |
+|---|---:|---:|---:|
+| baseline A before | 74.797638 | 74.768560 | 74.828940 |
+| two-colour lookup B | 74.232228 | 74.215600 | 74.251500 |
+| restored baseline A after | 74.797206 | 74.770060 | 74.829220 |
+
+The baseline mean is 74.797422ms/frame. The candidate saves
+**0.565194ms/frame (0.7556%)**, with no overlap between candidate and
+baseline window ranges. Baseline means differ by only 0.000432ms.
+This candidate passes the Tufty no-regression gate; no Badge hardware
+timing was measured.
+
+Tufty ELF text shrinks from 200672 to 200632 bytes; data stays 328 bytes
+and BSS grows from 223328 to 223336 bytes. The actual `dotclock6` colour
+selection becomes a shift, address addition and byte load instead of the
+old conditional background/foreground loads; its symbol shrinks from
+220 to 212 bytes. `main.main` shrinks by 32 bytes and moves eight bytes.
+The CPU load/TickPhi2 symbol addresses and sizes are unchanged. These are
+consistent with less pixel-path work, but changes to flash/RAM placement
+mean the measured gain is not attributed exclusively to removed branches.
+Saturated XIP windows were not used for cache conclusions.
+
+The rebuilt baseline's loadable SHA-256 remains
+`50dd1fa34a378749742d85fb865dbe0f59682b5814a6e4493bf55b57564fc632`;
+the candidate is
+`a7225146a3ad3918ae86b5c9bd36ecd959ca83bd38587ca8e3d12d58eb599ca2`.
+The accepted baseline firmware was restored and verified by the final
+serial run. No source change was adopted: this was an experiment.
+The complete source/test patch, ELF/disassembly and raw timing logs are
+preserved in session artifacts under `color-lookup-*`; the isolated
+worktree was removed. The patch is `color-lookup-experiment.patch`,
+SHA-256 `fe8364c86478c65c6b0404a50101d6cd99b9c2cf5e6173bdec82306deeb58439`.
+
 ## PR #51 palette-cache review: 2026-09-15
 
 At 03:40:01 UTC, GitHub REST confirmed PR #51 merged at 03:39:46 UTC,
