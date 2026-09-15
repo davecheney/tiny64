@@ -59,7 +59,6 @@ func runCycles(n int) {
 func TestNMIIgnoresInterruptDisable(t *testing.T) {
 	newNMIFixture(t)
 	cpu.regP = P_INTERRUPT
-	cpu.effectiveI = P_INTERRUPT
 
 	cia1.IRQ = true
 	cia2.IRQ = true

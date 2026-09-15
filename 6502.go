@@ -23,24 +23,9 @@ type DriveCPU struct {
 	// 6502 has no NMI line, unlike the C64's 6510.
 	Interrupt uint8
 
-	// Clock counts elapsed Phi2 cycles, used to time the 2-cycle delay real
-	// hardware needs to recognize an asserted IRQ line (VICE calls this
-	// INTERRUPT_DELAY).
+	// Clock counts elapsed Phi2 cycles.
 	Clock uint64
-
-	// irqLine is the last-seen state of the combined VIA1/VIA2 IRQ line, for
-	// edge detection; irqAssertClock records the Clock value of the most
-	// recent rising edge, so recognition can be held off for 2 cycles after it.
-	irqLine        bool
-	irqAssertClock uint64
-
-	// effectiveI is the Interrupt Disable flag's value as seen by interrupt
-	// recognition, lagging c.regP's I bit by one instruction: SEI/CLI/PLP
-	// change regP immediately, but (due to 6502 pipelining) their effect on
-	// whether an interrupt can be taken isn't visible until the instruction
-	// after next. RTI and the DriveCPU's own interrupt entry are exceptions and
-	// update effectiveI immediately (see their microcode).
-	effectiveI uint8
+	irq   irqState
 
 	// DecimalADCCount counts every ADC/SBC executed while the Decimal flag
 	// is set; LastDecimalADCPC records the PC of the most recent one. adc()
@@ -78,8 +63,7 @@ func (c *DriveCPU) Reset() {
 	c.TState = 0
 	c.Interrupt = 0
 	c.regP = P_INTERRUPT
-	c.effectiveI = P_INTERRUPT
-	c.irqLine = false
+	c.irq = irqState{}
 	lo := c.load(0xFFFC)
 	hi := c.load(0xFFFD)
 	c.PC = uint16(hi)<<8 | uint16(lo)
@@ -133,20 +117,16 @@ func (c *DriveCPU) TickPhi2() {
 	via2.Tick()
 	via2DiskTick(c)
 
-	irq := via1.IRQ || via2.IRQ
-	if irq && !c.irqLine {
-		c.irqAssertClock = c.Clock
-	}
-	c.irqLine = irq
+	opcode, tstate, i := c.Opcode, c.TState, c.regP&P_INTERRUPT
 
 	switch c.TState {
 	// T0: Fetch the opcode, unless a pending IRQ takes over instead,
-	// serviced via BRK's microcode. The 1541's 6502 has no NMI line. Real
-	// hardware needs an asserted IRQ line to be stable for 2 cycles before
-	// it's recognized (see Clock/irqAssertClock).
+	// serviced via BRK's microcode. Acceptance was latched at the preceding
+	// instruction's poll, independently of the live pin and current I flag.
 	case 0:
 		switch {
-		case irq && c.effectiveI == 0 && c.Clock >= c.irqAssertClock+2:
+		case c.irq.pending:
+			c.load(c.PC) // Discarded opcode fetch; PC must not advance.
 			c.Interrupt = 1
 			c.Opcode = 0x00
 			c.TState = 1
@@ -156,12 +136,7 @@ func (c *DriveCPU) TickPhi2() {
 			c.PC++
 			c.TState = 1
 		}
-		// SEI/CLI/PLP change regP immediately, but (6502 pipelining) their
-		// effect on interrupt recognition lags by one instruction: this
-		// syncs effectiveI to regP's current I bit only now, after it was
-		// used for the check above, so it still reflects the PC flag's
-		// value from before whichever instruction just changed it.
-		c.effectiveI = c.regP & P_INTERRUPT
+		c.irq.pending = false
 	case 1:
 		// T1: Execute the instruction based on the opcode
 		switch c.Opcode {
@@ -1650,10 +1625,6 @@ func (c *DriveCPU) TickPhi2() {
 			c.TState = 4
 		case 0x40: // RTI: pull status from incremented SP, then increment SP
 			c.regP = c.pop()
-			// Unlike SEI/CLI/PLP, RTI's restored I flag takes effect
-			// immediately for the very next instruction (no pipelining
-			// delay), since the status register is restored early.
-			c.effectiveI = c.regP & P_INTERRUPT
 			c.TState = 4
 		case 0x41: // EOR (Indirect,X): fetch effective address low byte
 			c.Operand = uint16(c.load(uint16(c.Pointer + c.X))) // zero-page wraparound
@@ -2032,11 +2003,6 @@ func (c *DriveCPU) TickPhi2() {
 				status |= 0x10
 			}
 			c.push(status)
-			c.regP |= 0x04 // Set Interrupt Disable flag
-			// The DriveCPU's own interrupt entry forces I=1 immediately (not
-			// subject to the SEI/CLI/PLP pipelining delay), so a nested
-			// interrupt can't be taken until this handler does CLI/RTI.
-			c.effectiveI = P_INTERRUPT
 			c.TState = 5
 		case 0x01: // ORA (Indirect,X): fetch effective address high byte
 			c.Operand |= uint16(c.load(uint16(c.Pointer+c.X+1))) << 8 // zero-page wraparound
@@ -2317,6 +2283,7 @@ func (c *DriveCPU) TickPhi2() {
 			c.TState = 6
 		case 0x00: // BRK/IRQ: fetch new PCL from vector
 			c.Operand = uint16(c.load(0xFFFE)) // Stash new PCL until T6
+			c.regP |= P_INTERRUPT
 			c.TState = 6
 		case 0x81: // STA (Indirect,X): write A
 			c.store(c.Operand, c.A)
@@ -2495,6 +2462,7 @@ func (c *DriveCPU) TickPhi2() {
 	default:
 		panic("Invalid T-state: " + fmt.Sprintf("%d", c.TState))
 	}
+	c.irq.clock(via1.IRQ || via2.IRQ, i, irqPoll(opcode, tstate, c.TState), false)
 }
 
 // pch returns the high byte of PC
