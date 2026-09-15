@@ -70,6 +70,57 @@ cycle-accurate VIC-II/6502-opcode push (the commits below).
 | `cae6672` | test: retain exhaustive VIC reload timing oracle | **skip** | Exhaustively verifies the new `reloadDot` against main's old XSCROLL/multicolor phase rule. Neither the helper nor those graphics-mode semantics exist here; `vic_modes_test.go` is absent. |
 | `4a37e5b` | vic: decode the graphics colours ahead of the dots that use them | **skip** | PR #51 caches main's graphics-mode colour decode and foreground classification at reload/background writes. TinyGo has no mode dispatch, multicolor sequencer or sprite foreground classification: each dot directly selects background0 or the latched standard-text foreground. The targeted repeated decode is absent. |
 
+## PR #47 revalidation on current TinyGo: 2026-09-15
+
+Reconsidered bank-out head `49278dabe595757d1964c312806b602ab58432de`
+against fetched `origin/tinygo` at `210267b`, after the two-colour lookup
+was merged. This evaluates adoption into TinyGo, not merge readiness
+against main. The local branch at `4be5ba5` has identical source to that
+remote baseline, with additional review documentation.
+
+Applied the previously reviewed seven-file adaptation in a detached
+worktree based on `210267b`. It retains the lightweight virtual drive and
+cached standard-text renderer. Host `go test -count=1 ./...`,
+`go build ./...`, and `go vet ./...` passed. Repeated focused tests cover
+the wedge, latch, colour cache, and additional checks for loading and
+executing machine code at `$8000`, reinstalling the released wedge on
+machine reset, and I/O1 decoding across all CPU banking-bit combinations.
+Both device builds passed with TinyGo 0.42.0 / LLVM 22.1.4.
+
+Fresh Tufty MAZE A/B/A, `-target=tufty2040 -opt=2 -scheduler=none`,
+ten 50-frame windows ending at frames 500 through 950:
+
+| run | mean ms/frame | minimum window mean | maximum window mean |
+|---|---:|---:|---:|
+| current TinyGo A before | 74.232464 | 74.214680 | 74.249900 |
+| bank-out B | 74.460164 | 74.437680 | 74.487620 |
+| restored current TinyGo A after | 74.232108 | 74.213380 | 74.250600 |
+
+Against the averaged baseline of 74.232286ms/frame, bank-out regresses by
+**0.227878ms/frame (0.3070%)**. Baseline means differ by only 0.000356ms,
+and candidate window means do not overlap either baseline range.
+This is less than the previous 0.7447% regression, but still fails the
+strict no-regression gate. The memory benefit remains 8192 additional
+BASIC bytes (38911 total), with reactivation changed to `SYS 828`.
+
+Tufty ELF text grows from 200632 to 203404 bytes, data stays 328 bytes,
+and BSS grows from 223336 to 223344 bytes. Baseline loadable image matches
+the accepted two-colour candidate exactly:
+`a7225146a3ad3918ae86b5c9bd36ecd959ca83bd38587ca8e3d12d58eb599ca2`.
+Bank-out image:
+`ff4539fa9ac676335487d8fc56b03b5bb717845fc2f35ba40c828cf8766064cf`.
+The Badge build (`-opt=2 -scheduler=cores`) remains byte-identical to its
+accepted baseline; no Badge hardware timing was performed. No specific
+code/layout cause is claimed for the Tufty regression.
+
+**Defer adoption.** No source backport or PR merge was performed. The
+current lookup-enabled baseline firmware was restored and verified by
+the final A capture. Candidate patch/tests, ELF images and raw captures
+are preserved as `bankout-lookup-*` session artifacts. Both the current
+TinyGo trial and the cancelled, incorrectly targeted main-review worktree
+were removed after preserving their artifacts. No main-review result was
+used to decide the TinyGo gate.
+
 ## Two-colour lookup experiment: 2026-09-15
 
 After the PR #51 review, the maintainer requested a separate standard-text
