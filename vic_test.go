@@ -349,3 +349,144 @@ func TestVICRasterIRQReachesCPU(t *testing.T) {
 		t.Fatal("CPU did not service VIC raster IRQ")
 	}
 }
+
+// TestVICCounterWrapsAtTenBits states the width of VC directly. Section
+// 3.7.2 of the VIC Article calls it "a 10-bit counter", so advancing it
+// off $3FF wraps to zero rather than reaching $400.
+func TestVICCounterWrapsAtTenBits(t *testing.T) {
+	for _, tc := range []struct {
+		from, want uint16
+	}{
+		// The counter runs past the 1000 bytes of visible video matrix -
+		// see TestVICCAccessReadsTheInvisibleTailOfTheMatrix - and turns
+		// over only at the end of its ten bits.
+		{999, 1000},
+		{1023, 0},
+	} {
+		v := &VICII{}
+		v.Reset()
+		v.idle = false // a g-access only advances VC in display state
+		v.VC = tc.from
+
+		v.cycleGAccess()
+
+		if v.VC != tc.want {
+			t.Errorf("VC = %d after advancing off %d, want %d: VC is ten bits wide", v.VC, tc.from, tc.want)
+		}
+	}
+}
+
+// TestVICLinecrunchKeepsCountersInRange drives section 3.14.4's
+// "Linecrunch". Negating the Bad Line Condition inside a Bad Line that has
+// already begun leaves the sequencer in display state with RC untouched,
+// so RC reaches 7 and stays there, and cycle 58 loads VCBASE from a VC
+// that the line's forty g-accesses have advanced. Doing that on every
+// raster line walks VCBASE up by 40 a line, and the article says where it
+// ends up:
+//
+//	"This eventually makes VCBASE cross the 1000 byte limit of the video
+//	matrix and the VIC will display the last, normally invisible, 24 bytes
+//	of the matrix (where also the sprite data pointers are stored). VCBASE
+//	wraps around to zero when reaching 1024."
+//
+// It is a technique rather than a fault - it scrolls the screen upwards
+// by whole text lines without moving any graphics memory - so the counters
+// have to survive it. Before VC was masked they did not: it ran past $3FF
+// within a hundred lines, and the next c-access indexed colour RAM, which
+// is exactly 1024 bytes, out of range.
+//
+// The crunch stops part way down the screen so that ordinary Bad Lines
+// follow it, which is what puts a c-access behind a counter that has
+// wrapped - the read that used to panic.
+func TestVICLinecrunchKeepsCountersInRange(t *testing.T) {
+	saveMachine(t)
+	newMachine(t)
+	iecBus = nil
+
+	vic.memPointers = 0x14 // screen $0400, chars $1000
+	cia2.PRA, cia2.DDRA = 3, 3
+
+	// Crunch the top half of the display window ($30-$F7) and leave the
+	// rest to run normally.
+	const crunchUntilLine = 0x90
+
+	crunched, badLinesAfter := 0, 0
+	for cycle := range CyclesPerFrame {
+		switch {
+		case vic.rasterLine < crunchUntilLine:
+			switch vic.dot / DotsPerCycle {
+			case 0:
+				// Open the line with DEN set and YSCROLL matching the
+				// beam, so this line's first phi0low sees a Bad Line
+				// Condition and takes the sequencer out of idle state.
+				vic.WriteRegister(0xD011, 0x10|uint8(vic.rasterLine)&0x07)
+			case 1:
+				// Negate it again before cycle 12, the first of the three
+				// cycles that reload VC from VCBASE and, on a Bad Line,
+				// clear RC. Aborting later than this still resets RC,
+				// which is what keeps a normal screen's rows in step and
+				// is exactly what Linecrunch must avoid.
+				if vic.badLine {
+					crunched++
+				}
+				vic.WriteRegister(0xD011, 0x10|(uint8(vic.rasterLine)+1)&0x07)
+			}
+		case vic.badLine:
+			badLinesAfter++
+		}
+
+		vic.StepCycle()
+
+		if vic.VC > 0x3FF || vic.VCBase > 0x3FF {
+			t.Fatalf("cycle %d (raster %d): VC=%#x VCBase=%#x, want both inside ten bits: they are ten bit counters and wrap at 1024",
+				cycle, vic.rasterLine, vic.VC, vic.VCBase)
+		}
+	}
+
+	// A frame that crunched nothing, or that never went back to fetching
+	// afterwards, would satisfy the check above without having tested it.
+	if crunched == 0 {
+		t.Error("no Bad Line was aborted, so nothing was crunched and VC was never driven past the video matrix")
+	}
+	if badLinesAfter == 0 {
+		t.Error("no Bad Line ran after the crunch, so no c-access read colour RAM behind a wrapped counter")
+	}
+}
+
+// TestVICCAccessReadsTheInvisibleTailOfTheMatrix pins the rest of what
+// section 3.14.4 describes. A crunched screen drives VC through 1000-1023,
+// past the 40x25 characters anyone can see, and the article says what the
+// VIC fetches there: "the VIC will display the last, normally invisible,
+// 24 bytes of the matrix (where also the sprite data pointers are
+// stored)".
+//
+// So those offsets are read, not clamped away or skipped. It is worth
+// stating separately from the wrap, because clamping VC at 1000 would
+// also stop it running off the end of colour RAM and would look like a
+// fix.
+func TestVICCAccessReadsTheInvisibleTailOfTheMatrix(t *testing.T) {
+	saveMachine(t)
+	newMachine(t)
+
+	vic.memPointers = 0x14 // video matrix at $0400
+	cia2.PRA, cia2.DDRA = 3, 3
+
+	// Offset 1000 is the first byte past the visible 40x25, and 1016 is
+	// where sprite 0's data pointer lives.
+	ram[0x0400+1000], colorRAM[1000] = 0x5A, 0x0B
+	ram[0x0400+1016], colorRAM[1016] = 0xA5, 0x0C
+
+	for _, tc := range []struct {
+		vc   uint16
+		want uint16
+	}{
+		{1000, 0x0B5A},
+		{1016, 0x0CA5},
+	} {
+		vic.VC, vic.VMLI = tc.vc, 0
+		vic.cycleCAccess()
+		if got := vic.videoMatrixColor[0]; got != tc.want {
+			t.Errorf("c-access at VC=%d read %#04x, want %#04x (colour nibble in the high byte)", tc.vc, got, tc.want)
+		}
+	}
+}
