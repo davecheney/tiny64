@@ -92,11 +92,19 @@ type VICII struct {
 	graphicsMode    uint8
 	multicolor      bool
 	multicolorHalf  bool
-	borderColor     uint8
-	background0     uint8
-	control1        uint8
-	control2        uint8
-	memPointers     uint8
+
+	// gdColor holds the colours the sequencer can emit for each value it
+	// shifts out - two of them in the standard modes, four in the
+	// multicolor ones - and gdForeground marks which of those count as
+	// foreground, the bit sprite collisions and priority are decided on.
+	// refreshGraphicsPalette fills both.
+	gdColor      [4]uint8
+	gdForeground uint8
+	borderColor  uint8
+	background0  uint8
+	control1     uint8
+	control2     uint8
+	memPointers  uint8
 
 	// Signals driven by the VIC-II and sensed by the CPU
 	BA  bool // Bus Available (true = high/free, false = low/stalled)
@@ -219,6 +227,7 @@ func (v *VICII) Reset() {
 	v.interruptStatus = 0
 	v.interruptEnable = 0
 	v.IRQ = false
+	v.refreshGraphicsPalette()
 	v.spriteSpriteCollision = 0
 	v.spriteDataCollision = 0
 	v.spriteDisplay = 0
@@ -285,8 +294,15 @@ func (v *VICII) WriteRegister(addr uint16, value uint8) {
 		v.sampleBorderColorAtWrite()
 	case reg == regBackground0:
 		v.background0 = value
+		v.refreshGraphicsPalette()
 	case reg < 0x2F:
 		v.registers22To2E[reg-0x22] = value
+		if reg <= 0x24 {
+			// $D022-$D024 are the other three background colours; the
+			// rest of this range is sprite colours, which the graphics
+			// sequencer does not read.
+			v.refreshGraphicsPalette()
+		}
 	}
 }
 
@@ -412,6 +428,7 @@ func (v *VICII) loadGraphicsData() {
 	v.multicolor = v.graphicsMode == modeMulticolorBitmap ||
 		(v.graphicsMode == modeMulticolorText && v.videoBuffer&0x0800 != 0)
 	v.multicolorHalf = false
+	v.refreshGraphicsPalette()
 }
 
 // noReloadDot is a dot no cycle can advance onto, marking a cycle in
@@ -443,64 +460,95 @@ func (v *VICII) reloadDot() uint16 {
 	return dot
 }
 
-func (v *VICII) nextGraphicsColor() (byte, bool) {
+// refreshGraphicsPalette works out the colours the graphics sequencer can
+// emit, and which of them are foreground, from the graphics mode, the
+// latched g-access data and the background colour registers.
+//
+// nextGraphicsColor used to decide this per dot, branching on the mode
+// every time, which was around a tenth of a frame spent re-deriving an
+// answer that had not changed.
+//
+// Only two things can change it, so it is rebuilt at exactly those
+// points: a sequencer reload, which brings new g-access data and latches
+// a new mode (loadGraphicsData), and a CPU write to one of the four
+// background colour registers (WriteRegister). Reset establishes it.
+//
+// Rebuilding once per cycle instead would need no invalidation rule at
+// all, and was tried, but it is the wrong trade on the hardware this
+// runs on: the Gopher Badge crops the picture to 320x240, so it paints
+// under four dots per bus cycle, and a rebuild that costs over a hundred
+// instructions cannot pay for itself against four dot decodes.
+// TestGraphicsPaletteStaysConsistentAcrossAFrame is what keeps the
+// invalidation rule honest instead.
+func (v *VICII) refreshGraphicsPalette() {
 	if !v.multicolor {
-		bit := v.gdSequencer & 0x80
-		v.gdSequencer <<= 1
-		if bit == 0 {
-			if v.graphicsMode == modeECMText {
-				return v.backgroundColor(uint8(v.videoBuffer>>6) & 0x03), false
-			}
-			if v.graphicsMode == modeStandardBitmap {
-				return byte(v.videoBuffer) & 0x0F, false
-			}
-			if v.graphicsMode > modeECMText {
-				return 0, false
-			}
-			return v.background0, false
+		switch {
+		case v.graphicsMode == modeECMText:
+			// ECM steals the top two bits of the character pointer to
+			// pick one of the four background registers.
+			v.gdColor[0] = v.backgroundColor(uint8(v.videoBuffer>>6) & 0x03)
+		case v.graphicsMode == modeStandardBitmap:
+			v.gdColor[0] = byte(v.videoBuffer) & 0x0F
+		case v.graphicsMode > modeECMText:
+			v.gdColor[0] = 0 // invalid mode: the display goes black
+		default:
+			v.gdColor[0] = v.background0
 		}
 		switch v.graphicsMode {
 		case modeStandardText, modeMulticolorText, modeECMText:
-			return byte(v.videoBuffer>>8) & 0x0F, true
+			v.gdColor[1] = byte(v.videoBuffer>>8) & 0x0F
+			v.gdForeground = 1 << 1
 		case modeStandardBitmap:
-			return byte(v.videoBuffer>>4) & 0x0F, true
+			v.gdColor[1] = byte(v.videoBuffer>>4) & 0x0F
+			v.gdForeground = 1 << 1
 		default:
-			return 0, false
+			v.gdColor[1] = 0
+			v.gdForeground = 0
 		}
+		return
 	}
-
-	pair := v.gdSequencer >> 6
-	if v.multicolorHalf {
-		v.gdSequencer <<= 2
-	}
-	v.multicolorHalf = !v.multicolorHalf
 
 	switch v.graphicsMode {
 	case modeMulticolorText:
-		switch pair {
-		case 0:
-			return v.background0, false
-		case 1:
-			return v.backgroundColor(1), false
-		case 2:
-			return v.backgroundColor(2), false
-		default:
-			return byte(v.videoBuffer>>8) & 0x07, true
-		}
+		v.gdColor[0] = v.background0
+		v.gdColor[1] = v.backgroundColor(1)
+		v.gdColor[2] = v.backgroundColor(2)
+		// Multicolor text takes its foreground from the low three bits
+		// of the colour nibble; the fourth selects multicolor itself.
+		v.gdColor[3] = byte(v.videoBuffer>>8) & 0x07
+		v.gdForeground = 1 << 3
 	case modeMulticolorBitmap:
-		switch pair {
-		case 0:
-			return v.background0, false
-		case 1:
-			return byte(v.videoBuffer>>4) & 0x0F, true
-		case 2:
-			return byte(v.videoBuffer) & 0x0F, true
-		default:
-			return byte(v.videoBuffer>>8) & 0x0F, true
-		}
+		v.gdColor[0] = v.background0
+		v.gdColor[1] = byte(v.videoBuffer>>4) & 0x0F
+		v.gdColor[2] = byte(v.videoBuffer) & 0x0F
+		v.gdColor[3] = byte(v.videoBuffer>>8) & 0x0F
+		v.gdForeground = 1<<1 | 1<<2 | 1<<3
 	default:
-		return 0, false
+		v.gdColor[0], v.gdColor[1] = 0, 0
+		v.gdColor[2], v.gdColor[3] = 0, 0
+		v.gdForeground = 0
 	}
+}
+
+// nextGraphicsColor shifts one pixel out of the graphics sequencer and
+// reports its colour and whether it is foreground. The shift is the only
+// part of this that is genuinely per dot; the colour it lands on was
+// decided for the whole cycle by refreshGraphicsPalette.
+func (v *VICII) nextGraphicsColor() (byte, bool) {
+	var index uint8
+	if !v.multicolor {
+		index = v.gdSequencer >> 7
+		v.gdSequencer <<= 1
+	} else {
+		// A multicolor pixel is two dots wide, so the pair is only
+		// shifted out on the second of them.
+		index = v.gdSequencer >> 6
+		if v.multicolorHalf {
+			v.gdSequencer <<= 2
+		}
+		v.multicolorHalf = !v.multicolorHalf
+	}
+	return v.gdColor[index], v.gdForeground&(1<<index) != 0
 }
 
 // paintGraphicsPixel emits one pixel through the border unit and sprite compositor.
