@@ -299,6 +299,13 @@ from the ordinary unit tests:
 
     go test -tags gpu ./cmd/internal/desktop
 
+The DOS wedge, 1541 and IEC drive tests in the root package each boot a
+whole emulated C64 and talk to a drive one bus transition at a time, which
+is most of the suite's runtime. They are skipped under `-short`:
+
+    go test -short ./...   # fast local run, drive and wedge tests skipped
+    go test ./...          # everything, as CI runs it
+
 ## Snapshot regression tests
 
 `cmd/snapshot` boots headlessly to `READY.`, injects a PRG directly into RAM,

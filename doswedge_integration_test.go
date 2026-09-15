@@ -13,6 +13,8 @@ import (
 // This fixture is deliberately not distributed with the emulator. Run each
 // subtest in a fresh process with TINY64_UNCLE_AGNUS_PRG pointing at the PRG.
 func TestDOSWedgeUncleAgnus(t *testing.T) {
+	skipShort(t)
+
 	path := os.Getenv("TINY64_UNCLE_AGNUS_PRG")
 	if path == "" {
 		t.Skip("set TINY64_UNCLE_AGNUS_PRG to run the local compatibility check")

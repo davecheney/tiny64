@@ -11,6 +11,8 @@ import (
 // 1541" into its error buffer, and settles into the DOS idle loop waiting
 // for something on the bus to talk to it.
 func TestDriveBootsToIdleLoop(t *testing.T) {
+	skipShort(t)
+
 	m := newMachine(t)
 	AttachDrive(true)
 	m.run(2_000_000)
@@ -29,6 +31,8 @@ func TestDriveBootsToIdleLoop(t *testing.T) {
 // so pulling ATN low has to drag the drive out of its idle loop and into
 // the ATN command handler at $E85B.
 func TestDriveATNInterrupt(t *testing.T) {
+	skipShort(t)
+
 	m := newMachine(t)
 	AttachDrive(true)
 	m.run(2_000_000)
@@ -48,6 +52,8 @@ func TestDriveATNInterrupt(t *testing.T) {
 // if the track image under the head is decoded back into sectors, which is
 // what happens when the head steps away or the motor stops.
 func TestDriveWritesTrackBackToDisk(t *testing.T) {
+	skipShort(t)
+
 	m := newMachine(t)
 	m.run(10_000)
 
@@ -86,6 +92,8 @@ func TestDriveWritesTrackBackToDisk(t *testing.T) {
 // serial bus, the drive's DOS reads the directory off the GCR image of
 // track 18, sends it back a byte at a time, and LIST shows it.
 func TestLoadDirectory(t *testing.T) {
+	skipShort(t)
+
 	m := newMachine(t)
 	InsertDisk(testDisk("TEST DISK", "42", "HELLO"))
 	t.Cleanup(func() { InsertDisk(nil) })
@@ -123,6 +131,8 @@ func TestLoadDirectory(t *testing.T) {
 // better part of a bit time; a transfer that only works at one phase
 // works by luck.
 func TestLoadFile(t *testing.T) {
+	skipShort(t)
+
 	for _, skew := range []int{0, 13, 34, 55, 89, 144} {
 		t.Run(fmt.Sprintf("skew%d", skew), func(t *testing.T) {
 			m := newMachine(t)
@@ -161,6 +171,8 @@ func TestLoadFile(t *testing.T) {
 // becomes part of the D64 again when it is decoded back out of GCR. The
 // KERNAL prints SAVING whatever happens, so the test is the reload.
 func TestSaveAndReload(t *testing.T) {
+	skipShort(t)
+
 	m := newMachine(t)
 	InsertDisk(testDisk("TEST DISK", "42"))
 	t.Cleanup(func() { InsertDisk(nil) })
@@ -203,6 +215,8 @@ func TestSaveAndReload(t *testing.T) {
 // and inserts afterwards. Inserting is what plugs the drive in, so the
 // two orders put the reset and the attach the other way round.
 func TestDiskInsertedBeforeReset(t *testing.T) {
+	skipShort(t)
+
 	saveMachine(t)
 	for i := range ram {
 		ram[i] = 0xAA // stand-in for the power-on noise the front ends write
@@ -231,9 +245,7 @@ func TestDiskInsertedBeforeReset(t *testing.T) {
 // 35 tracks takes about ninety seconds of drive time, so this is not a
 // test to run on every save.
 func TestFormatDisk(t *testing.T) {
-	if testing.Short() {
-		t.Skip("formatting a disk takes ninety seconds of emulated drive time")
-	}
+	skipShort(t)
 
 	m := newMachine(t)
 	InsertDisk(NewDisk())
@@ -345,6 +357,8 @@ func testFileContents(name string) []byte {
 // over: an alternating 05 E0 puts the low nibble of an $05 immediately
 // before the high nibble of an $E0, which is 01111 followed by 11110.
 func TestLoadFileWithSyncLikeData(t *testing.T) {
+	skipShort(t)
+
 	body := []byte{0x00, 0xC0} // load address $C000
 	for i := len(body); i < 254; i++ {
 		if i%2 == 0 {

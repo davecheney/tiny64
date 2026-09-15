@@ -66,6 +66,8 @@ var helloPRG = []byte{
 // symptom of losing that race is not a failed load but a silently
 // corrupt one, so the bytes are compared rather than the screen.
 func TestDriveLoadsFileThroughKERNAL(t *testing.T) {
+	skipShort(t)
+
 	for _, skew := range []int{0, 13, 34, 55, 89, 144} {
 		t.Run(fmt.Sprintf("skew%d", skew), func(t *testing.T) {
 			m := newMachine(t)
@@ -95,6 +97,8 @@ func TestDriveLoadsFileThroughKERNAL(t *testing.T) {
 // mode used by TinyGo targets. It must use the same IEC and KERNAL load path
 // as the D64-backed drive despite holding only the requested program.
 func TestDriveLoadsCompactPRGThroughKERNAL(t *testing.T) {
+	skipShort(t)
+
 	m := newMachine(t)
 	AttachVirtualPRG(8, "HELLO", helloPRG)
 
@@ -111,6 +115,8 @@ func TestDriveLoadsCompactPRGThroughKERNAL(t *testing.T) {
 }
 
 func TestDriveRunsCompactPRGThroughKERNAL(t *testing.T) {
+	skipShort(t)
+
 	m := newMachine(t)
 	prg := []byte{
 		0x01, 0x08, // load address $0801
@@ -130,6 +136,8 @@ func TestDriveRunsCompactPRGThroughKERNAL(t *testing.T) {
 }
 
 func TestDriveListsAndRunsCompactPRGThroughKERNAL(t *testing.T) {
+	skipShort(t)
+
 	m := newMachine(t)
 	prg := []byte{
 		0x01, 0x08, // load address $0801
@@ -152,6 +160,8 @@ func TestDriveListsAndRunsCompactPRGThroughKERNAL(t *testing.T) {
 }
 
 func TestDriveRunsMazePRGThroughKERNAL(t *testing.T) {
+	skipShort(t)
+
 	m := newMachine(t)
 	prg := []byte{
 		0x01, 0x08, // load address $0801
@@ -180,6 +190,8 @@ func TestDriveRunsMazePRGThroughKERNAL(t *testing.T) {
 // error code on the wire at all: the drive simply lets go of both lines
 // after the turnaround and lets the KERNAL time out.
 func TestDriveReportsFileNotFound(t *testing.T) {
+	skipShort(t)
+
 	m := newMachine(t)
 	useDrive(t, virtualDriveDisk(t, "HELLO", helloPRG))
 
@@ -193,6 +205,8 @@ func TestDriveReportsFileNotFound(t *testing.T) {
 // TestDriveLoadsDirectory loads "$", which is not a file on the disk at
 // all but a BASIC program the drive synthesises, and LISTs it.
 func TestDriveLoadsDirectory(t *testing.T) {
+	skipShort(t)
+
 	m := newMachine(t)
 	useDrive(t, virtualDriveDisk(t, "HELLO", helloPRG))
 
@@ -221,6 +235,8 @@ func TestDriveLoadsDirectory(t *testing.T) {
 // data stream (rather than just for filenames) and the BAM/directory
 // allocation underneath.
 func TestDriveSavesAndReloads(t *testing.T) {
+	skipShort(t)
+
 	m := newMachine(t)
 	useDrive(t, FormatDisk("BLANK", "01"))
 
@@ -247,6 +263,8 @@ func TestDriveSavesAndReloads(t *testing.T) {
 // a program rather than at the prompt because INPUT# is illegal in direct
 // mode.
 func TestDriveReportsStatusOnChannel15(t *testing.T) {
+	skipShort(t)
+
 	m := newMachine(t)
 	useDrive(t, virtualDriveDisk(t, "HELLO", helloPRG))
 
@@ -275,6 +293,8 @@ func contains(haystack, needle string) bool {
 // started. Nothing in the device should depend on the C64 having been
 // reset first, but that is worth a test rather than an assumption.
 func TestDriveAttachedBeforeReset(t *testing.T) {
+	skipShort(t)
+
 	saveMachine(t)
 
 	cpu, cia1, cia2 = CPU{}, CIA{}, CIA{}
@@ -319,6 +339,8 @@ func TestDriveAttachedBeforeReset(t *testing.T) {
 // TestResetMidInstructionReboots), and a single fixed offset would only
 // ever exercise whichever combination it happened to hit.
 func TestDriveRecoversFromResetMidTransfer(t *testing.T) {
+	skipShort(t)
+
 	for _, delay := range []int{0, 1, 2, 3, 5, 7, 11, 13, 17, 19, 23, 29} {
 		t.Run(fmt.Sprintf("delay%d", delay), func(t *testing.T) {
 			m := newMachine(t)
@@ -363,6 +385,8 @@ func TestDriveRecoversFromResetMidTransfer(t *testing.T) {
 // padding loop runs zero times and only the closed-file flag is left, so
 // an off-by-one in the padding cannot hide behind a short name.
 func TestDrivesAgreeOnDirectoryText(t *testing.T) {
+	skipShort(t)
+
 	saveMachine(t)
 	disk := FormatDisk("COMPARE DISK", "01")
 	diskImage = disk
@@ -497,6 +521,8 @@ func waitForLoad(m *machine) {
 // disks here do not reach as cheaply: a $A0 in the header, which must
 // become a space before LIST renders it as the token CLOSE.
 func TestDrivesAgreeOnRealDisks(t *testing.T) {
+	skipShort(t)
+
 	for _, name := range []string{"enforcer", "lastnight", "validated"} {
 		t.Run(name, func(t *testing.T) {
 			disk, err := os.ReadFile(filepath.Join("d64", name+".d64"))
