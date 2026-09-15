@@ -844,15 +844,10 @@ func (v *VICII) stepCycle() {
 	// with exactly one call site each.
 	v.dotclock7(reload)
 	v.phi0high()
-	// Phi2 goes out to everything the VIC-II clocks. Each of these is one
-	// consumer of that edge, listed in the order they see it: the CPU runs
-	// its cycle, the CIA timers count it down, and the serial bus steps the
-	// devices hanging off it.
-	//
-	// They are peers, not a chain. In particular the CIAs are not clocked
-	// by the CPU and do not care whether it stalled: TickPhi2 may return
-	// without advancing a T-state when the VIC has taken the bus, and
-	// ciaTick still runs. TestCIATicksEveryBusCycle pins that.
+	// Each sees Phi2 in this order. The CPU first, since the VIC has just
+	// handed it the bus. Then the CIAs, which clock on that Phi2's falling
+	// edge and so observe whatever the CPU's bus cycle wrote. Then the IEC
+	// devices, which find on the bus whatever CIA2 has just driven onto it.
 	cpu.TickPhi2()
 	ciaTick()
 	iecTick()
