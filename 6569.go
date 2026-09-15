@@ -842,7 +842,7 @@ func (v *VICII) stepCycle() {
 	// The CPU runs first, since the VIC has just handed it the bus, and
 	// only on the cycles the VIC has not taken the bus away for a fetch
 	// of its own.
-	if !v.ownsPhi2() {
+	if !v.badLineCAccess() {
 		cpu.TickPhi2()
 	}
 
@@ -1355,19 +1355,12 @@ func (v *VICII) phi0high() {
 	}
 }
 
-// ownsPhi2 reports whether the VIC owns the CPU's Phi2 slot. The emulator
-// omits CPU execution while the VIC performs a bad-line c-access or active
-// sprite DMA fetch.
-func (v *VICII) ownsPhi2() bool {
+// badLineCAccess reports whether the VIC is performing a Bad Line c-access
+// in the current Phi2 slot. The emulator omits CPU execution for this
+// high-level scheduling effect rather than modeling AEC.
+func (v *VICII) badLineCAccess() bool {
 	slot := (v.dot - 1) / DotsPerCycle
-	if v.badLine && slot >= 4 && slot <= 43 {
-		return true
-	}
-	if slot < 47 {
-		return false
-	}
-	sprite := (slot - 47) / 2
-	return sprite < 8 && v.spriteDisplay&(1<<sprite) != 0
+	return v.badLine && slot >= 4 && slot <= 43
 }
 
 // cycleCAccess reads one character pointer + color entry from the video
