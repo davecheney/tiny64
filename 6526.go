@@ -73,7 +73,21 @@ func effective(data, ddr uint8) uint8 {
 // Tick advances both timers by one Phi2 cycle, latching an interrupt flag
 // and asserting IRQ (if unmasked) on underflow. Only "count Phi2 pulses"
 // mode is implemented; CNT-pin and timer-A-cascade modes are not.
+//
+// The stopped-timer test is split from the work it guards so that this
+// half fits Go's inlining budget and the call disappears at the call site.
+// Both CIAs are ticked on every one of a PAL frame's 19656 bus cycles, so
+// a call that does nothing still costs about 1ns a cycle. A CIA with both
+// timers stopped is the common case for CIA2, and for CIA1 until the
+// KERNAL starts the jiffy clock.
 func (c *CIA) Tick() {
+	if !c.runningA && !c.runningB {
+		return
+	}
+	c.tick()
+}
+
+func (c *CIA) tick() {
 	if c.runningA {
 		if c.timerA > 0 {
 			c.timerA--
