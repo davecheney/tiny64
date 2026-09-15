@@ -756,6 +756,74 @@ size figures establishes a CPU-tick speedup. Hardware A/B/A must compare
 A against D using the same MAZE windows and target flags when the Tufty
 becomes available.
 
+## Table-free BA/RDY and AEC candidate
+
+The isolated D candidate subsequently applied #58 as `70a09c4` (stage E).
+Its Tufty flash was 200564 bytes, exactly 256 below D, with unchanged
+`.data`, `.bss` and reported RAM. This remains isolated work, not adoption
+of #54-#58 into this branch.
+
+Stage F replaces the opcode write-cycle table with a predicate decoding
+the implemented writing instruction families. It is evaluated only while
+BA is low; the generated ARM code uses comparisons/arithmetic rather
+than a replacement opcode-indexed table. Normal opcode/T-state dispatch
+tables are unchanged in purpose.
+
+BA now drives CPU read holds independently of AEC. The VIC counts three
+completed BA-low cycles before withholding Phi2 ownership, including a
+late badline, and immediately releases ownership when BA rises. CPU
+external reads/writes are gated by AEC; CPU internal port accesses are not.
+Synchronous reset-vector initialization bypasses the previous cycle's AEC.
+The CLI counts actual held cycles rather than treating all AEC-low cycles
+as read holds, and does not report the last bus access again while held.
+
+The timing source is [Bauer section 2.4.3 and sections 3.14.3/3.14.6](https://www.cebix.net/VIC-Article.txt),
+linked by [C64 Wiki's VIC-II page](https://www.c64-wiki.com/wiki/VIC-II).
+There is no instruction-boundary BA handshake: writes can finish during
+the warning, but the first read holds even in the middle of an instruction.
+
+**Fidelity boundary:** a late c-access during the warning now reads `$FF`
+for the character pointer rather than accessing RAM without ownership.
+Its CPU-bus-derived colour is not implemented (the candidate uses zero).
+Repeated held-read bus side effects remain unmodeled. An externally forced
+AEC-low CPU read sees the last modeled bus byte, not an electrical bus
+simulation. This is not a claim of complete FLI/VSP or transistor-level
+bus fidelity; extending that model is separate from this focused change.
+
+Tufty, TinyGo 0.42.0, `-opt=2 -scheduler=none`, bytes:
+
+| stage | flash | ELF `.data` | ELF `.bss` | reported RAM |
+|---|---:|---:|---:|---:|
+| A: accepted #55 baseline | 199580 | 328 | 223344 | 227768 |
+| E: +#54+#56+#57+#58 | 200564 | 328 | 223324 | 227748 |
+| F: table-free BA/AEC separation | 200356 | 328 | 223324 | 227748 |
+
+F is 208 flash bytes smaller than E, but still 776 bytes larger than A.
+E-to-F symbol deltas are: table -256, `main.main` +48, `CPU.TickPhi2` +12,
+`CPU.store` -8, `Reset` +4, `CPU.load` -4. These sum to -204; section
+alignment accounts for the remaining -4. The VIC symbol grows by two
+bytes (156 to 158), absorbed by existing alignment: total BSS and reserved
+stacks are unchanged. Badge F builds with `-scheduler=cores`: flash 146352,
+`.data` 260, `.bss` 222372, reported RAM 226728.
+
+`go test ./...`, `go build ./...`, `go vet ./...` and both firmware builds
+pass. The independent bus oracle covers all 256 opcode values and
+read/write phases, including implemented illegal instructions; new tests
+exercise held microcode state, BRK/IRQ/NMI write sequences, three warning
+cycles, 40 stolen cycles, late takeover, release/reset and AEC-gated I/O.
+The 24 interrupt reference schedules retain their expectations, with their
+hold inputs moved from AEC to BA. Existing wedge, boot, keyboard and pixel
+ordering tests pass.
+
+Source changes remain in the isolated `irq-direct-trial` worktree,
+committed as `fa530554589adffff28d16369083aa28f9ad8a86`.
+Session artifacts include `irq-F-{tufty,badge}.{elf,bin,uf2}`,
+`irq-F-tests.log`, build/vet logs, CPU disassembly and `irq-F-table-free.patch`.
+No native performance benchmark, hardware access, push or source adoption
+was performed. Net flash savings do not establish a frame-time improvement:
+the predicate, ownership checks and VIC warning counter still need the
+normal hardware gate.
+
 ## Flashing and Monitoring Workflow (Tufty 2040)
 
 - **Build & Flash**: `tinygo flash -target=tufty2040 -opt=2 -scheduler=none ./cmd/tufty2040` (compiles and flashes in a single step).
