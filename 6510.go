@@ -2903,9 +2903,9 @@ func (c *CPU) sbc(value uint8) {
 //
 // Opcodes the core does not implement read as 0, which degrades to the
 // conservative "always stall" behaviour; they panic on execution anyway.
-// TestCPUWriteCyclesTableMatchesMicrocode re-derives this table from the
-// microcode and fails if the two ever drift apart.
-var cpuWriteCycles = [256]uint16{
+// All write T-states fit in eight bits. TestCPUWriteCyclesMatchesMicrocode
+// re-derives this table from the microcode and checks its values and width.
+var cpuWriteCycles = [256]uint8{
 	0x001C, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0018, 0x0000, 0x0004, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0030, 0x0000, // $00
 	0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0030, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0060, 0x0000, // $10
 	0x0018, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0018, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0030, 0x0000, // $20
