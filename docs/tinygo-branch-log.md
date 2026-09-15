@@ -50,11 +50,11 @@ cycle-accurate VIC-II/6502-opcode push (the commits below).
 | `1c72cf1` | Match raster IRQ recognition timing | **skip** | Revises `d8ec797`'s delay again and uses `VICII.IRQ` in the new CPU test. Neither that test's base nor the per-cycle combined VIC/CIA IRQ sampling exists here. Patch check fails; do not transplant the constant into the different CIA-only path. |
 | `6ea675f` | Sample border color writes during Phi2 | **skip** | Repaints the deferred right-border buffer introduced by skipped `31e8125`; that buffer and its edge constants do not exist here. Implementation and test patch checks fail. |
 | `0887b36` | desktop: allow the window to be resized | **skip** | Applies cleanly and the isolated desktop build passes with this branch's Ebitengine 2.9.11. `tinygo list -deps` confirms neither device imports Ebitengine or the desktop package. Like `f482449`, this is a desktop-only change rather than a device improvement; no GUI behavior claim was made. |
-| `c0ef07e` | pla: map an 8K cartridge's ROML image at $8000-$9FFF | **deferred** | Device-relevant prerequisite for the cartridge wedge, but adds a condition to CPU memory reads. Tested with the complete cartridge series below, which failed the no-regression gate. Not measured independently. Its test-file conflict must omit the unrelated CIA2 video-bank test from rejected `e9f8ccc`, while retaining both new CPU ROML tests. |
-| `be1a4e1` | doswedge: give the assembler an origin, drop patchWord | **skip** | Applies cleanly; included in the tested cartridge series. Preparatory assembler refactor, with no independent device feature needed while the RAM-resident wedge is retained. No standalone firmware timing or image-equivalence measurement was made in this review. |
-| `7093968` | doswedge: deliver the wedge as an 8K autostart cartridge | **rejected as tested** | Host tests and both device builds pass after preserving this branch's removed-drive state, but the complete cartridge series costs an additional 0.08998ms/frame (0.1204%) in the Tufty A/B/A below. The series, not any individual hunk, is the measured unit. Keep the RAM wedge and its existing API/SYS address. |
-| `0882c98` | doswedge: test the cartridge boot path | **skip** | All new cartridge tests pass in the isolated series, including ROM signature, boot vector, free-memory report, workspace, and RESTORE checks. They assert the rejected cartridge behavior, not this branch's retained RAM wedge. |
-| `90081d2` | doc: describe the wedge as the cartridge it now is | **skip** | README changes and the CLI cartridge-exclusivity guard belong with `7093968`. Tested as part of that series, but taking them alone would document the wrong SYS address and memory layout and forbid combinations the RAM wedge does not consume a cartridge slot for. |
+| `c0ef07e` | pla: map an 8K cartridge's ROML image at $8000-$9FFF | **picked**, commit `1fe666b` | Cartridge prerequisite, accepted with the complete series by explicit approval below. Omitted only the unrelated CIA2 video-bank test dragged into the conflict from rejected `e9f8ccc`; retained both new CPU ROML tests. When added without using a cartridge, its Tufty flash image is byte-identical to baseline because the unused decoder is optimized away. |
+| `be1a4e1` | doswedge: give the assembler an origin, drop patchWord | **picked (full)**, commit `c5cb375` | Applied cleanly as preparation for the cartridge. Keep it with the complete series: the intermediate RAM-wedge build has a substantially different flash layout and measured 88.124586ms/frame, unlike the complete series' 74.797776ms/frame. |
+| `7093968` | doswedge: deliver the wedge as an 8K autostart cartridge | **picked**, commit `4290e95` | Preserved the removed-drive state when resolving Reset and test snapshot conflicts. Host tests and both device builds pass. The measured full-series cost of 0.08998ms/frame (0.1204%) was explicitly accepted on 2026-09-15; this supersedes the initial rejection below. No experimental decoder reordering was included. |
+| `0882c98` | doswedge: test the cartridge boot path | **picked (full)**, commit `686c4e3` | Cartridge tests cover ROM signature, boot vector, free-memory report, workspace, and RESTORE behavior; all pass on the virtual-drive branch. |
+| `90081d2` | doc: describe the wedge as the cartridge it now is | **picked**, commit `65cba3d` | Kept the cartridge README and CLI exclusivity guard. Follow-up documentation removes this branch's obsolete `-drive=virtual` example flag and clarifies that DisableDOSWedge immediately unmaps ROM, so Reset must precede further CPU stepping. |
 
 ## Review and Tufty A/B/A: 2026-09-15
 
@@ -104,12 +104,40 @@ regression, not a large performance problem, but it does not pass this
 branch's strict no-regression rule. It does not establish which part of
 the series causes the difference, and no Gopher Badge timing was measured.
 The baseline firmware was restored and its serial timing re-measured as
-the final A run. No source backports from this review were retained.
+the final A run. At this initial review checkpoint no source backports were
+retained; the subsequent explicit acceptance below supersedes that decision.
 
 The XIP telemetry becomes invalid near frame 650 (over 100%, followed by
 0/0 access deltas) in all three runs. Those samples were not used to infer
 cache behavior or explain the timing difference; `emulate=` is measured
 separately. This review did not change the telemetry implementation.
+
+### Explicit acceptance of the cartridge series
+
+On 2026-09-15 the maintainer requested the complete cartridge series be
+backported after reviewing the measured regression. This is an explicit
+exception to the no-regression gate for these five commits, not a change
+to the branch's general backport rule.
+
+The intervening investigation also measured the assembler-only intermediate
+at 88.124586ms/frame. Its `CPU.load`, `CPU.TickPhi2`, and `main.main`
+instruction sequences match baseline after normalizing relocated addresses,
+but the smaller assembler shifts `main.main` and the embedded ROMs in flash.
+Across unsaturated windows ending at frames 200 through 600, its XIP hit
+rate was 99.1831%, versus baseline's 99.9605%. This is evidence of sensitivity
+to flash placement, not evidence that the complete series loses 13ms.
+A linker-only padding experiment was built and verified to restore the
+baseline hot-function/ROM addresses, but was not measured on hardware before
+the decision to backport. The decoder-reordering experiment was not adopted.
+These experiments do not conclusively attribute the full series' 0.09ms cost.
+
+The accepted checkout passed `go test ./...`, `go build ./...`, and
+`go vet ./...`, plus both device builds with the target-specific scheduler
+flags above. Its loadable Tufty image is byte-identical to the tested full
+cartridge trial (`arm-none-eabi-objcopy -O binary`, then `cmp`). The accepted
+firmware was flashed to the Tufty and left running: a fresh ten-window
+capture ending at frames 500 through 950 measured 74.797738ms/frame
+(window range 74.769480-74.830820ms), reproducing the earlier cartridge run.
 
 ## Performance investigation: frame-time gap vs main's ~70ms target
 

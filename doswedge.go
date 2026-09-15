@@ -85,10 +85,9 @@ func EnableDOSWedge() {
 	bus.Insert(dosWedgeROM(), false, true, false, true)
 }
 
-// DisableDOSWedge unplugs the cartridge. Like pulling one out of a real
-// machine it takes effect at the next Reset; a wedge that is already
-// running stays until then, or until @Q retires it. It empties the
-// expansion port, whatever is in it.
+// DisableDOSWedge immediately unplugs the cartridge, whatever is in the
+// expansion port. Call Reset before stepping the CPU again: BASIC's
+// main-loop vector may still point into the now-unmapped cartridge ROM.
 func DisableDOSWedge() {
 	bus.Remove()
 }

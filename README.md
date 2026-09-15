@@ -45,7 +45,7 @@ itself and points BASIC's main-loop vector at a handler that runs from ROM at
 `$8000-$9FFF`:
 
     go run ./cmd/c64 -disk demo.d64 -wedge
-    go run ./cmd/c64cli -disk demo.d64 -drive=virtual -wedge
+    go run ./cmd/c64cli -disk demo.d64 -wedge
 
 The cartridge prints `DOS WEDGE ACTIVE` as it starts up, just above the first
 `READY.`, and accepts the historical direct-mode DOS Wedge / DOS Manager 5.1
