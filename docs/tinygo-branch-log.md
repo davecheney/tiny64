@@ -510,6 +510,51 @@ Not backported. If revisited, it needs its own A/B on the Tufty 2040 (and
 ideally the Gopher Badge too, since this branch targets both) rather than
 assuming the Badge result transfers.
 
+## Two-colour lookup adoption and validation: 2026-09-15
+
+Adopt the independently tested TinyGo optimization on `2ed36d5`: each of
+the eight dotclocks selects `gdColor[gdSequencer>>7]` instead of branching
+between background and foreground. Reset initializes the pair from the
+retained background register and zero foreground; `$D021` and its mirrors
+update the background immediately, and the existing dotclock7 graphics
+latch updates the foreground. This is not a backport of main PR #51 and
+does not introduce graphics modes, sprites, or PR #50/#51 helpers.
+
+Tufty 2040 MAZE A/B/A used TinyGo 0.42.0, LLVM 22.1.4 and Go 1.27.1,
+with `-target=tufty2040 -opt=2 -scheduler=none`. Each run used ten
+50-frame windows ending at frames 500 through 950:
+
+| firmware | mean ms/frame | window range ms/frame |
+|---|---:|---:|
+| Baseline before | 74.797638 | 74.768560-74.828940 |
+| Two-colour lookup | 74.232228 | 74.215600-74.251500 |
+| Restored baseline | 74.797206 | 74.770060-74.829220 |
+
+Against the average baseline of 74.797422ms/frame, the candidate saves
+**0.565194ms/frame (0.7556%)**; baseline drift is 0.000432ms/frame.
+Tufty text shrinks from 200672 to 200632 bytes, data stays at 328 bytes,
+and BSS intentionally grows from 223328 to 223336 bytes (+8).
+`dotclock6` shrinks from 220 to 212 bytes, with shift/add/byte-load colour
+selection replacing conditional loads. `main.main` shrinks by 32 bytes
+and moves by 8 bytes; layout changes prevent attributing the whole gain
+exclusively to branch removal. `CPU.load` and `TickPhi2` retain their
+sizes and addresses. Late-window XIP counters saturate, so they do not
+support cache conclusions.
+
+Validation covers all background/foreground byte values and both
+sequencer high-bit choices across all eight dotclocks, reset, actual CPU
+`$D021` pixel timing, and a full frame of mirrored writes/cache consistency.
+The experiment's background-update mutation failed at cycle 11 and its
+foreground-update mutation failed the pixel oracle; both were restored.
+Final host checks are `go test -count=1 ./...`, `go build ./...`, and
+`go vet ./...`. Both device firmware builds pass, using the Tufty flags
+above and `-target=gopher-badge -opt=2 -scheduler=cores` for the Badge.
+The extracted final images match the experiment images byte-for-byte;
+the Tufty candidate SHA-256 is
+`a7225146a3ad3918ae86b5c9bd36ecd959ca83bd38587ca8e3d12d58eb599ca2`.
+No Badge hardware timing was performed. The experiment restored the
+physical Tufty baseline; PR preparation did not flash hardware.
+
 ## Flashing and Monitoring Workflow (Tufty 2040)
 
 - **Build & Flash**: `tinygo flash -target=tufty2040 -opt=2 -scheduler=none ./cmd/tufty2040` (compiles and flashes in a single step).
