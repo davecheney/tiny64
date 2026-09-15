@@ -146,3 +146,65 @@ func TestRestoreSurvivesKeyboardRelease(t *testing.T) {
 		t.Errorf("NMIs taken after RESTORE = %d, want 1", ram[0x0010])
 	}
 }
+
+// nmiEligibleAfter returns how many Phi2 cycles pass after trigger before
+// the CPU will service the NMI, or -1 if it never does. Every cycle but
+// the last is stalled with AEC low, which holds the CPU at T0 while Phi2
+// keeps running: that isolates the synchronization delay from whatever
+// instruction boundary would otherwise have decided when T0 came round,
+// and at the same time pins the rule that a stalled cycle still counts
+// toward the delay. Phi2 does not stop because the VIC-II took the bus,
+// and neither do the NMI synchronizing flip-flops.
+func nmiEligibleAfter(t *testing.T, trigger func()) int {
+	t.Helper()
+	for cycles := 1; cycles <= 8; cycles++ {
+		newNMIFixture(t)
+		vic.BA, vic.AEC = true, true
+		trigger()
+		for range cycles - 1 {
+			vic.AEC = false
+			cpu.TickPhi2()
+		}
+		vic.AEC = true
+		cpu.TickPhi2()
+		if cpu.Interrupt == 2 {
+			return cycles
+		}
+	}
+	return -1
+}
+
+// The 6510 does not act on an NMI edge the moment it arrives: two Phi2
+// cycles of synchronization pass first. The two ways an edge reaches the
+// latch retire a different amount of that delay on the cycle they arrive,
+// so they do not answer with the same number, and both answers are load
+// bearing.
+//
+// CIA2 raises its line between cycles, and TickPhi2's own edge detect sees
+// it - after that cycle's countdown has already been retired. So the
+// arriving cycle contributes nothing and the edge becomes eligible on the
+// third TickPhi2. RESTORE calls triggerNMI from outside TickPhi2
+// altogether, so the first TickPhi2 after the press retires one of the two
+// and it becomes eligible on the second.
+func TestNMISynchronizationDelay(t *testing.T) {
+	if got := nmiEligibleAfter(t, func() { cia2.setIRQ(true) }); got != 3 {
+		t.Errorf("CIA2's NMI edge was serviced after %d Phi2 cycles, want 3", got)
+	}
+	if got := nmiEligibleAfter(t, func() { keyboard.Restore() }); got != 2 {
+		t.Errorf("RESTORE's NMI edge was serviced after %d Phi2 cycles, want 2", got)
+	}
+
+	// A fresh edge arriving while an earlier one is still latched restarts
+	// the delay, the way re-clocking the synchronizing flip-flops would.
+	// One of the two cycles has already gone by when the second RESTORE
+	// lands, so an implementation that let the first edge's progress stand
+	// would answer 1 here rather than 2.
+	if got := nmiEligibleAfter(t, func() {
+		keyboard.Restore()
+		vic.AEC = false
+		cpu.TickPhi2()
+		keyboard.Restore()
+	}); got != 2 {
+		t.Errorf("a re-armed NMI edge was serviced after %d further Phi2 cycles, want 2", got)
+	}
+}

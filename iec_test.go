@@ -162,11 +162,19 @@ func TestAttachIECDoesNotWriteThroughSnapshots(t *testing.T) {
 // clocked it once on each. So each tick is also held to its beam
 // position: it must land on a bus-cycle boundary, and it must be exactly
 // one bus cycle on from the tick before it.
+//
+// Beam position cannot say whether the CPU ran before the tick or after
+// it, though, and that is the other half of the contract. CIA2's timer A
+// can: armPhi2Counter starts it counting Phi2 pulses, and CIA.Tick is
+// reached only from CPU.TickPhi2, above its stall return. So a timer that
+// has counted down exactly ticks+1 times at the head of iecTick says the
+// CPU's Phi2 for this cycle has already happened, and that no cycle got
+// an extra one.
 type countingPeripheral struct {
-	addr       uint8
-	ticks      int
-	startClock uint64
-	wrongClock int
+	addr      uint8
+	ticks     int
+	startPhi2 uint16
+	wrongPhi2 int
 
 	// last is the previous tick's beam position in dots from the top of
 	// the frame; offPhase and badGaps count the ticks that broke each of
@@ -183,8 +191,8 @@ func (*countingPeripheral) iecDATAOut() bool { return false }
 
 func (c *countingPeripheral) iecTick() {
 	pos := int(vic.rasterLine)*DotsPerLine + int(vic.dot)
-	if cpu.Clock != c.startClock+uint64(c.ticks)+1 {
-		c.wrongClock++
+	if cia2.timerA != c.startPhi2-uint16(c.ticks)-1 {
+		c.wrongPhi2++
 	}
 	if vic.dot%DotsPerCycle != 0 {
 		c.offPhase++
@@ -201,6 +209,19 @@ func (c *countingPeripheral) iecTick() {
 }
 
 func (c *countingPeripheral) iecAddress() uint8 { return c.addr }
+
+// armPhi2Counter turns CIA2's timer A into a free-running count of Phi2
+// cycles and returns its starting value. CIA2 is the one the KERNAL leaves
+// idle - CIA1 owns the jiffy interrupt - and 0xFFFF is more than three
+// PAL frames of headroom, so it counts straight down without underflowing
+// and reloading, and without ever raising the NMI it is wired to.
+func armPhi2Counter() uint16 {
+	cia2.Store(0x0E, 0x00) // stop, so the high byte write loads the counter
+	cia2.Store(0x04, 0xFF)
+	cia2.Store(0x05, 0xFF)
+	cia2.Store(0x0E, 0x01) // start, continuous, counting Phi2
+	return cia2.timerA
+}
 
 // Both public stepping APIs must clock IEC once per cycle, after the CPU,
 // including on blanked lines and across frame wraps. Beam position alone
@@ -223,12 +244,19 @@ func TestBusIsClockedOnEveryFramePath(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			m := newMachine(t)
+			// One frame of warm-up first. IOINIT, in the first hundred
+			// cycles after reset, is the only code in the boot path that
+			// writes CIA2's timer registers, and timer A has to be left
+			// alone to stand in for the cycle counter below. A whole
+			// frame also leaves the beam exactly where Reset left it, so
+			// the offsets below still mean what they say.
+			m.run(CyclesPerFrame)
 			m.run(tc.startCycles)
 			startDot, startLine := vic.dot, vic.rasterLine
 			dev := &countingPeripheral{
-				addr:       9,
-				startClock: cpu.Clock,
-				last:       int(startLine)*DotsPerLine + int(startDot),
+				addr:      9,
+				startPhi2: armPhi2Counter(),
+				last:      int(startLine)*DotsPerLine + int(startDot),
 			}
 			attachIEC(dev)
 			tc.run()
@@ -239,11 +267,14 @@ func TestBusIsClockedOnEveryFramePath(t *testing.T) {
 			if dev.ticks != CyclesPerFrame {
 				t.Errorf("IEC ticks = %d, want %d", dev.ticks, CyclesPerFrame)
 			}
-			if got := cpu.Clock - dev.startClock; got != CyclesPerFrame {
-				t.Errorf("CPU clocks = %d, want %d", got, CyclesPerFrame)
+			if !cia2.runningA || cia2.latchA != 0xFFFF {
+				t.Fatal("the emulated program reprogrammed CIA2 timer A, which this test is using as its Phi2 count")
 			}
-			if dev.wrongClock != 0 {
-				t.Errorf("%d IEC ticks did not follow the corresponding CPU Phi2", dev.wrongClock)
+			if got := dev.startPhi2 - cia2.timerA; got != CyclesPerFrame {
+				t.Errorf("CPU Phi2 cycles = %d, want %d", got, CyclesPerFrame)
+			}
+			if dev.wrongPhi2 != 0 {
+				t.Errorf("%d IEC ticks did not follow the corresponding CPU Phi2", dev.wrongPhi2)
 			}
 			if dev.offPhase != 0 {
 				t.Errorf("%d IEC ticks were not on a bus-cycle boundary", dev.offPhase)
@@ -252,7 +283,7 @@ func TestBusIsClockedOnEveryFramePath(t *testing.T) {
 				t.Errorf("%d IEC ticks were not one cycle apart (first gap = %d dots, want %d)", dev.badGaps, dev.firstBadGap, DotsPerCycle)
 			}
 			vic.StepCycle()
-			if dev.ticks != CyclesPerFrame+1 || dev.wrongClock != 0 || dev.offPhase != 0 || dev.badGaps != 0 {
+			if dev.ticks != CyclesPerFrame+1 || dev.wrongPhi2 != 0 || dev.offPhase != 0 || dev.badGaps != 0 {
 				t.Fatal("StepCycle after the frame did not preserve CPU/IEC cadence")
 			}
 		})

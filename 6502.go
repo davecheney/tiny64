@@ -23,9 +23,7 @@ type DriveCPU struct {
 	// 6502 has no NMI line, unlike the C64's 6510.
 	Interrupt uint8
 
-	// Clock counts elapsed Phi2 cycles.
-	Clock uint64
-	irq   irqState
+	irq irqState
 
 	// DecimalADCCount counts every ADC/SBC executed while the Decimal flag
 	// is set; LastDecimalADCPC records the PC of the most recent one. adc()
@@ -110,8 +108,6 @@ func (c *DriveCPU) pop() uint8 {
 // Unlike the C64's CPU, the drive's 6502 is never stalled: there's no
 // other chip (VIC-II equivalent) that steals the bus from it.
 func (c *DriveCPU) TickPhi2() {
-	c.Clock++
-
 	via1SampleATN()
 	via1.Tick()
 	via2.Tick()
