@@ -21,7 +21,7 @@ func TestVICStepCycleStalledReadClocksCIAs(t *testing.T) {
 		c.Store(0x0E, 1)
 	}
 	startClock := cpu.Clock
-	for n := uint64(1); n <= 3; n++ {
+	for n := uint(1); n <= 3; n++ {
 		vic.StepCycle()
 		if vic.BA || vic.AEC {
 			t.Fatalf("cycle %d: bad line did not take the bus", n)

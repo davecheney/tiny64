@@ -61,29 +61,39 @@ const (
 // gates RUN on the actual tokenized program in RAM instead of a wall-clock
 // delay, so the sequence remains correct if IEC transfer timing changes.
 type demoLoader struct {
-	stage    demoStage
-	keys     []keyStroke
-	keyIndex int
-	pressed  bool
-	deadline uint64
+	stage       demoStage
+	keys        []keyStroke
+	keyIndex    int
+	pressed     bool
+	phaseStart  uint
+	phaseCycles uint
+}
+
+func (d *demoLoader) wait(cycles uint) {
+	d.phaseStart = tiny64.GetCPU().Clock
+	d.phaseCycles = cycles
+}
+
+func (d *demoLoader) waited() bool {
+	return tiny64.GetCPU().Clock-d.phaseStart >= d.phaseCycles
 }
 
 func (d *demoLoader) start(keys []keyStroke) {
 	d.keys = keys
 	d.keyIndex = 0
 	d.pressed = false
-	d.deadline = tiny64.GetCPU().Clock
+	d.wait(0)
 }
 
 func (d *demoLoader) typeKeys() bool {
-	if tiny64.GetCPU().Clock < d.deadline {
+	if !d.waited() {
 		return false
 	}
 	if d.pressed {
 		tiny64.Keys().ReleaseAll()
 		d.pressed = false
 		d.keyIndex++
-		d.deadline = tiny64.GetCPU().Clock + keyPhaseCycles
+		d.wait(keyPhaseCycles)
 		return d.keyIndex == len(d.keys)
 	}
 
@@ -93,7 +103,7 @@ func (d *demoLoader) typeKeys() bool {
 	}
 	tiny64.Keys().Press(key.key)
 	d.pressed = true
-	d.deadline = tiny64.GetCPU().Clock + keyPhaseCycles
+	d.wait(keyPhaseCycles)
 	return false
 }
 
@@ -124,7 +134,7 @@ func (d *demoLoader) reset() {
 	d.keys = nil
 	d.keyIndex = 0
 	d.pressed = false
-	d.deadline = 0
+	d.phaseStart, d.phaseCycles = 0, 0
 }
 
 // tick advances the demo's boot sequence: wait for the BASIC prompt, type
