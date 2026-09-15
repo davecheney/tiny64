@@ -269,7 +269,7 @@ func TestVICRasterIRQTriggersWhenCompareIsWrittenOnCurrentLine(t *testing.T) {
 
 		v.WriteRegister(0xD012, 2)
 		v.dot = DotsPerLine - 1
-		v.dotclock7()
+		v.dotclock7(v.reloadDot())
 		if !v.IRQ {
 			t.Fatal("raster IRQ did not trigger after advancing to a new raster line")
 		}
