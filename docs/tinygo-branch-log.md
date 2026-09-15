@@ -15,6 +15,68 @@ line each build already prints over serial, average over 50 frames).
 Anything that only affects the real 1541 is out of scope entirely, since
 that hardware model no longer exists on this branch.
 
+## Independent #57 trial: no demonstrated improvement, 2026-09-15
+
+The user requested #57 alone against the accepted baseline, with adoption
+conditional on improvement. Source candidate `4fc9ccc` starts from recovery
+tip `2c34100` and changes only RESTORE handling, its tests and documentation.
+It removes the per-Phi2 keyboard pulse countdown and directly sets the
+existing `nmiLatch`/`nmiLatchClock` on a RESTORE press. CIA2 remains sampled
+at opcode fetch, and the existing IRQ delay/mask handling and AEC stall
+behavior are unchanged. No #54 clocked IRQ/write-cycle table or #56 CIA
+notification framework is included.
+
+As in #57, RESTORE can deliver an NMI while CIA2 holds its line asserted,
+and frontends must call it once per press edge. Tests cover that overlap,
+fresh CIA2 edges, recognition delay, holds, repeat presses, reset, release,
+unconnected keyboards and existing KERNAL/wedge behavior.
+
+Host `go test -count=1 ./...`, `go build ./...`, `go vet ./...` and focused
+RESTORE/reset/NMI/wedge checks pass. Both TinyGo target builds pass with
+TinyGo 0.42.0 / LLVM 22.1.4 / Go 1.27.1, `-opt=2`, Tufty
+`-scheduler=none`, Badge `-scheduler=cores`.
+
+| Tufty firmware | Flash | Data | BSS | Static RAM including 4096 stack bytes |
+|---|---:|---:|---:|---:|
+| Baseline | 199580 | 328 | 223344 | 227768 |
+| #57 only | 199724 | 328 | 223340 | 227764 |
+
+Tufty flash grows 144 bytes despite the source simplification; static RAM
+falls four bytes. Badge flash/RAM are 145680/226744 bytes, compared with
+145920/226752 for baseline. Size does not predict frame-time improvement.
+
+Reused the already-measured baseline without flashing it again. The one
+new #57-only run used the same MAZE workload, ten 50-frame windows ending
+at frames 500 through 950, and continued through frame 1000.
+
+| Firmware | Mean ms/frame | Window range ms/frame |
+|---|---:|---:|
+| Baseline, reused A-restored | 74.855054 | 74.831740-74.888820 |
+| #57 only | 74.868554 | 74.850760-74.894560 |
+
+The observed difference is **+0.013500ms/frame (+0.018035%)**, not an
+improvement. Windows overlap and this is a sequential comparison with a
+reused baseline, not evidence for a precisely established tiny regression.
+The conditional approval to merge on improvement is therefore **not met**.
+Keep this as an isolated trial; no adoption, PR merge or push was performed.
+
+The #57-only image was left on the Tufty, as requested for these comparisons;
+no baseline reflash followed. Its copy completed at 12:17:12 UTC and serial
+reached frame 1000 at 12:18:29 UTC without reported panic/fatal/out-of-memory.
+Identity evidence is the verified UF2 payload, successful bootloader copy
+and serial progress, not flash readback or visual/interactive verification.
+Loadable SHA-256:
+`17cb0b3bdff29c0939ca5cd2704f59d416396809747980dd81f89ed37da3a938`.
+UF2 SHA-256:
+`43a8be14010a666399fed780117e540623a7d3b05f515340448e6098428c8b53`.
+
+Source and hardware artifacts are in session
+`1c4c73da-12e2-4bc3-98bb-878099dafd16/files/restore-only/`, including
+`comparison.json`, hardware logs/provenance, and both board ELFs. The script
+is `files/hardware_restore_only.py`. The earlier combined trial and its
+reports remain preserved under `refs/backport-recovery/1c4c73da-full-irq-trial`
+at `e00f58b`; they were not discarded when this independent candidate began.
+
 ## Branch point
 
 `78e8f0e` "Align dotclock names with cycle phases" — the last commit that
