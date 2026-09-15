@@ -91,6 +91,43 @@ func TestVICBitmapIdleAccessUsesIdleData(t *testing.T) {
 	}
 }
 
+func TestVICReloadDotMatchesPerDotRule(t *testing.T) {
+	for start := uint16(0); start < DotsPerLine; start++ {
+		for control := 0; control < 256; control++ {
+			v := VICII{dot: start, control2: uint8(control)}
+			// Preserve the old per-dot rule independently of graphicsReloadPhase.
+			phase := uint16(control & 7)
+			if control&0x10 != 0 && phase == 7 {
+				phase = 0
+			}
+			want := uint16(0xFFFF)
+			matches := 0
+			got := v.reloadDot()
+			for offset := uint16(1); offset <= DotsPerCycle; offset++ {
+				// Reload is checked after incrementing, before dotclock7 wraps.
+				dot := start + offset
+				oldReload := dot/8 >= 6 && dot/8 <= 45 && dot&7 == phase
+				if oldReload {
+					want = dot
+					matches++
+				}
+				if (dot == got) != oldReload {
+					t.Fatalf("start=%d control2=%#02x dot=%d: reload=%d, per-dot rule=%v",
+						start, control, dot, got, oldReload)
+				}
+			}
+			if matches > 1 || got != want {
+				t.Fatalf("start=%d control2=%#02x: reload=%d, want %d (%d matches)",
+					start, control, got, want, matches)
+			}
+			if got != noReloadDot && (got < 48 || got >= 368 || got <= start || got > start+DotsPerCycle) {
+				t.Fatalf("start=%d control2=%#02x: reload=%d outside cell/cycle bounds",
+					start, control, got)
+			}
+		}
+	}
+}
+
 func TestVICXScrollDelaysGraphicsReload(t *testing.T) {
 	// Dot 48 is the boundary of the first character cell of the display
 	// window, and where an unscrolled sequencer takes up its g-access
