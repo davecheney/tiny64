@@ -274,6 +274,12 @@ hardware logs/provenance and `comparison.json`. Reproduction script:
 
 ## Simplified interrupt recognition: 2026-09-15
 
+**Accepted explicitly:** at 22:48 AEST the user requested committing this
+implementation as the baseline on `origin/tinygo`. Adopt source `108e8ae`
+and measurement record `e881196`, superseding #67 as the current baseline.
+The new recorded baseline is **70.850726 ms/frame**. No additional flash
+is needed; the measured no-delay candidate was already left installed.
+
 At the user's request, remove synchronization timing rather than replacing
 the clock with countdowns. TinyGo targets character-mode workloads, not
 complex VIC effects or cycle-accurate interrupt timing; `main` remains the
