@@ -23,9 +23,7 @@ func plaLoad(addr uint16) uint8 {
 	switch {
 	case addr >= 0x8000 && addr <= 0x9FFF && cartridge.eightK() && cartridge.ROML && loram && hiram:
 		// An 8K cartridge's /ROML image. The PLA only asserts /ROML when
-		// both LORAM and HIRAM are high, which is why software banks a
-		// cartridge out by clearing LORAM rather than by anything the
-		// cartridge itself provides.
+		// both LORAM and HIRAM are high and the cartridge asserts /EXROM.
 		return cartridge.ROM[addr-0x8000]
 	case addr >= 0xA000 && addr <= 0xBFFF && loram && hiram:
 		return rom.Basic[addr-0xA000]
@@ -90,8 +88,7 @@ func plaVICLoad(addr uint16) uint8 {
 }
 
 // ioLoad/ioStore dispatch the $D000-$DFFF I/O region to the appropriate
-// chip. The SID and cartridge I/O are ignored for now and simply fall
-// through to RAM.
+// chip. Unimplemented I/O falls through to RAM.
 func ioLoad(addr uint16) uint8 {
 	switch {
 	case addr <= 0xD3FF:
@@ -116,6 +113,8 @@ func ioLoad(addr uint16) uint8 {
 			return cia2ReadPRA()
 		}
 		return cia2.Load(addr)
+	case addr >= dosWedgeIO && cartridge.wedgeIO():
+		return cartridge.ROM[dosWedgeIOBank+int(addr-dosWedgeIO)]
 	default:
 		return ram[addr]
 	}
@@ -131,6 +130,10 @@ func ioStore(addr uint16, val uint8) {
 		cia1.Store(addr, val)
 	case addr >= 0xDD00 && addr <= 0xDDFF:
 		cia2.Store(addr, val)
+	case addr >= dosWedgeIO && cartridge.wedgeIO():
+		if addr == dosWedgeLatch {
+			cartridge.writeWedgeLatch(val)
+		}
 	default:
 		ram[addr] = val
 	}

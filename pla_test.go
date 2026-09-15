@@ -1,6 +1,7 @@
 package tiny64
 
 import (
+	"bytes"
 	"testing"
 
 	"github.com/davecheney/tiny64/rom"
@@ -166,10 +167,104 @@ func TestPLALoadEmptyPortLeavesRAMAt8000(t *testing.T) {
 		t.Errorf("load(0x8000) = %#02x, want RAM %#02x", got, 0xA5)
 	}
 
-	// A MAX-mode cartridge populates /ROMH, not /ROML, so it must not
-	// appear in this window either.
+	// A MAX-mode cartridge populates /ROMH, not /ROML.
 	cartridge = Cartridge{ROM: make([]byte, 0x2000), Game: true, Exrom: false, ROMH: true}
 	if got := plaLoad(0x8000); got != 0xA5 {
 		t.Errorf("with a MAX-mode cartridge, load(0x8000) = %#02x, want RAM %#02x", got, 0xA5)
+	}
+}
+
+func TestPLAWedgeLatch(t *testing.T) {
+	saveMachine(t)
+	cpu = CPU{PortDDR: 0x2F, Port: 0xF7}
+	EnableDOSWedge()
+	image := append([]byte(nil), cartridge.ROM...)
+	for addr := uint16(0x8000); addr < 0xA000; addr++ {
+		bus.Store(addr, byte(addr>>8))
+		if got := bus.Load(addr); got != image[addr-0x8000] {
+			t.Fatalf("mapped ROM at $%04X = $%02X", addr, got)
+		}
+	}
+	for addr := uint16(dosWedgeIO); ; addr++ {
+		bus.Store(addr, 0) // only $DFFF is a latch; the aperture is read-only
+		if got, want := bus.Load(addr), image[dosWedgeIOBank+int(addr-dosWedgeIO)]; got != want {
+			t.Fatalf("I/O ROM at $%04X = $%02X, want $%02X", addr, got, want)
+		}
+		if addr == dosWedgeLatch {
+			break
+		}
+		if !cartridge.Exrom {
+			t.Fatalf("write to $%04X changed the latch", addr)
+		}
+	}
+	assertWedgeRAM(t)
+	bus.Store(dosWedgeLatch, dosWedgeMap)
+	if !cartridge.Exrom {
+		t.Fatal("write did not assert EXROM")
+	}
+	bus.Store(dosWedgeLatch, dosWedgeKill|dosWedgeMap)
+	assertWedgeRAM(t)
+	for value := 0; value < 256; value++ {
+		bus.Store(dosWedgeLatch, byte(value))
+		if cartridge.Exrom || !cartridge.killed {
+			t.Fatalf("value $%02X reactivated killed cartridge", value)
+		}
+	}
+	Reset()
+	if cartridge.killed || !cartridge.Exrom || bus.Load(0x8004) != 0xC3 {
+		t.Fatal("hardware reset did not restore CBM80 mapping")
+	}
+	if !bytes.Equal(cartridge.ROM, image) {
+		t.Fatal("writes changed the cartridge ROM")
+	}
+}
+
+func TestPLAWedgeLatchRequiresIO(t *testing.T) {
+	saveMachine(t)
+	for bits := byte(0); bits < 8; bits++ {
+		EnableDOSWedge()
+		cpu = CPU{PortDDR: 7, Port: bits}
+		bus.Store(dosWedgeLatch, dosWedgeKill)
+		want := bits&4 != 0 && bits&3 != 0
+		if cartridge.killed != want {
+			t.Fatalf("port bits=%03b, killed=%v, want %v", bits, cartridge.killed, want)
+		}
+	}
+	EnableDOSWedge()
+	cpu = CPU{PortDDR: 0, Port: 0}
+	bus.Store(dosWedgeLatch, dosWedgeKill)
+	if !cartridge.killed {
+		t.Fatal("floating port inputs must select I/O")
+	}
+}
+
+func TestPLAWedgeLatchIsCartridgeSpecific(t *testing.T) {
+	saveMachine(t)
+	for _, kind := range []string{"empty", "8K", "ultimax", "same-image"} {
+		t.Run(kind, func(t *testing.T) {
+			// Replacing a wedge must discard its latch even when the raw ROM
+			// happens to be the same. Bus.Insert is an ordinary cartridge.
+			EnableDOSWedge()
+			switch kind {
+			case "empty":
+				bus.Remove()
+			case "8K":
+				bus.Insert(make([]byte, 8192), false, true, false, true)
+			case "ultimax":
+				bus.Insert(make([]byte, 8192), true, false, true, false)
+			case "same-image":
+				bus.Insert(dosWedgeROM(), false, true, false, true)
+			}
+			cpu = CPU{}
+			game, exrom := cartridge.Game, cartridge.Exrom
+			bus.Store(dosWedgeLatch, dosWedgeKill)
+			Reset()
+			if cartridge.Game != game || cartridge.Exrom != exrom || cartridge.killed {
+				t.Fatal("wedge latch affected another cartridge")
+			}
+			if got := bus.Load(dosWedgeLatch); got != dosWedgeKill {
+				t.Fatalf("ordinary I/O fallback = $%02X", got)
+			}
+		})
 	}
 }
