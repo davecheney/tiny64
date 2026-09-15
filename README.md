@@ -52,21 +52,12 @@ the [Visual6502 recognition stages](https://www.nesdev.org/wiki/Visual6502wiki/6
 and transistor-model RDY schedules, not demo screenshots. Run them with
 `go test . -run '^TestIRQ'`.
 
-`testdata/irq/irq-rdy-cycles.json` preserves 24 original pin schedules and
-their expected fetch/IRQ and I-flag outcomes. `TestIRQTransistorReference`
-replays them offline against the CPU. For an independent replay, obtain the
-six Visual6502 source files listed in the JSON from its pinned repository
-revision, then run:
-
-```
-node testdata/irq/verify-cycle-fixture.js \
-  testdata/irq/irq-rdy-cycles.json /path/to/visual6502-sources
-```
-
-The script checks the source hashes before simulating. An optional fourth
-argument names an output JSON file for the raw cycle traces. Node and the
-external sources are only needed for this independent replay, not normal
-Go tests or CI. These fixtures verify IRQ outcomes and the specified
+`TestIRQTransistorReference` in `irq_reference_test.go` preserves 24
+original pin schedules and their expected fetch/IRQ and I-flag outcomes
+as Go test cases. They were checked against
+[Visual6502 revision d8ecc129](https://github.com/trebonian/visual6502/tree/d8ecc129b34e0eaf320e0400fcf33329475bdb1e)
+and run offline against the CPU with no external tooling. They verify IRQ
+outcomes and the specified
 architectural I boundaries, not every bus address during a held read:
 the transistor model can update a crossing branch's address while RDY
 remains low.
@@ -316,7 +307,7 @@ Set `SNAPSHOT_ARTIFACT_DIR` to an absolute directory to retain
 `<slug>/frame-<six-digit-frame>/{expected,actual,diff}.png`. The diff marks
 changed pixels magenta and unchanged pixels black (decode/size failures
 produce an empty diff). Without this setting the test uses a temporary
-directory that Go removes after the test. CI uploads failure images.
+directory that Go removes after the test.
 
 The included `colour-bars` program is original test code. Before adding an
 external demo, establish permission to redistribute both the PRG and its

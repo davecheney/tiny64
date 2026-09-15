@@ -25,17 +25,7 @@ jobs:
         run: go test ./...
 
       - name: Snapshot integration tests
-        env:
-          SNAPSHOT_ARTIFACT_DIR: ${{ github.workspace }}/snapshot-artifacts
         run: go test -tags integration ./cmd/snapshot -run '^TestSnapshotFixtures$' -count=1 -timeout=15m
-
-      - name: Upload snapshot failure images
-        if: failure()
-        uses: actions/upload-artifact@v4
-        with:
-          name: snapshot-failures
-          path: snapshot-artifacts/
-          if-no-files-found: ignore
 
       # There's no golangci-lint in the repo yet, so "lint" is what the
       # standard toolchain offers: vet, plus a formatting check, written
