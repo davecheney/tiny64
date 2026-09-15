@@ -272,6 +272,99 @@ BIN/UF2, source archive/patch, sections/symbols/disassembly, `codegen.json`,
 hardware logs/provenance and `comparison.json`. Reproduction script:
 `files/hardware_clock_uint.py`.
 
+## Simplified interrupt recognition: 2026-09-15
+
+At the user's request, remove synchronization timing rather than replacing
+the clock with countdowns. TinyGo targets character-mode workloads, not
+complex VIC effects or cycle-accurate interrupt timing; `main` remains the
+accuracy-oriented branch. Source candidate `108e8ae159109698c9d51829ea3dd8aa15fb9943`
+is based on accepted #67 tip `b0a96b0`.
+
+IRQ checks CIA1's existing asserted level and the current status-register
+I bit at the next unstalled opcode fetch. NMI retains priority, the existing
+CIA2 edge latch and direct RESTORE events, but has no recognition delay.
+Remove Clock, both timestamps, IRQ edge history and effectiveI entirely.
+No interrupt bitmask/notification framework or countdown is introduced.
+There is no interrupt-age arithmetic left to wrap, resolving #67's
+full-counter-period ambiguity structurally.
+
+This intentionally changes timing: CLI/SEI/PLP affect the next fetch
+without the old I-flag pipeline delay; a CIA mask write is recognized on
+cycle 5 at PC $0203 rather than cycle 7 at PC $0204 in the existing test.
+Instruction execution, interrupt entry/stack/vector microcode, NMI
+priority, IRQ level/acknowledgement, held-NMI suppression, and AEC stalls
+are preserved. Short CIA2 pulses wholly between fetches can still be
+missed, as with this branch's prior fetch-only sampling.
+
+The exported CPU.Clock is removed. The Tufty demo uses two skipped frame
+ticks between key transitions, preserving the old three-frame transition
+cadence. IEC ordering tests use CIA2 timer A after KERNAL IOINIT rather
+than retaining a production-only test clock. The two CIAs continue ticking
+on every Phi2, including when the CPU is stalled.
+
+Host tests, build and vet pass. New tests cover next-fetch recognition,
+instruction completion, AEC holds, CLI/SEI/PLP/RTI mask behavior, and a
+held masked IRQ followed by unmasking and acknowledgement. Existing NMI
+priority/edge/reassertion, RESTORE overlap/reset, KERNAL and wedge tests
+pass. Removed old delay-oracle/wrap tests because those requirements are
+deliberately no longer implemented. The demo's old absolute-deadline
+model remains a test oracle for its frame cadence, including shifted keys:
+`go test cmd/tufty2040/demo.go cmd/tufty2040/demo_test.go`.
+
+Both device builds pass with TinyGo 0.42.0 / LLVM 22.1.4 / Go 1.27.1,
+`-opt=2`, Tufty `-scheduler=none`, Badge `-scheduler=cores`. The following
+analysis was reported before flashing:
+
+| Bytes | #67 baseline | Simple interrupts |
+|---|---:|---:|
+| Tufty flash | 198588 | 198324 |
+| Tufty data | 328 | 328 |
+| Tufty BSS | 223308 | 223292 |
+| Tufty static RAM including stacks | 227732 | 227716 |
+| Badge flash | 144656 | 144592 |
+| Badge data | 260 | 260 |
+| Badge BSS | 222360 | 222344 |
+| Badge static RAM including stacks | 226716 | 226700 |
+| CPU.TickPhi2, both targets | 10164 | 10120 |
+| Tufty main.main | 11388 | 11208 |
+| Badge main.main | 5036 | 5028 |
+
+Reserved stacks remain 4096 bytes per target. CIA.Load/Store stay at
+164/242 bytes; CIA.Tick/checkIRQ remain inlined. TickPhi2 static conditional
+branches fall 113 to 96. The local frame shrinks 60 to 56 bytes and the
+prologue saves r4-r6/lr rather than r4-r7/lr. The per-cycle counter increment
+is gone, with no replacement interrupt timer work. Static code generation
+does not by itself predict or attribute runtime savings.
+
+One candidate flash reused #67's recorded MAZE baseline without reflashing
+it. Ten 50-frame windows ending at frames 500 through 950:
+
+| Firmware | Mean ms/frame | Window range ms/frame |
+|---|---:|---:|
+| #57+#63+#67, reused | 71.544682 | 71.496220-71.585460 |
+| Simple interrupts | 70.850726 | 70.818040-70.892840 |
+
+The measured saving is **0.693956 ms/frame (0.969962%)**, with
+non-overlapping window ranges. This meets the performance gate for the
+requested accuracy tradeoff; it is a sequential comparison, not a new
+A/B/A, and not proof that every guest workload improves. No desktop
+benchmark or attribution from the saturated XIP counters is used.
+
+The candidate was left flashed. Copy completed at 12:46:10 UTC and serial
+reached frame 1000 at 12:47:23 UTC without reported panic/fatal/OOM.
+UF2 structure, block continuity and equality to the ELF-derived payload
+were verified before copying. No flash readback, physical RESTORE/pixel
+verification or actual heap measurement is claimed.
+
+Loadable SHA-256:
+`d8c06497675729ef3bf180a7a20534aabd746fd03fe915c3ca0398f7fe5e658c`.
+UF2 SHA-256:
+`547b7e28edab902e8e1bbbde9d171e16e448972510be84b97dde484e589b11bb`.
+Artifacts: session `1c4c73da-12e2-4bc3-98bb-878099dafd16/files/simple-irq/`,
+including both ELFs, source archive/patch, BIN/UF2, sections/symbols/
+disassembly, `codegen.json`, hardware provenance/log and `comparison.json`.
+One-shot measurement script: `files/hardware_simple_irq.py`.
+
 ## Branch point
 
 `78e8f0e` "Align dotclock names with cycle phases" — the last commit that
