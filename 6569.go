@@ -698,14 +698,10 @@ func (v *VICII) StepFrame() {
 // dots, with the VIC-II's own Phi1 accesses on the 4th and the CPU's Phi2
 // on the 8th.
 //
-// It is the only way the machine advances. That is not just tidiness: the
-// CPU reaches the VIC solely through a store, and a store only completes
-// in TickPhi2 at the very end of this function, so nothing outside the
-// chip can observe or change it between the first dot of a cycle and the
-// last. A per-dot entry point would therefore expose no state a caller
-// could act on, which is why the one that used to exist - StepDot, an
-// 8-way dispatch on dot&7 so a cycle could be resumed from any phase - is
-// gone.
+// It is the only way the machine advances. The CPU reads and writes VIC
+// registers during TickPhi2, after all eight dot phases, and IEC devices
+// tick after the CPU. Callers observe the machine at bus-cycle boundaries;
+// the individual dot phases remain internal.
 //
 // Two earlier attempts at a per-cycle helper regressed on the Gopher
 // Badge, both while calling the single shared dotclock 8 times:
