@@ -173,7 +173,6 @@ func (k *Keyboard) ReleaseAll() { k.rows = [8]uint8{} }
 func (k *Keyboard) Restore() {
 	if k == &keyboard {
 		cpu.nmiLatch = true
-		cpu.nmiLatchClock = cpu.Clock
 	}
 }
 

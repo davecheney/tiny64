@@ -59,7 +59,6 @@ func runCycles(n int) {
 func TestNMIIgnoresInterruptDisable(t *testing.T) {
 	newNMIFixture(t)
 	cpu.regP = P_INTERRUPT
-	cpu.effectiveI = P_INTERRUPT
 
 	cia1.IRQ = true
 	cia2.IRQ = true
@@ -144,16 +143,11 @@ func TestRestoreHeldDeliversOneNMI(t *testing.T) {
 	}
 }
 
-func TestRestoreDirectDelayAndHold(t *testing.T) {
+func TestRestoreDirectLatchAndHold(t *testing.T) {
 	newNMIFixture(t)
-	cpu.Clock = 123
 	keyboard.Restore()
-	if !cpu.nmiLatch || cpu.nmiLatchClock != 123 || cpu.nmiLine {
-		t.Fatal("RESTORE did not directly latch the press clock")
-	}
-	runCycles(1)
-	if cpu.Interrupt != 0 {
-		t.Fatal("NMI entered before the two-cycle recognition delay")
+	if !cpu.nmiLatch || cpu.nmiLine {
+		t.Fatal("RESTORE did not directly latch the press")
 	}
 	vic.AEC = false
 	runCycles(10)
@@ -161,7 +155,11 @@ func TestRestoreDirectDelayAndHold(t *testing.T) {
 		t.Fatal("AEC hold lost or serviced the pending NMI")
 	}
 	vic.AEC = true
-	runCycles(100)
+	runCycles(1)
+	if cpu.Interrupt != 2 || cpu.nmiLatch {
+		t.Fatal("RESTORE was not consumed at the first unstalled opcode fetch")
+	}
+	runCycles(99)
 	if ram[0x10] != 1 {
 		t.Fatalf("NMIs after hold = %d, want 1", ram[0x10])
 	}

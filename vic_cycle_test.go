@@ -20,8 +20,7 @@ func TestVICStepCycleStalledReadClocksCIAs(t *testing.T) {
 		c.Store(0x05, 0)
 		c.Store(0x0E, 1)
 	}
-	startClock := cpu.Clock
-	for n := uint(1); n <= 3; n++ {
+	for n := uint16(1); n <= 3; n++ {
 		vic.StepCycle()
 		if vic.BA || vic.AEC {
 			t.Fatalf("cycle %d: bad line did not take the bus", n)
@@ -29,8 +28,8 @@ func TestVICStepCycleStalledReadClocksCIAs(t *testing.T) {
 		if cpu.PC != 0x0200 || cpu.TState != 0 {
 			t.Fatalf("cycle %d: stalled CPU advanced to PC=%04X T=%d", n, cpu.PC, cpu.TState)
 		}
-		if cpu.Clock != startClock+n || cia1.timerA != 10-uint16(n) || cia2.timerA != 10-uint16(n) {
-			t.Fatalf("cycle %d: clock delta=%d CIA timers=%d/%d", n, cpu.Clock-startClock, cia1.timerA, cia2.timerA)
+		if cia1.timerA != 10-n || cia2.timerA != 10-n {
+			t.Fatalf("cycle %d: CIA timers=%d/%d", n, cia1.timerA, cia2.timerA)
 		}
 	}
 }

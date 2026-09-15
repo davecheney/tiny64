@@ -9,7 +9,9 @@ import (
 	"github.com/davecheney/tiny64"
 )
 
-const keyPhaseCycles = 40_000
+// tick runs once per PAL frame. A 40,000-cycle phase previously became
+// eligible on the third frame (3 * 19,656 cycles), so skip two ticks.
+const keyPhaseFrames = 2
 
 type keyStroke struct {
 	key   tiny64.Key
@@ -61,39 +63,30 @@ const (
 // gates RUN on the actual tokenized program in RAM instead of a wall-clock
 // delay, so the sequence remains correct if IEC transfer timing changes.
 type demoLoader struct {
-	stage       demoStage
-	keys        []keyStroke
-	keyIndex    int
-	pressed     bool
-	phaseStart  uint
-	phaseCycles uint
-}
-
-func (d *demoLoader) wait(cycles uint) {
-	d.phaseStart = tiny64.GetCPU().Clock
-	d.phaseCycles = cycles
-}
-
-func (d *demoLoader) waited() bool {
-	return tiny64.GetCPU().Clock-d.phaseStart >= d.phaseCycles
+	stage    demoStage
+	keys     []keyStroke
+	keyIndex int
+	pressed  bool
+	delay    uint8
 }
 
 func (d *demoLoader) start(keys []keyStroke) {
 	d.keys = keys
 	d.keyIndex = 0
 	d.pressed = false
-	d.wait(0)
+	d.delay = 0
 }
 
 func (d *demoLoader) typeKeys() bool {
-	if !d.waited() {
+	if d.delay != 0 {
+		d.delay--
 		return false
 	}
 	if d.pressed {
 		tiny64.Keys().ReleaseAll()
 		d.pressed = false
 		d.keyIndex++
-		d.wait(keyPhaseCycles)
+		d.delay = keyPhaseFrames
 		return d.keyIndex == len(d.keys)
 	}
 
@@ -103,7 +96,7 @@ func (d *demoLoader) typeKeys() bool {
 	}
 	tiny64.Keys().Press(key.key)
 	d.pressed = true
-	d.wait(keyPhaseCycles)
+	d.delay = keyPhaseFrames
 	return false
 }
 
@@ -134,7 +127,7 @@ func (d *demoLoader) reset() {
 	d.keys = nil
 	d.keyIndex = 0
 	d.pressed = false
-	d.phaseStart, d.phaseCycles = 0, 0
+	d.delay = 0
 }
 
 // tick advances the demo's boot sequence: wait for the BASIC prompt, type

@@ -10,31 +10,43 @@ import (
 
 // Run without the hardware frontend using:
 // go test cmd/tufty2040/demo.go cmd/tufty2040/demo_test.go
-func TestDemoKeyPhaseSurvivesClockWrap(t *testing.T) {
-	cpu := tiny64.GetCPU()
-	saved := *cpu
-	t.Cleanup(func() {
-		*cpu = saved
-		tiny64.Keys().ReleaseAll()
-	})
-	for _, start := range []uint{100, ^uint(0) - 1, ^uint(0)} {
-		cpu.Clock = start
-		var d demoLoader
-		d.start([]keyStroke{{key: tiny64.KeyA}})
-		if d.typeKeys() || !tiny64.Keys().IsPressed(tiny64.KeyA) {
-			t.Fatal("first call did not press the key")
+func TestDemoKeyPhasesMatchCycleDeadlines(t *testing.T) {
+	t.Cleanup(func() { tiny64.Keys().ReleaseAll() })
+	var d demoLoader
+	d.start([]keyStroke{{key: tiny64.KeyA, shift: true}, {key: tiny64.KeyB}})
+	var clock, deadline uint64
+	keyIndex, pressed := 0, false
+	for frame := 0; frame < 20; frame++ {
+		clock += tiny64.CyclesPerFrame
+		wantDone := false
+		if clock >= deadline {
+			if pressed {
+				pressed = false
+				keyIndex++
+				wantDone = keyIndex == 2
+			} else {
+				pressed = true
+			}
+			deadline = clock + 40_000
 		}
-		cpu.Clock = start + keyPhaseCycles - 1
-		if d.typeKeys() || !tiny64.Keys().IsPressed(tiny64.KeyA) {
-			t.Fatal("key released before phase duration")
+		if got := d.typeKeys(); got != wantDone {
+			t.Fatalf("frame %d: done=%v want=%v", frame, got, wantDone)
 		}
-		cpu.Clock++
-		if !d.typeKeys() || tiny64.Keys().IsPressed(tiny64.KeyA) {
-			t.Fatal("key did not release at phase duration")
+		if d.pressed != pressed || d.keyIndex != keyIndex {
+			t.Fatalf("frame %d: pressed/index=%v/%d want=%v/%d", frame, d.pressed, d.keyIndex, pressed, keyIndex)
 		}
-		d.reset()
-		if d.phaseStart != 0 || d.phaseCycles != 0 {
-			t.Fatal("reset retained a phase")
+		if tiny64.Keys().IsPressed(tiny64.KeyA) != (pressed && keyIndex == 0) ||
+			tiny64.Keys().IsPressed(tiny64.KeyLShift) != (pressed && keyIndex == 0) ||
+			tiny64.Keys().IsPressed(tiny64.KeyB) != (pressed && keyIndex == 1) {
+			t.Fatalf("frame %d: keyboard matrix did not match the phase", frame)
+		}
+		if wantDone {
+			d.reset()
+			if d.delay != 0 || d.keys != nil || d.pressed || d.stage != demoWaitForPrompt {
+				t.Fatal("reset retained demo state")
+			}
+			return
 		}
 	}
+	t.Fatal("demo did not finish typing")
 }

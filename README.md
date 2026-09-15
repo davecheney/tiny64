@@ -205,13 +205,14 @@ hardware's combined-line suppression are not modeled. CIA2 sampling and
 the lightweight CPU's existing IRQ handling are otherwise unchanged.
 This is an independent adaptation of #57, without #54 or #56.
 
-`CPU.Clock` and its IRQ/NMI timestamps use `uint` in the #67 trial.
-On 32-bit targets the clock wraps roughly every 71 minutes of emulated
-time; interrupt delays and the Tufty demo compare elapsed differences
-rather than absolute deadlines. This trial still has a full-period
-ambiguity for long-held interrupt timestamps; see `docs/tinygo-branch-log.md`.
-External users must account for the exported counter's changed type
-and wraparound.
+TinyGo services interrupts at the next unstalled opcode fetch, without
+synchronization delays or I-flag pipelining. IRQ uses CIA1's level and the
+current I flag; NMI retains priority and edge-latched CIA2/RESTORE behavior.
+There are no interrupt timestamps or countdowns to wrap. This deliberate
+accuracy tradeoff is for character-mode workloads; use `main` for precise
+interrupt/VIC timing. The exported `CPU.Clock` field is removed. External code
+reading `GetCPU().Clock` must track elapsed cycles at its stepping boundary.
+The Tufty demo retains its three-frame key transitions using frame delays.
 
 This is a work in progress. See `docs/` for the reference material used
 to guide the implementation.

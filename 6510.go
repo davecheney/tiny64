@@ -32,27 +32,6 @@ type CPU struct {
 	nmiLine   bool // last-seen state of the CPU's NMI pin, for edge detection
 	nmiLatch  bool // latched by a 0->1 transition of nmiLine, until serviced
 
-	// Clock counts elapsed Phi2 cycles, used to time the 2-cycle delay real
-	// hardware needs to recognize an asserted IRQ/NMI line (VICE calls this
-	// INTERRUPT_DELAY).
-	// It wraps on device targets; compare elapsed durations by subtraction.
-	Clock uint
-
-	// irqLine is the last-seen state of CIA1's IRQ line, for edge detection;
-	// irqAssertClock/nmiLatchClock record the Clock value of the most recent
-	// rising edge, so recognition can be held off for 2 cycles after it.
-	irqLine        bool
-	irqAssertClock uint
-	nmiLatchClock  uint
-
-	// effectiveI is the Interrupt Disable flag's value as seen by interrupt
-	// recognition, lagging c.regP's I bit by one instruction: SEI/CLI/PLP
-	// change regP immediately, but (due to 6502 pipelining) their effect on
-	// whether an interrupt can be taken isn't visible until the instruction
-	// after next. RTI and the CPU's own interrupt entry are exceptions and
-	// update effectiveI immediately (see their microcode).
-	effectiveI uint8
-
 	// Port and PortDDR implement the 6510's on-chip I/O port at $0001/$0000,
 	// a feature the plain 6502 does not have.
 	Port    uint8
@@ -108,7 +87,6 @@ func (c *CPU) Reset() {
 	c.Interrupt = 0
 	c.nmiLatch = false
 	c.regP |= P_INTERRUPT
-	c.effectiveI = P_INTERRUPT
 	c.SP -= 3
 
 	lo := c.load(0xFFFC)
@@ -172,8 +150,6 @@ func (c *CPU) pop() uint8 {
 // Phi2 clock with the CPU (not the VIC-II's dot clock) and keep counting
 // regardless of whether the CPU itself is stalled by BA/AEC.
 func (c *CPU) TickPhi2() {
-	c.Clock++
-
 	cia1.Tick()
 	cia2.Tick()
 
@@ -186,27 +162,19 @@ func (c *CPU) TickPhi2() {
 	switch c.TState {
 	// T0: Fetch the opcode, unless a pending interrupt takes over instead.
 	// NMI is edge-triggered (CIA2 and direct RESTORE events, latched);
-	// IRQ is level-triggered (CIA1, masked by the (delayed) I flag) - both
-	// are serviced via BRK's microcode. Real hardware needs an asserted
-	// IRQ/NMI line to be stable for 2 cycles before it's recognized (see
-	// Clock/irqAssertClock/nmiLatchClock).
+	// IRQ is level-triggered (CIA1, masked by the current I flag).
+	// TinyGo omits synchronization and I-flag pipeline delays.
 	case 0:
 		nmi := cia2.IRQ
 		if nmi && !c.nmiLine {
 			c.nmiLatch = true
-			c.nmiLatchClock = c.Clock
 		}
 		c.nmiLine = nmi
 
-		if cia1.IRQ && !c.irqLine {
-			c.irqAssertClock = c.Clock
-		}
-		c.irqLine = cia1.IRQ
-
 		switch {
-		case c.nmiLatch && c.Clock-c.nmiLatchClock >= 2:
+		case c.nmiLatch:
 			// NMI is checked before IRQ because it wins when both are
-			// pending, and it is deliberately not gated on effectiveI: the
+			// pending, and it is deliberately not gated on regP: the
 			// I flag masks IRQ only, which is what makes this interrupt
 			// non-maskable.
 			//
@@ -221,7 +189,7 @@ func (c *CPU) TickPhi2() {
 			c.Interrupt = 2
 			c.Opcode = 0x00
 			c.TState = 1
-		case cia1.IRQ && c.effectiveI == 0 && c.Clock-c.irqAssertClock >= 2:
+		case cia1.IRQ && c.regP&P_INTERRUPT == 0:
 			c.Interrupt = 1
 			c.Opcode = 0x00
 			c.TState = 1
@@ -231,12 +199,6 @@ func (c *CPU) TickPhi2() {
 			c.PC++
 			c.TState = 1
 		}
-		// SEI/CLI/PLP change regP immediately, but (6502 pipelining) their
-		// effect on interrupt recognition lags by one instruction: this
-		// syncs effectiveI to regP's current I bit only now, after it was
-		// used for the check above, so it still reflects the PC flag's
-		// value from before whichever instruction just changed it.
-		c.effectiveI = c.regP & P_INTERRUPT
 	case 1:
 		// T1: Execute the instruction based on the opcode
 		switch c.Opcode {
@@ -1855,10 +1817,6 @@ func (c *CPU) TickPhi2() {
 			c.TState = 4
 		case 0x40: // RTI: pull status from incremented SP, then increment SP
 			c.regP = c.pop()
-			// Unlike SEI/CLI/PLP, RTI's restored I flag takes effect
-			// immediately for the very next instruction (no pipelining
-			// delay), since the status register is restored early.
-			c.effectiveI = c.regP & P_INTERRUPT
 			c.TState = 4
 		case 0x41: // EOR (Indirect,X): fetch effective address low byte
 			c.Operand = uint16(c.load(uint16(c.Pointer + c.X))) // zero-page wraparound
@@ -2278,10 +2236,6 @@ func (c *CPU) TickPhi2() {
 			}
 			c.push(status)
 			c.regP |= 0x04 // Set Interrupt Disable flag
-			// The CPU's own interrupt entry forces I=1 immediately (not
-			// subject to the SEI/CLI/PLP pipelining delay), so a nested
-			// interrupt can't be taken until this handler does CLI/RTI.
-			c.effectiveI = P_INTERRUPT
 			c.TState = 5
 		case 0x01: // ORA (Indirect,X): fetch effective address high byte
 			c.Operand |= uint16(c.load(uint16(c.Pointer+c.X+1))) << 8 // zero-page wraparound

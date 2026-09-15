@@ -17,13 +17,13 @@ func TestCIAMaskWriteInterruptEntry(t *testing.T) {
 			chip.Store(0xE, 0x09)
 			chip.Tick() // Latch a masked flag, then stop the timer.
 			copy(ram[0x0200:], []byte{0x8D, 0x0D, page, 0xEA, 0xEA})
-			for cycle := 1; cycle <= 7; cycle++ {
+			for cycle := 1; cycle <= 5; cycle++ {
 				cpu.TickPhi2()
-				if cycle < 7 && cpu.Interrupt != 0 {
+				if cycle < 5 && cpu.Interrupt != 0 {
 					t.Fatalf("interrupt entered early at cycle %d", cycle)
 				}
 			}
-			if cpu.Interrupt != interrupt || cpu.TState != 1 || cpu.PC != 0x0204 {
+			if cpu.Interrupt != interrupt || cpu.TState != 1 || cpu.PC != 0x0203 {
 				t.Fatalf("entry: interrupt=%d T=%d PC=%04x", cpu.Interrupt, cpu.TState, cpu.PC)
 			}
 		})
