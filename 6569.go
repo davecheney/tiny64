@@ -844,12 +844,16 @@ func (v *VICII) stepCycle() {
 	// with exactly one call site each.
 	v.dotclock7(reload)
 	v.phi0high()
-	// Each sees Phi2 in this order. The CPU first, since the VIC has just
-	// handed it the bus. Then the CIAs, which clock on that Phi2's falling
-	// edge and so observe whatever the CPU's bus cycle wrote. Then the IEC
-	// devices, which find on the bus whatever CIA2 has just driven onto it.
+
+	// The CPU runs first, since the VIC has just handed it the bus.
 	cpu.TickPhi2()
+
+	// The CIAs clock on that Phi2's falling edge, so they run after the
+	// CPU and see whatever its bus cycle wrote.
 	ciaTick()
+
+	// The IEC devices run last, because what they find on the bus is
+	// whatever CIA2 has just driven onto it.
 	iecTick()
 }
 
