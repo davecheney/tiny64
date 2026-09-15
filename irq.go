@@ -2,6 +2,8 @@ package tiny64
 
 // irqState separates the Phi2 pin sample from acceptance at an instruction
 // poll. An accepted request survives pin release until entry or NMI arbitration.
+// With neither a sampled nor held candidate, a completing cycle only needs
+// to update sampled; callers can skip poll classification and preserve pending.
 // https://www.nesdev.org/wiki/Visual6502wiki/6502_Interrupt_Recognition_Stages_and_Tolerances
 type irqState struct {
 	sampled bool

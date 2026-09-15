@@ -60,8 +60,8 @@ func TestNMIIgnoresInterruptDisable(t *testing.T) {
 	newNMIFixture(t)
 	cpu.regP = P_INTERRUPT
 
-	cia1.IRQ = true
-	cia2.IRQ = true
+	cia1.setIRQ(true)
+	cia2.setIRQ(true)
 	runCycles(100)
 
 	if ram[0x0010] != 1 {
@@ -78,8 +78,8 @@ func TestNMIIgnoresInterruptDisable(t *testing.T) {
 func TestNMIHasPriorityOverIRQ(t *testing.T) {
 	newNMIFixture(t)
 
-	cia1.IRQ = true
-	cia2.IRQ = true
+	cia1.setIRQ(true)
+	cia2.setIRQ(true)
 	runCycles(200)
 
 	if ram[0x0010] != 1 {
@@ -101,15 +101,15 @@ func TestNMIHasPriorityOverIRQ(t *testing.T) {
 func TestNMIIsEdgeTriggered(t *testing.T) {
 	newNMIFixture(t)
 
-	cia2.IRQ = true
+	cia2.setIRQ(true)
 	runCycles(2000)
 	if ram[0x0010] != 1 {
 		t.Fatalf("NMIs taken while the line was held asserted = %d, want 1", ram[0x0010])
 	}
 
-	cia2.IRQ = false
+	cia2.setIRQ(false)
 	runCycles(20)
-	cia2.IRQ = true
+	cia2.setIRQ(true)
 	runCycles(100)
 	if ram[0x0010] != 2 {
 		t.Errorf("NMIs taken after a second edge = %d, want 2", ram[0x0010])

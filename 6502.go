@@ -2462,7 +2462,11 @@ func (c *DriveCPU) TickPhi2() {
 	default:
 		panic("Invalid T-state: " + fmt.Sprintf("%d", c.TState))
 	}
-	c.irq.clock(via1.IRQ || via2.IRQ, i, irqPoll(opcode, tstate, c.TState), false)
+	if c.irq.sampled || c.irq.held {
+		c.irq.clock(via1.IRQ || via2.IRQ, i, irqPoll(opcode, tstate, c.TState), false)
+	} else {
+		c.irq.sampled = via1.IRQ || via2.IRQ
+	}
 }
 
 // pch returns the high byte of PC

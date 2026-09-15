@@ -43,7 +43,10 @@ func newIRQTestCPU(t *testing.T, core string) irqTestCPU {
 			pc: &cpu.PC, sp: &cpu.SP, p: &cpu.regP, x: &cpu.X, y: &cpu.Y,
 			opcode: &cpu.Opcode, tstate: &cpu.TState, interrupt: &cpu.Interrupt,
 			tick: cpu.TickPhi2, reset: cpu.Reset,
-			pin:  func(a, b bool) { vic.IRQ, cia1.IRQ = a, b },
+			pin: func(a, b bool) {
+				vic.setIRQ(a)
+				cia1.setIRQ(b)
+			},
 			put:  func(addr uint16, b byte) { ram[addr] = b },
 			read: func(addr uint16) byte { return ram[addr] },
 			bus:  func() busCycle { return busCycle{bus.Address, bus.Data, !bus.RW} },
@@ -119,6 +122,37 @@ func (c irqTestCPU) checkEntry(t *testing.T, want bool, pc uint16) {
 	}
 	if want && *c.pc != pc {
 		t.Fatalf("interrupted PC=$%04X, want $%04X", *c.pc, pc)
+	}
+}
+
+func TestIRQInactiveCycleSampling(t *testing.T) {
+	for _, core := range []string{"6510", "6502"} {
+		for _, pending := range []bool{false, true} {
+			for sources := range 4 {
+				for _, masked := range []bool{false, true} {
+					t.Run(fmt.Sprintf("%s/pending=%t/sources=%d/masked=%t", core, pending, sources, masked), func(t *testing.T) {
+						c := newIRQTestCPU(t, core)
+						state := &cpu.irq
+						if core == "6502" {
+							state = &driveCPU.irq
+						}
+						*state = irqState{pending: pending}
+						*c.opcode, *c.tstate = 0xEA, 1 // Complete NOP without an eligible prior sample.
+						if masked {
+							*c.p |= P_INTERRUPT
+						}
+						c.pin(sources&1 != 0, sources&2 != 0)
+						c.tick()
+						if want := (irqState{sampled: sources != 0, pending: pending}); *state != want {
+							t.Fatalf("IRQ state = %+v, want %+v", *state, want)
+						}
+						if *c.tstate != 0 {
+							t.Fatal("NOP did not complete")
+						}
+					})
+				}
+			}
+		}
 	}
 }
 
@@ -410,7 +444,7 @@ func TestIRQAcceptedAlongsideNMI(t *testing.T) {
 	c.program(0x0500, 0x40)
 	c.put(0xFFFA, 0x00)
 	c.put(0xFFFB, 0x05)
-	cia2.IRQ = true
+	cia2.setIRQ(true)
 	c.cycles(2)
 	c.pin(true, false)
 	c.tick()
@@ -515,6 +549,7 @@ func TestIRQPeripheralSampling(t *testing.T) {
 			if core == "6510" {
 				cpu.Port = 6 // Expose I/O; the test stops before reading ROM vectors.
 				cia1 = CIA{icr: 0x81, imr: 1, IRQ: true}
+				cia1.setIRQ(true)
 				c.program(0x0200, 0xAD, 0x0D, 0xDC)
 			} else {
 				via1.ier, via1.ifr = viaIFRCA1, viaIFRCA1
@@ -661,7 +696,7 @@ func TestIRQHeldPollNMIArbitration(t *testing.T) {
 	vic.AEC = false
 	c.pin(false, false)
 	c.tick() // IRQ qualifies in the held NOP poll.
-	cia2.IRQ = true
+	cia2.setIRQ(true)
 	c.cycles(3)
 	vic.AEC = true
 	c.tick()

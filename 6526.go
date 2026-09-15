@@ -17,12 +17,23 @@ type CIA struct {
 	icr uint8 // latched interrupt flags; bit 7 set once any unmasked flag fires
 	imr uint8 // interrupt mask (which flags in icr can assert IRQ)
 
-	// IRQ is the chip's interrupt output line: asserted on an unmasked
+	// IRQ reports the chip's interrupt output line: asserted on an unmasked
 	// timer underflow, and cleared when the ICR is read.
+	// Treat it as read-only; setIRQ also updates the connected CPU pin.
 	IRQ bool
 }
 
 var cia1, cia2 CIA
+
+func (c *CIA) setIRQ(asserted bool) {
+	c.IRQ = asserted
+	switch c {
+	case &cia1:
+		cpu.setInterrupt(sourceCIA1, asserted)
+	case &cia2:
+		cpu.setInterrupt(sourceCIA2, asserted)
+	}
+}
 
 // CIA1 returns the singleton CIA1 (keyboard/joystick; drives the CPU's IRQ
 // line).
@@ -71,7 +82,9 @@ func (c *CIA) Tick() {
 
 	if c.icr&c.imr&0x1F != 0 {
 		c.icr |= 0x80
-		c.IRQ = true
+		if !c.IRQ {
+			c.setIRQ(true)
+		}
 	}
 }
 
@@ -99,7 +112,7 @@ func (c *CIA) Load(addr uint16) uint8 {
 		// the IRQ line).
 		v := c.icr
 		c.icr = 0
-		c.IRQ = false
+		c.setIRQ(false)
 		return v
 	case 0xE:
 		var cra uint8

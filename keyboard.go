@@ -193,26 +193,27 @@ const restorePulseCycles = 1000
 // therefore call this on the press edge only, not once per frame while the
 // host key is down. Retriggering during a pulse just extends it; the CPU
 // only ever sees the one leading edge.
-func (k *Keyboard) Restore() { k.restore = restorePulseCycles }
+func (k *Keyboard) Restore() {
+	k.restore = restorePulseCycles
+	if k == &keyboard {
+		cpu.setInterrupt(sourceRESTORE, true)
+	}
+}
 
 // tick advances the RESTORE monostable by one Phi2 cycle. The matrix
 // itself has no clock, but this does.
 func (k *Keyboard) tick() {
 	if k.restore > 0 {
 		k.restore--
+		if k.restore == 0 && k == &keyboard {
+			cpu.setInterrupt(sourceRESTORE, false)
+		}
 	}
 }
 
 // NMI reports whether the RESTORE monostable is currently asserting the
 // CPU's NMI pin.
 func (k *Keyboard) NMI() bool { return k.restore > 0 }
-
-// nmiAsserted reports the level on the CPU's NMI pin. CIA2 and the RESTORE
-// monostable are both wired to it (open collector on real hardware, so
-// either one pulling it down asserts the interrupt), and the CPU cannot
-// tell them apart: the KERNAL's handler works out which fired by reading
-// CIA2's interrupt control register.
-func nmiAsserted() bool { return cia2.IRQ || keyboard.NMI() }
 
 // scan resolves the matrix given the electrical state CIA1 is driving onto
 // Port A and Port B, returning the levels actually present on the pins.
