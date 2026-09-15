@@ -312,13 +312,13 @@ execution and VIC output, not disk loading, fastloaders, or GPU rendering.
 go run ./cmd/snapshot -prg demo.prg -frames 120 -border -o frame-000120.png
 go run ./cmd/snapshot -prg demo.prg -start '$2000' -frames 120 -crop -o cropped.png
 go test ./cmd/snapshot
-go test -tags integration ./cmd/snapshot -run '^TestSnapshotFixtures$' -count=1
-go test -tags integration ./cmd/snapshot -run '^TestSnapshotFixtures$/^colour-bars$/^frame-000002$' -count=1
+go test ./cmd/snapshot -run '^TestSnapshotFixtures$' -count=1
+go test ./cmd/snapshot -run '^TestSnapshotFixtures$/^colour-bars$/^frame-000002$' -count=1
 ```
 
-Integration tests are opt-in and offline; CI runs them once, separately from
-ordinary unit tests. Each checkpoint executes the already-built test binary
-in a fresh subprocess, so emulator globals cannot leak between captures.
+Fixture regression tests run offline as part of the ordinary unit-test suite.
+Each checkpoint executes the already-built test binary in a fresh subprocess,
+so emulator globals cannot leak between captures.
 Frame counts use `cmd/snapshot`'s `-frames` semantics: frames stepped after
 starting the program, including completion of `RUN` key injection for BASIC.
 They are not absolute frames since reset.
@@ -380,7 +380,7 @@ When redistribution permission is unconfirmed, keep supplied PRGs and their
 fixtures outside the repository. Select an external fixture root explicitly:
 
 ```sh
-go test -tags integration ./cmd/snapshot -run '^TestSnapshotFixtures$' -count=1 -args -snapshot-fixtures=/absolute/path/to/demos
+go test ./cmd/snapshot -run '^TestSnapshotFixtures$' -count=1 -args -snapshot-fixtures=/absolute/path/to/demos
 ```
 
 This replaces the default `testdata/demos` root; it does not supplement it.
