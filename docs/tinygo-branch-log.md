@@ -172,6 +172,16 @@ serial logs/provenance and `comparison.json`. Reproduction uses
 
 ## PR #67 clock narrowing intermediate: 2026-09-15
 
+**Accepted explicitly:** at 22:43 AEST the user instructed merging #67
+into `origin/tinygo` and making it the baseline, accepting the documented
+full-counter-period limitation below. GitHub rebase-merged #67 at
+12:43:26 UTC as `9d6533090de4b56c9759943ed4846761b4fb8780`.
+Its tree was verified identical to measured trial tip `5cf46d9`.
+The new timing baseline is **71.544682 ms/frame**. No reflash was needed:
+the last flashed image was already the measured #67 candidate.
+This acceptance supersedes the isolated-trial/non-promotion verdict below;
+the limitation and measurements remain unchanged.
+
 The user requested resurrecting #67 before pursuing #71's clock removal.
 Adapt upstream head `02e976c` onto accepted #57+#63 tip `6f774d8`.
 Source candidate: `3588d64ce6fd2c5a5ce8495d8c348eae4b606584`.
