@@ -165,7 +165,7 @@ func TestAttachIECDoesNotWriteThroughSnapshots(t *testing.T) {
 type countingPeripheral struct {
 	addr       uint8
 	ticks      int
-	startClock uint64
+	startClock uint
 	wrongClock int
 
 	// last is the previous tick's beam position in dots from the top of
@@ -183,7 +183,7 @@ func (*countingPeripheral) iecDATAOut() bool { return false }
 
 func (c *countingPeripheral) iecTick() {
 	pos := int(vic.rasterLine)*DotsPerLine + int(vic.dot)
-	if cpu.Clock != c.startClock+uint64(c.ticks)+1 {
+	if cpu.Clock != c.startClock+uint(c.ticks)+1 {
 		c.wrongClock++
 	}
 	if vic.dot%DotsPerCycle != 0 {

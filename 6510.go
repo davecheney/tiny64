@@ -35,14 +35,15 @@ type CPU struct {
 	// Clock counts elapsed Phi2 cycles, used to time the 2-cycle delay real
 	// hardware needs to recognize an asserted IRQ/NMI line (VICE calls this
 	// INTERRUPT_DELAY).
-	Clock uint64
+	// It wraps on device targets; compare elapsed durations by subtraction.
+	Clock uint
 
 	// irqLine is the last-seen state of CIA1's IRQ line, for edge detection;
 	// irqAssertClock/nmiLatchClock record the Clock value of the most recent
 	// rising edge, so recognition can be held off for 2 cycles after it.
 	irqLine        bool
-	irqAssertClock uint64
-	nmiLatchClock  uint64
+	irqAssertClock uint
+	nmiLatchClock  uint
 
 	// effectiveI is the Interrupt Disable flag's value as seen by interrupt
 	// recognition, lagging c.regP's I bit by one instruction: SEI/CLI/PLP
@@ -203,7 +204,7 @@ func (c *CPU) TickPhi2() {
 		c.irqLine = cia1.IRQ
 
 		switch {
-		case c.nmiLatch && c.Clock >= c.nmiLatchClock+2:
+		case c.nmiLatch && c.Clock-c.nmiLatchClock >= 2:
 			// NMI is checked before IRQ because it wins when both are
 			// pending, and it is deliberately not gated on effectiveI: the
 			// I flag masks IRQ only, which is what makes this interrupt
@@ -220,7 +221,7 @@ func (c *CPU) TickPhi2() {
 			c.Interrupt = 2
 			c.Opcode = 0x00
 			c.TState = 1
-		case cia1.IRQ && c.effectiveI == 0 && c.Clock >= c.irqAssertClock+2:
+		case cia1.IRQ && c.effectiveI == 0 && c.Clock-c.irqAssertClock >= 2:
 			c.Interrupt = 1
 			c.Opcode = 0x00
 			c.TState = 1
