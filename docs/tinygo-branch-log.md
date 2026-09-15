@@ -371,6 +371,86 @@ including both ELFs, source archive/patch, BIN/UF2, sections/symbols/
 disassembly, `codegen.json`, hardware provenance/log and `comparison.json`.
 One-shot measurement script: `files/hardware_simple_irq.py`.
 
+## PR #75 CIA scheduler trial: 2026-09-16 AEST
+
+Requested benchmark against accepted no-delay baseline `4bf2c3e`.
+Adapt upstream head `5fe18b87f031651cef149f35d197809739acedd7`;
+local measured source is `0d181a9a534361d615f00a4bbf39d7c541905341`.
+This is a trial, not an accepted update to `origin/tinygo`.
+
+Move both CIA ticks from CPU.TickPhi2 to a ciaTick helper called by the
+VIC cycle scheduler, in CPU -> CIA -> IEC order. Keep the lightweight
+renderer, virtual drive and no-delay IRQ/NMI model. This changes peripheral
+phasing: CPU bus accesses precede timer advancement, and underflows cannot
+be sampled by the CPU earlier in the same cycle. CPU.TickPhi2 now advances
+only the CPU; whole-machine callers must use StepCycle/StepFrame.
+The old baseline already ticked CIAs during CPU stalls; this is structural
+separation, not a fix for demonstrated lost ticks on this branch.
+
+Host `go test -count=1 ./...`, `go build ./...`, `go vet ./...` and both
+device builds pass. Tests cover both CIAs counting exactly CyclesPerFrame
+through StepCycle/StepFrame, exercised bad-line stalls, CPU-only ticks not
+advancing CIAs, CPU-before-underflow ordering and next-fetch recognition.
+Existing CIA mask-write, IEC cadence, KERNAL/wedge and interrupt tests pass.
+The upstream sprite-DMA/write-cycle assertions are not imported into the
+lightweight renderer. A new test fixture initially omitted VIC.Reset,
+causing an invalid video-counter state; initializing it correctly resolved
+the failure without production changes.
+
+Before flashing, compared both targets using TinyGo 0.42.0 / LLVM 22.1.4 /
+Go 1.27.1, -opt=2, Tufty -scheduler=none and Badge -scheduler=cores:
+
+| Bytes | Baseline | #75 |
+|---|---:|---:|
+| Tufty flash | 198324 | 198364 |
+| Tufty data | 328 | 328 |
+| Tufty BSS | 223292 | 223292 |
+| Tufty static RAM including stacks | 227716 | 227716 |
+| Badge flash | 144592 | 144672 |
+| Badge data | 260 | 260 |
+| Badge BSS | 222344 | 222344 |
+| Badge static RAM including stacks | 226700 | 226700 |
+| CPU.TickPhi2, both targets | 10120 | 9880 |
+| Tufty main.main | 11208 | 11484 |
+| Badge main.main | 5028 | 5344 |
+
+Reserved stacks remain 4096 bytes. CIA.Tick/checkIRQ/ciaTick and the
+scheduler remain inlined with no new standalone helper call. TickPhi2's
+static conditional branches fall 96 to 76 as CIA work moves out of it;
+that is not 20 eliminated runtime branches. Its 56-byte frame and saved
+r4-r6/lr prologue remain unchanged.
+
+Reused the recorded baseline without reflashing. One candidate flash,
+same MAZE workload, ten 50-frame windows ending 500 through 950:
+
+| Firmware | Mean ms/frame | Window range ms/frame |
+|---|---:|---:|
+| Accepted no-delay baseline | 70.850726 | 70.818040-70.892840 |
+| #75 adaptation | 70.415958 | 70.376940-70.445400 |
+
+Observed improvement: **0.434768 ms/frame (0.613639%)**. Window ranges
+do not overlap. Baseline was recorded the previous evening, not refreshed
+in this run; this is not a contemporaneous A/B/A and cannot exclude
+between-run environmental drift. It supports the performance gate for
+this workload without attributing the result solely to code motion or
+claiming other workloads improve. No native performance benchmarks or
+inferences from saturated XIP counters were used.
+
+Candidate left installed; no baseline restoration. Copy completed
+2026-09-16 07:53:50 AEST, serial reached frame 1000 at 07:55:02 AEST.
+No reported panic/fatal/OOM. UF2 structure/address continuity and equality
+to the ELF-derived payload were verified before copy. This is not flash
+readback, visual/physical-input validation or actual heap measurement.
+
+Loadable SHA-256:
+`34550f9a18e1d2f7eaa56fd424ab6334f0d0b85a3ff748780038cfabcee14c16`.
+UF2 SHA-256:
+`135c30d2205bb6df63a551d5db1da53199d673d8177663234cfa01ad5bf57d2f`.
+Artifacts: session `1c4c73da-12e2-4bc3-98bb-878099dafd16/files/cia-scheduler/`,
+including source archive, both ELFs, BIN/UF2, section/symbol/disassembly
+reports, codegen.json and hardware logs/provenance/comparison.json.
+One-shot script: `files/hardware_cia_scheduler.py`.
+
 ## Branch point
 
 `78e8f0e` "Align dotclock names with cycle phases" — the last commit that
