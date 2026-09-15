@@ -170,6 +170,98 @@ include both ELFs, UF2/BIN, section/symbol/disassembly reports, codegen JSON,
 serial logs/provenance and `comparison.json`. Reproduction uses
 `files/hardware_cia_hoist.py`. No native performance benchmark was run.
 
+## PR #67 clock narrowing intermediate: 2026-09-15
+
+The user requested resurrecting #67 before pursuing #71's clock removal.
+Adapt upstream head `02e976c` onto accepted #57+#63 tip `6f774d8`.
+Source candidate: `3588d64ce6fd2c5a5ce8495d8c348eae4b606584`.
+Upstream #67 was closed at 12:33:13 UTC; it was not reopened.
+This is an isolated experimental intermediate, not yet an accepted keeper
+update. At that observation, `git ls-remote origin refs/heads/tinygo`
+still returned `6f774d83ac6c074580436f468f202d7b29a0f858`.
+#71 remains deferred; none of its production changes are included.
+
+Unlike main, this branch still uses the clock for IRQ recognition.
+Narrow all three fields (`Clock`, `irqAssertClock`, `nmiLatchClock`) to
+`uint`, and use unsigned elapsed differences for both interrupt delays.
+Preserve opcode-fetch-only line sampling, reset history, effective-I
+handling, RESTORE and the lightweight renderer/virtual drive. Replace the
+Tufty demo's absolute deadline with a start/duration pair, retaining its
+40000-cycle key phases. `CPU.Clock` changes its exported type.
+
+Host `go test -count=1 ./...`, `go build ./...`, `go vet ./...` and both
+device builds pass. New tests compare 30000 randomized cycles against the
+old absolute-clock oracle, including IRQ/NMI edges, RESTORE, masks, reset
+and AEC holds. Separate traces cover rollover for IRQ, CIA2 and RESTORE.
+The hardware-tagged demo can be tested without the frontend using
+`go test cmd/tufty2040/demo.go cmd/tufty2040/demo_test.go`; this verifies
+key press/release timing across rollover.
+
+**Long-duration limitation:** elapsed subtraction is unambiguous only
+before a whole counter period has elapsed. A 32-bit counter wraps after
+roughly 71 minutes of emulated time. In particular, an IRQ line retained
+for a whole period can briefly appear younger than two cycles again.
+The tests cover crossing rollover with short delays, not that full-period
+case. Do not treat this intermediate as universally wrap-safe or silently
+promote it to the keeper on performance evidence alone. A mature-delay
+state/countdown would avoid this ambiguity; that needs separate evaluation
+in the old TinyGo IRQ model before acceptance.
+
+The following section/symbol analysis was reported before flashing, using
+TinyGo 0.42.0 / LLVM 22.1.4 / Go 1.27.1, `-opt=2`, Tufty
+`-scheduler=none`, Badge `-scheduler=cores`:
+
+| Bytes | #57+#63 | +#67 | Delta |
+|---|---:|---:|---:|
+| Tufty flash | 199476 | 198588 | -888 |
+| Tufty data | 328 | 328 | 0 |
+| Tufty BSS | 223340 | 223308 | -32 |
+| Tufty static RAM including stacks | 227764 | 227732 | -32 |
+| Badge flash | 145432 | 144656 | -776 |
+| Badge data | 260 | 260 | 0 |
+| Badge BSS | 222388 | 222360 | -28 |
+| Badge static RAM including stacks | 226744 | 226716 | -28 |
+| CPU.TickPhi2, both targets | 10932 | 10164 | -768 |
+| Tufty main.main | 11496 | 11388 | -108 |
+| Badge main.main | 5036 | 5036 | 0 |
+
+Reserved stacks remain 4096 bytes on both boards. CIA.Load/Store remain
+164/242 bytes, CIA.Tick/checkIRQ remain inlined, and the demo wait helpers
+are inlined. TickPhi2's static conditional-branch count falls 131 to 113.
+Its prologue still saves r4-r7/lr and reserves 60 stack bytes. The clock
+increment loses the high-word load/carry/store, zero setup and initial
+spill. Static instruction/layout changes do not establish runtime savings.
+
+One candidate flash reused the recorded #57+#63 baseline, with no baseline
+reflash before or afterward. Same MAZE workload, ten 50-frame windows
+ending at frames 500 through 950, continuing through frame 1000:
+
+| Firmware | Mean ms/frame | Window range ms/frame |
+|---|---:|---:|
+| #57+#63, reused | 73.050182 | 73.013320-73.075780 |
+| #57+#63+#67 | 71.544682 | 71.496220-71.585460 |
+
+The candidate saves **1.505500 ms/frame (2.060912%)**, with non-overlapping
+window ranges. This supports the performance side of the intermediate,
+but does not resolve its long-duration counter limitation. No desktop
+performance benchmark or cache attribution was used.
+
+The candidate was left flashed. Copy completed at 12:31:43 UTC; serial
+reached frame 1000 at 12:32:56 UTC without reported panic/fatal/OOM.
+UF2 block structure/address continuity and payload equality to the
+ELF-derived binary were checked before copying. This is not flash readback,
+pixel/physical-input verification or actual heap measurement.
+
+Loadable SHA-256:
+`ef9803c2f81268d6acc02b3bde2e6ede663cce00440b93021f2c1bccf8e991e5`.
+UF2 SHA-256:
+`1275e34e212c4235d31347fcded14a0d04ecc4934587bcb4377129ba6c7bc7c5`.
+Artifacts are in session
+`1c4c73da-12e2-4bc3-98bb-878099dafd16/files/clock-uint/`: both ELFs,
+BIN/UF2, source archive/patch, sections/symbols/disassembly, `codegen.json`,
+hardware logs/provenance and `comparison.json`. Reproduction script:
+`files/hardware_clock_uint.py`.
+
 ## Branch point
 
 `78e8f0e` "Align dotclock names with cycle phases" — the last commit that

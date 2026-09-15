@@ -208,8 +208,10 @@ This is an independent adaptation of #57, without #54 or #56.
 `CPU.Clock` and its IRQ/NMI timestamps use `uint` in the #67 trial.
 On 32-bit targets the clock wraps roughly every 71 minutes of emulated
 time; interrupt delays and the Tufty demo compare elapsed differences
-rather than absolute deadlines. External users must account for the
-exported counter's changed type and wraparound.
+rather than absolute deadlines. This trial still has a full-period
+ambiguity for long-held interrupt timestamps; see `docs/tinygo-branch-log.md`.
+External users must account for the exported counter's changed type
+and wraparound.
 
 This is a work in progress. See `docs/` for the reference material used
 to guide the implementation.
