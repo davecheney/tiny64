@@ -662,7 +662,7 @@ Gopher Badge uses `-target=gopher-badge -opt=2 -scheduler=cores`. The final
 Tufty UF2 is byte-identical to the physically measured wedge image. Badge
 flash/RAM are 145920/226752 bytes; no Badge hardware timing was performed.
 
-## Queued after PR #55: interrupt notifications (PR #56)
+## Queued after PR #55: clocked IRQ and RESTORE (#54, #56, #57)
 
 On 2026-09-15 the user requested PR #56, "Avoid idle IRQ work with
 per-source interrupt notifications", be recorded for backport inclusion
@@ -686,6 +686,22 @@ at `-opt=2 -scheduler=none`. Badge uses `-opt=2 -scheduler=cores`.
 The performance exception granted for #55 does not extend to #56.
 This entry records the requested inclusion order; it does not claim a
 completed backport or authorize an additional regression.
+
+The user subsequently confirmed that #56 must include its #54 prerequisite
+(clocked IRQ sampling, instruction-specific polls and RDY handling), then
+added #57, "Latch RESTORE as a direct NMI trigger instead of a Phi2-clocked
+pulse". The requested order is **existing #55, then #54 + #56 + #57**.
+Offline preparation compares the #55 baseline, #54 alone, #54+#56, and
+the full #54+#56+#57 candidate, retaining separate CPU-tick and device
+size/RAM measurements. Hardware validation is deferred until available.
+
+PR #57's reviewed head is `6d657ca242fba58df8d0d1d1c5706b2e1da7687f`.
+It intentionally removes RESTORE pulse duration and allows a fresh press
+to latch NMI even when CIA2 already holds the combined NMI line asserted.
+That is a behavior change, not just branch removal: test and document
+overlapping sources as well as ordinary RESTORE, RUN/STOP+RESTORE and
+wedge service handoffs. Upstream's native benchmark results were broadly
+flat; no TinyGo speedup or hardware acceptance is implied by inclusion.
 
 ## Flashing and Monitoring Workflow (Tufty 2040)
 
