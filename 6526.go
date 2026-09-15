@@ -24,6 +24,12 @@ type CIA struct {
 
 var cia1, cia2 CIA
 
+// ciaTick runs after the CPU bus access, independently of CPU stalls.
+func ciaTick() {
+	cia1.Tick()
+	cia2.Tick()
+}
+
 // CIA1 returns the singleton CIA1 (keyboard/joystick; drives the CPU's IRQ
 // line).
 func CIA1() *CIA { return &cia1 }

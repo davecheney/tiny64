@@ -19,6 +19,7 @@ func TestCIAMaskWriteInterruptEntry(t *testing.T) {
 			copy(ram[0x0200:], []byte{0x8D, 0x0D, page, 0xEA, 0xEA})
 			for cycle := 1; cycle <= 5; cycle++ {
 				cpu.TickPhi2()
+				ciaTick()
 				if cycle < 5 && cpu.Interrupt != 0 {
 					t.Fatalf("interrupt entered early at cycle %d", cycle)
 				}

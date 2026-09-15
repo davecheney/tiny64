@@ -203,7 +203,7 @@ func (c *countingPeripheral) iecTick() {
 func (c *countingPeripheral) iecAddress() uint8 { return c.addr }
 
 // After IOINIT the boot program leaves CIA2 timer A alone. Its countdown
-// proves each IEC tick follows CPU Phi2, without a production cycle counter.
+// proves each IEC tick follows CIA Phi2, without a production cycle counter.
 // One measured frame cannot underflow this starting value.
 func armPhi2Counter() uint16 {
 	cia2.Store(0x0E, 0)

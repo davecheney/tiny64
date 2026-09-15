@@ -341,6 +341,7 @@ func (v *VICII) stepCycle() {
 	v.dotclock7()
 	v.phi0high()
 	cpu.TickPhi2()
+	ciaTick()
 	iecTick()
 }
 

@@ -214,6 +214,11 @@ interrupt/VIC timing. The exported `CPU.Clock` field is removed. External code
 reading `GetCPU().Clock` must track elapsed cycles at its stepping boundary.
 The Tufty demo retains its three-frame key transitions using frame delays.
 
+In the #75 trial, the VIC-II scheduler clocks CPU, CIAs, then IEC once per
+bus cycle. `CPU.TickPhi2` advances only the CPU; callers needing the whole
+machine should use `VICII.StepCycle` or `StepFrame`. CIA underflows are
+visible to the CPU on a subsequent fetch, not earlier in the same cycle.
+
 This is a work in progress. See `docs/` for the reference material used
 to guide the implementation.
 

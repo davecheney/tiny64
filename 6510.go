@@ -145,14 +145,9 @@ func (c *CPU) pop() uint8 {
 	return val
 }
 
-// TickPhi2 executes exactly one high-clock phase of the CPU. The CIAs are
-// clocked from here too, since on real hardware they share the system
-// Phi2 clock with the CPU (not the VIC-II's dot clock) and keep counting
-// regardless of whether the CPU itself is stalled by BA/AEC.
+// TickPhi2 executes one CPU high-clock phase only. The VIC-II scheduler
+// clocks the CIAs separately, including when the CPU is stalled.
 func (c *CPU) TickPhi2() {
-	cia1.Tick()
-	cia2.Tick()
-
 	// If VIC-II has pulled AEC low, the CPU is electronically
 	// disconnected from the bus. It stalls entirely.
 	if !vic.AEC {
