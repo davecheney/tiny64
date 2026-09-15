@@ -157,7 +157,10 @@ func TestVICSpriteExpansionXY(t *testing.T) {
 	// and inverted once per line thereafter, which makes row 0 occupy a
 	// single line and every later row occupy two.
 	for line := uint16(56); line <= 59; line++ {
-		for v.rasterLine != line || v.dot != 48 {
+		for cycles := 0; v.rasterLine != line || v.dot != 48; cycles++ {
+			if cycles >= CyclesPerFrame {
+				t.Fatalf("did not reach line %d, dot 48 within a frame", line)
+			}
 			if v.dot%DotsPerCycle != 0 {
 				t.Fatalf("StepCycle starting at unaligned dot %d on raster line %d", v.dot, v.rasterLine)
 			}

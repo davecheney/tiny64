@@ -138,10 +138,8 @@ func main() {
 	var stalled int64
 	var lastPC uint16
 	for {
-		// StepCycle returns with the CPU's Phi2 for this cycle already
-		// taken: phi0high hands it the bus and TickPhi2 runs as the last
-		// thing in the cycle (see 6569.go). So everything below reports
-		// the cycle this iteration just ran, not the one before it.
+		// StepCycle completes the VIC phases, CPU Phi2, and IEC tick before
+		// returning, so report the cycle just executed.
 		vic.StepCycle()
 		n++
 		if !vic.AEC {
