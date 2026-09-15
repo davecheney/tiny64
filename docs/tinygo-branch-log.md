@@ -409,6 +409,62 @@ the Tufty candidate SHA-256 is
 No Badge hardware timing was performed. The experiment restored the
 physical Tufty baseline; PR preparation did not flash hardware.
 
+## Accepted with performance exception: transparent DOS wedge (PR #55)
+
+Backport the wedge from main PR #55 (`b679bfa`, merged as `4f8f7fb`) onto
+`210267b`. The cartridge hides ROML during the real KERNAL memory test and
+external calls, preserving all 38911 BASIC bytes. Its dispatcher, service
+gate and workspace occupy `$033C-$03D1`; IO2 supplies the bootstrap aperture
+and `$DFFF` mapping/kill latch. `@Q` now disables the cartridge until hardware
+reset rather than supporting `SYS 32777` reactivation.
+
+This is a wedge-only backport: the only CPU change is `cartridge.reset()`
+before the existing reset. It does not include the separate IRQ/RDY/NMI
+backport, new VIC behavior or the real 1541. The existing wildcard load/run
+demo test is retained. Imported wedge tests explicitly attach a fresh virtual
+drive, matching main's test helper; tinygo's `useDrive` otherwise preserves
+an already-attached drive and its consumed startup status in nested tests.
+
+Tufty MAZE A/B/A used TinyGo 0.42.0, LLVM 22.1.4 and Go 1.27.1 with
+`-target=tufty2040 -opt=2 -scheduler=none`, taking ten 50-frame windows ending
+at frames 500 through 950:
+
+| firmware | mean ms/frame | window range ms/frame |
+|---|---:|---:|
+| Baseline before | 74.231756 | 74.214520-74.250140 |
+| Transparent wedge | 74.855912 | 74.831660-74.890440 |
+| Restored baseline | 74.232562 | 74.216520-74.251020 |
+
+The new wedge costs **0.623753ms/frame (0.8403%)** against the averaged
+baseline; baseline drift is 0.000806ms/frame. **The user explicitly accepted
+this regression for the memory-compatibility improvement and requested the
+backport. This is an exception, not a relaxation of the no-regression rule.**
+The cost belongs to the complete wedge adaptation and generated layout;
+no individual helper is identified as the cause. Late XIP counters saturate
+and cannot support cache attribution.
+
+Native Go on M4 Max, using twelve alternating one-second samples per
+variant and `GOMAXPROCS=1`, showed no significant READY or MAZE frame-time
+change (551.245 to 548.182us, p=0.128; 585.109 to 585.115us, p=0.630).
+The isolated CPU-cycle benchmark increased from 7.891 to 8.219ns
+(4.16%, p<0.001). These are emulator timings, not desktop presentation FPS.
+Tufty flash grows from 196864 to 199580 bytes (+2716), RAM from 227760 to
+227768 bytes (+8).
+
+The full host suite passes, including full-memory LOAD/SAVE, mapping/kill
+lifecycle, service register/flag preservation, IRQ handlers in high RAM,
+and RESTORE/NMI gate boundaries on tinygo's existing CPU. The optional Uncle
+Agnus fixture was not supplied and is not claimed as validated. All physical
+captures reached frame 1000; baseline was restored through frame 1000 at
+2026-09-15 06:47:46 UTC. Serial progress does not independently verify pixels
+or broad game compatibility.
+
+Final backport checks passed `go test -count=1 ./...`, `go build ./...`,
+and `go vet ./...`. Both device builds pass: Tufty uses the flags above;
+Gopher Badge uses `-target=gopher-badge -opt=2 -scheduler=cores`. The final
+Tufty UF2 is byte-identical to the physically measured wedge image. Badge
+flash/RAM are 145920/226752 bytes; no Badge hardware timing was performed.
+
 ## Flashing and Monitoring Workflow (Tufty 2040)
 
 - **Build & Flash**: `tinygo flash -target=tufty2040 -opt=2 -scheduler=none ./cmd/tufty2040` (compiles and flashes in a single step).
