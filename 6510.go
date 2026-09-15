@@ -176,10 +176,11 @@ func (c *CPU) triggerNMI() {
 	c.nmiDelay = 2
 }
 
-// TickPhi2 executes exactly one high-clock phase of the CPU. The CIAs are
-// clocked from here too, since on real hardware they share the system
-// Phi2 clock with the CPU (not the VIC-II's dot clock) and keep counting
-// regardless of whether the CPU itself is stalled by BA/AEC.
+// TickPhi2 executes exactly one high-clock phase of the CPU. It clocks the
+// CPU and nothing else: the CIAs share the same Phi2 but are clocked from
+// the VIC-II's cycle scheduler alongside it (see ciaTick), since that is
+// where the clock comes from and since they keep counting whether or not
+// this function decides the CPU is stalled by BA/AEC.
 func (c *CPU) TickPhi2() {
 	// Retire one cycle of a pending NMI's synchronization delay. Two
 	// things about where this sits are load-bearing, and neither is
@@ -198,9 +199,6 @@ func (c *CPU) TickPhi2() {
 	if c.nmiDelay != 0 {
 		c.nmiDelay--
 	}
-
-	cia1.Tick()
-	cia2.Tick()
 
 	nmi := c.interruptSources&nmiSources != 0
 	if nmi && !c.nmiLine {
