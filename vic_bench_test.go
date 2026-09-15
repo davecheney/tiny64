@@ -50,13 +50,14 @@ const (
 func loadTestProgram() {
 	cia1 = CIA{}
 	cia2 = CIA{}
-	vic.control1 = 0 // DEN=0: no bad lines/sprite DMA, AEC stays true
+	vic.control1 = 0 // DEN=0: no bad lines or sprite DMA
 
 	// These survive CPU.Reset, so a benchmark run after a test that banked
 	// the ROMs out would otherwise fetch its interrupt vector from RAM.
 	// Zero is the power-on state: all pins inputs, floating high, so the
 	// KERNAL, BASIC and I/O are all visible.
 	cpu.Port, cpu.PortDDR = 0, 0
+
 
 	ram := Ram()
 	for i := range ram {

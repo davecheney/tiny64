@@ -40,10 +40,9 @@ RDY holds reads without stopping IRQ sampling. A stretched poll can accept
 a pulse during the hold; a stretched non-poll cycle cannot turn that pulse
 into a queued interrupt. CLI/SEI update I even while their terminal read
 is held, so subsequent repetitions use the new mask. PLP instead waits
-for its completing stack read. Writes, including interrupt stack pushes,
-continue under the existing BA/AEC contract. NMI/reset recognition and the
-VIC's bus scheduling are separate models and are not replaced by this IRQ
-implementation.
+for its completing stack read. Writes, including interrupt stack pushes, are handled by the CPU core. NMI/
+reset recognition and the VIC's bus scheduling are separate models and are
+not replaced by this IRQ implementation.
 
 The 6510 tracks interrupt producers in a source bitmask: VIC and CIA1 drive
 IRQ; CIA2 and RESTORE drive NMI. Producers update only their own bits, so

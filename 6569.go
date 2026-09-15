@@ -106,10 +106,6 @@ type VICII struct {
 	control2     uint8
 	memPointers  uint8
 
-	// Signals driven by the VIC-II and sensed by the CPU
-	BA          bool  // Bus Available, wired to CPU RDY (low holds reads, not writes)
-	baLowCycles uint8 // Consecutive BA-low cycles so far, this one included.
-
 	// badLine/allowBadLine/denLatch implement the Bad Line Condition
 	// (section 3.5): allowBadLine is latched from DEN once per frame during
 	// raster line $30, and badLine is re-evaluated every cycle.
@@ -196,7 +192,6 @@ func (v *VICII) RasterLine() uint16 {
 func (v *VICII) Reset() {
 	v.dot = 0
 	v.rasterLine = 0
-	v.BA = true
 	// Raster line 0 is inside the upper border, which the border unit only
 	// leaves at the top comparison on line $33/$37. Both flip-flops
 	// therefore have to start set, or the first frame paints graphics over
@@ -220,7 +215,6 @@ func (v *VICII) Reset() {
 	v.badLine = false
 	v.allowBadLine = false
 	v.denLatch = false
-	v.baLowCycles = 0
 	v.idle = true
 	v.rasterCompare = 0
 	v.rasterIRQTriggered = false
@@ -845,11 +839,16 @@ func (v *VICII) stepCycle() {
 	v.dotclock7(reload)
 	v.phi0high()
 
-	// The CPU runs first, since the VIC has just handed it the bus.
-	cpu.TickPhi2()
+	// The CPU runs first, since the VIC has just handed it the bus, and
+	// only on the cycles the VIC has not taken the bus away for a fetch
+	// of its own.
+	if !v.ownsPhi2() {
+		cpu.TickPhi2()
+	}
 
 	// The CIAs clock on that Phi2's falling edge, so they run after the
-	// CPU and see whatever its bus cycle wrote.
+	// CPU and see whatever its bus cycle wrote. They clock whether or not
+	// the VIC let the CPU run: Phi2 reaches them either way.
 	ciaTick()
 
 	// The IEC devices run last, because what they find on the bus is
@@ -1178,61 +1177,18 @@ func (v *VICII) phi0low() {
 		v.cycleBorderComp()
 	}
 
-	// cycleIsCAccess: pulls BA low for the duration of a Bad Line's
-	// c-accesses, article cycles 12-54. Note the three cycle lead: the
-	// first c-access is at article cycle 15 (slot 4).
-	//
-	// Sprite DMA (section 3.6.3) additionally pulls BA low for five
-	// cycles per DMA-active sprite - two fetch cycles plus the same three
-	// cycle lead - in the fixed windows given by spriteBASlotMask.
-	//
 	// The sprite fetch block runs from slot 44 to the end of the line and
 	// feeds the next line's display window, so the display decision is
-	// latched here, before BA consults it, and each sprite's shape is
-	// fetched in its own window.
+	// latched before each sprite's shape is fetched in its own window.
 	if slot == 44 {
 		v.latchSpriteDisplay()
 	}
 	if slot >= 47 && slot&1 == 1 {
 		v.latchSpriteShape(uint8((slot - 47) / 2))
 	}
-	ba := !(slot >= 1 && slot <= 43 && badLine) && !v.spriteDMAStall(slot)
-	v.BA = ba
-
-	// How far into that three cycle lead this cycle is, counted here
-	// because it is part of driving BA rather than something Phi2 works
-	// out again from a pin. It saturates one past the warning: nothing
-	// asks a finer question than whether the warning has expired.
-	if ba {
-		v.baLowCycles = 0
-	} else if v.baLowCycles <= baWarningCycles {
-		v.baLowCycles++
-	}
-
 	if slot >= 5 && slot <= 44 {
 		v.cycleGAccess()
 	}
-}
-
-// spriteBASlotMask gives, for each bus cycle of a line, the set of sprites
-// whose BA window covers it. Sprite N's BA runs from slot 44+2N through
-// 48+2N inclusive: the two cycles of pointer/data fetch it actually needs
-// (slots 47+2N and 48+2N), preceded by the three cycles of lead time the
-// VIC-II gives the CPU to retire any in-flight write cycles before the bus
-// is taken away. Transcribed from the 6569 (PAL) cycle table in VICE's
-// x64sc (viciisc/vicii-chip-model.c), rebased from its article cycle
-// numbering onto slot (article cycle = slot + 11).
-var spriteBASlotMask = [CyclesPerLine]uint8{
-	44: 0x01, 45: 0x01, 46: 0x03, 47: 0x03, 48: 0x07, 49: 0x06,
-	50: 0x0E, 51: 0x0C, 52: 0x1C, 53: 0x18, 54: 0x38, 55: 0x30,
-	56: 0x70, 57: 0x60, 58: 0xE0, 59: 0xC0, 60: 0xC0, 61: 0x80,
-	62: 0x80,
-}
-
-// spriteDMAStall reports whether any sprite whose BA window covers this
-// slot is currently DMA active, and so is holding BA low.
-func (v *VICII) spriteDMAStall(slot uint16) bool {
-	return spriteBASlotMask[slot]&v.spriteDisplay != 0
 }
 
 // latchSpriteDisplay advances each sprite's DMA state one raster line, and
@@ -1399,37 +1355,24 @@ func (v *VICII) phi0high() {
 	}
 }
 
-// baWarningCycles is how long BA stays low before AEC follows it: the
-// lead time the VIC gives the CPU to retire in-flight writes before taking
-// the bus. Three is the longest run of consecutive writes a 6502 can
-// perform, which is not a coincidence - see TestCPUIsOffTheBusBeforeAECDrops.
-const baWarningCycles = 3
-
-// AEC reports the Address Enable Control pin: true while the CPU still
-// reaches the bus, false once the VIC has taken it. It is derived rather
-// than stored because it is not independent state - it is the far end of
-// the warning baLowCycles is counting - and a stored copy would only be
-// another thing to keep in step. Nothing inside the machine senses it: the
-// CPU is held by BA, three cycles earlier (see CPU.TickPhi2). It is here
-// for front ends that want to show who owns the bus.
-func (v *VICII) AEC() bool {
-	return v.baLowCycles <= baWarningCycles
+// ownsPhi2 reports whether the VIC owns the CPU's Phi2 slot. The emulator
+// omits CPU execution while the VIC performs a bad-line c-access or active
+// sprite DMA fetch.
+func (v *VICII) ownsPhi2() bool {
+	slot := (v.dot - 1) / DotsPerCycle
+	if v.badLine && slot >= 4 && slot <= 43 {
+		return true
+	}
+	if slot < 47 {
+		return false
+	}
+	sprite := (slot - 47) / 2
+	return sprite < 8 && v.spriteDisplay&(1<<sprite) != 0
 }
 
 // cycleCAccess reads one character pointer + color entry from the video
 // matrix into the current row's buffer, during a Bad Line (section 3.7.2).
 func (v *VICII) cycleCAccess() {
-	if v.baLowCycles <= baWarningCycles {
-		// Late DMA. The CPU keeps the bus for the three cycles of warning
-		// BA gives it to retire its writes, so a c-access landing inside
-		// that window finds the VIC's D0-D7 still disconnected and cannot
-		// see the video matrix. Only a badline started late enough gets
-		// here; a normal one begins its warning at slot 1 and reads from
-		// slot 4. CPU-bus-derived colour data is not modeled by this
-		// renderer.
-		v.videoMatrixColor[v.VMLI] = 0xFF
-		return
-	}
 	vm := (uint16(v.memPointers) >> 4) & 0x0F
 	char := plaVICLoad((vm << 10) + v.VC)
 	// Colour RAM is a dedicated 2114 chip wired directly to the VIC-II's

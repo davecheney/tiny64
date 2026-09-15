@@ -27,7 +27,6 @@ func newNMIFixture(t *testing.T) {
 	cia2 = CIA{}
 	keyboard = Keyboard{}
 	vic = VICII{}
-	vic.BA = true
 
 	copy(ram[0x0200:], []uint8{0x4C, 0x00, 0x02}) // JMP $0200
 	copy(ram[0x0300:], []uint8{

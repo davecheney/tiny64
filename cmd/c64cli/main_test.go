@@ -54,7 +54,7 @@ func TestTraceCompletedCycles(t *testing.T) {
 		}
 	}
 	finalCPU, _, _ := strings.Cut(records[len(records)-1][2], " | ")
-	wantStop := "stopped after " + strconv.Itoa(cycles) + " cycles (0 stalled, 0.0%): " + finalCPU + "\n"
+	wantStop := "stopped after " + strconv.Itoa(cycles) + " cycles: " + finalCPU + "\n"
 	if !strings.HasSuffix(string(out), wantStop) {
 		t.Errorf("missing matching stop summary %q:\n%s", wantStop, out)
 	}

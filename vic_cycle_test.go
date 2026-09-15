@@ -2,7 +2,7 @@ package tiny64
 
 import "testing"
 
-func TestVICStepCycleStalledReadClocksCIAs(t *testing.T) {
+func TestVICStepCycleBadLineSuppressesCPUAndClocksCIAs(t *testing.T) {
 	savedBus := bus
 	t.Cleanup(func() { bus = savedBus })
 	newMachine(t)
@@ -10,7 +10,7 @@ func TestVICStepCycleStalledReadClocksCIAs(t *testing.T) {
 	cpu.PC = 0x0200
 	ram[0x0200] = 0xEA // NOP
 	vic.rasterLine = 0x33
-	vic.dot = DotsPerCycle
+	vic.dot = 4 * DotsPerCycle
 	vic.control1 = 0x13
 	vic.allowBadLine = true
 	vic.syncLineVisibility()
@@ -27,11 +27,8 @@ func TestVICStepCycleStalledReadClocksCIAs(t *testing.T) {
 	// progress on any of them.
 	for n := uint16(1); n <= 3; n++ {
 		vic.StepCycle()
-		if vic.BA || !vic.AEC() {
-			t.Fatalf("cycle %d: expected BA warning with AEC still high", n)
-		}
 		if cpu.PC != 0x0200 || cpu.TState != 0 {
-			t.Fatalf("cycle %d: stalled CPU advanced to PC=%04X T=%d", n, cpu.PC, cpu.TState)
+			t.Fatalf("cycle %d: bad-line c-access advanced CPU to PC=%04X T=%d", n, cpu.PC, cpu.TState)
 		}
 		if cia1.timerA != 10-n || cia2.timerA != 10-n {
 			t.Fatalf("cycle %d: CIA timers=%d/%d, want %d/%d", n, cia1.timerA, cia2.timerA, 10-n, 10-n)

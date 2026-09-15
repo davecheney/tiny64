@@ -179,8 +179,7 @@ func (c *CPU) triggerNMI() {
 // TickPhi2 executes exactly one high-clock phase of the CPU. It clocks the
 // CPU and nothing else: the CIAs share the same Phi2 but are clocked from
 // the VIC-II's cycle scheduler alongside it (see ciaTick), since that is
-// where the clock comes from and since they keep counting whether or not
-// this function decides the CPU is stalled by BA/AEC.
+// where the clock comes from.
 func (c *CPU) TickPhi2() {
 	// Retire one cycle of a pending NMI's synchronization delay. Two
 	// things about where this sits are load-bearing, and neither is
@@ -207,39 +206,6 @@ func (c *CPU) TickPhi2() {
 	c.nmiLine = nmi
 
 	opcode, tstate, i := c.Opcode, c.TState, c.regP&P_INTERRUPT
-
-	// BA low does not freeze the CPU outright. It drives the 6510's RDY
-	// pin, which only halts the processor on a *read* cycle; a write cycle
-	// already in flight always completes. That is precisely why the VIC-II
-	// asserts BA three cycles before it actually takes the bus (see
-	// spriteBASlotMask and the Bad Line c-access lead): the longest run of
-	// consecutive writes a 6502 can perform is three - the interrupt
-	// sequence's three pushes - so by the time AEC drops and the VIC owns
-	// the bus, the CPU is guaranteed to have stopped - which is why load
-	// and store need not consult AEC at all. See
-	// TestCPUIsOffTheBusBeforeAECDrops for that invariant stated as a test.
-	//
-	// Modelling this matters for cycle-exact code: stalling unconditionally
-	// halts the CPU up to three cycles early, and how early depends on
-	// whatever instruction happens to be executing, which shows up as
-	// timing jitter in raster code that reprograms sprites mid-screen.
-	if !vic.BA && cpuWriteCycles[c.Opcode]>>c.TState&1 == 0 {
-		if c.irqActive {
-			c.clockIRQ(i, false, true)
-		}
-		// CLI/SEI's I update is not held by RDY: their first terminal
-		// cycle polls with old I, later repetitions see the new value.
-		// PLP differs: it needs the completing stack read to restore P.
-		if c.TState == 1 {
-			switch c.Opcode {
-			case 0x58:
-				c.regP &^= P_INTERRUPT
-			case 0x78:
-				c.regP |= P_INTERRUPT
-			}
-		}
-		return
-	}
 
 	switch c.TState {
 	// T0: Fetch the opcode, unless a pending interrupt takes over instead.

@@ -57,8 +57,6 @@ func runInstrTest(t *testing.T, tc instrTest) {
 		ram[addr] = val
 	}
 
-	vic.BA = true
-
 	got := make([]busCycle, len(tc.cycles))
 	for i := range tc.cycles {
 		cpu.TickPhi2()
@@ -3350,33 +3348,6 @@ func TestInstructions(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			runInstrTest(t, tc)
 		})
-	}
-}
-
-// TestCPUStallsWhenBALow verifies the CPU is left bit for bit unchanged by
-// a cycle it spends held. BA is what does the holding: AEC lags it by three
-// cycles, so the two are never both low on the cycle a hold begins, and a
-// fixture that drops them together describes a machine state that cannot
-// occur.
-func TestCPUStallsWhenBALow(t *testing.T) {
-	ram = [65536]byte{}
-	bus = Bus{}
-	cpu = CPU{}
-	cpu.PortDDR = 0xFF // LORAM/HIRAM/CHAREN driven low: PLA maps plain RAM everywhere
-
-	cpu.PC = 0x0200
-	ram[0x0200] = 0xEA
-
-	vic.BA = false
-
-	before := cpu
-
-	cpu.TickPhi2()
-
-	// Compared whole, with nothing exempted: the CPU keeps no count of
-	// Phi2 cycles, so a stalled one leaves it bit for bit unchanged.
-	if cpu != before {
-		t.Errorf("CPU state changed while BA was low: got %+v, want %+v", cpu, before)
 	}
 }
 

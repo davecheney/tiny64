@@ -596,38 +596,3 @@ func TestVICSpriteDisableDoesNotRetractBand(t *testing.T) {
 		t.Errorf("displayed lines %d..%d, want 56..76", got[0], got[20])
 	}
 }
-
-// TestSpriteDMAPullsBALow verifies that a sprite under DMA actually drives BA
-// low over its window, rather than the window merely being described by
-// spriteBASlotMask. Sprite 0 fetches in slots 47 and 48 and BA leads the grab
-// by three cycles, so BA is low across slots 44 to 48 and high either side.
-func TestSpriteDMAPullsBALow(t *testing.T) {
-	v := &VICII{}
-	v.Reset()
-	cia2.PRA, cia2.DDRA = 3, 3
-	v.memPointers = 0x14
-	v.WriteRegister(0xD001, 55)
-	v.WriteRegister(0xD015, 0x01)
-	v.control1 = 0x1B
-	v.control2 = 0x08
-
-	// Line 56 is inside the band, so sprite 0 is under DMA for the whole
-	// of that line's fetch block. Bad Line BA is confined to slots 1-43,
-	// which leaves slots 44 and up to the sprites alone.
-	for v.rasterLine != 56 || v.dot != 0 {
-		v.StepCycle()
-	}
-	for slot := uint16(43); slot <= 50; slot++ {
-		// BA is driven by the slot's phi0low, four dots into the cycle,
-		// and nothing touches it again until the next cycle's phi0low -
-		// phi0high only copies it into AEC. Sampling at the end of the
-		// slot's cycle therefore reads the value phi0low just set.
-		for v.dot != (slot+1)*DotsPerCycle {
-			v.StepCycle()
-		}
-		want := slot < 44 || slot > 48 // BA high outside sprite 0's window
-		if v.BA != want {
-			t.Errorf("slot %d: BA = %v, want %v", slot, v.BA, want)
-		}
-	}
-}

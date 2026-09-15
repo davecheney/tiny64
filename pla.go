@@ -13,7 +13,7 @@ import "github.com/davecheney/tiny64/rom"
 // different chip-select lines. They already reach the PLA via separate
 // call paths (cpu.load/store vs the VIC's direct plaVICLoad calls), so
 // that separation is modeled here as separate functions rather than a
-// single AEC-gated access path.
+// single shared access path.
 
 // plaLoad reads addr through the memory map currently selected by the
 // CPU's bank-switching lines.
