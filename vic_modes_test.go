@@ -415,3 +415,188 @@ func TestVICVerticalBorderOpenTopBottomTricks(t *testing.T) {
 		t.Errorf("verticalBorder=false at bottom border line $FB, want true")
 	}
 }
+
+// TestGraphicsPaletteMatchesPerDotDecode holds refreshGraphicsPalette to
+// the decode nextGraphicsColor used to perform per dot, across every
+// input that decode could branch on: all eight graphics modes including
+// the invalid ones, multicolor either way, and every value the latched
+// g-access data can take.
+//
+// The palette is a pure function of those inputs, so an exhaustive
+// comparison against the old code is both possible and cheap, and it is
+// worth having: several of these arms - the invalid modes, ECM's choice
+// of background register - are reached by no other test, and a wrong
+// colour in one of them would show up as nothing more than an odd pixel
+// in a mode nobody runs.
+func TestGraphicsPaletteMatchesPerDotDecode(t *testing.T) {
+	// perDotDecode is what nextGraphicsColor did for a sequencer value of
+	// index, before the mode branching was lifted out of the dot path.
+	perDotDecode := func(v *VICII, index uint8) (byte, bool) {
+		if !v.multicolor {
+			if index == 0 {
+				if v.graphicsMode == modeECMText {
+					return v.backgroundColor(uint8(v.videoBuffer>>6) & 0x03), false
+				}
+				if v.graphicsMode == modeStandardBitmap {
+					return byte(v.videoBuffer) & 0x0F, false
+				}
+				if v.graphicsMode > modeECMText {
+					return 0, false
+				}
+				return v.background0, false
+			}
+			switch v.graphicsMode {
+			case modeStandardText, modeMulticolorText, modeECMText:
+				return byte(v.videoBuffer>>8) & 0x0F, true
+			case modeStandardBitmap:
+				return byte(v.videoBuffer>>4) & 0x0F, true
+			default:
+				return 0, false
+			}
+		}
+		switch v.graphicsMode {
+		case modeMulticolorText:
+			switch index {
+			case 0:
+				return v.background0, false
+			case 1:
+				return v.backgroundColor(1), false
+			case 2:
+				return v.backgroundColor(2), false
+			default:
+				return byte(v.videoBuffer>>8) & 0x07, true
+			}
+		case modeMulticolorBitmap:
+			switch index {
+			case 0:
+				return v.background0, false
+			case 1:
+				return byte(v.videoBuffer>>4) & 0x0F, true
+			case 2:
+				return byte(v.videoBuffer) & 0x0F, true
+			default:
+				return byte(v.videoBuffer>>8) & 0x0F, true
+			}
+		default:
+			return 0, false
+		}
+	}
+
+	v := &VICII{}
+	// Distinct background colours, so swapping two of the four registers
+	// cannot pass unnoticed.
+	v.background0 = 0x01
+	v.registers22To2E[0] = 0x02 // $D022
+	v.registers22To2E[1] = 0x03 // $D023
+	v.registers22To2E[2] = 0x04 // $D024
+
+	for mode := uint8(0); mode < 8; mode++ {
+		for _, multicolor := range []bool{false, true} {
+			// Only the first two sequencer values are reachable in the
+			// standard modes; the multicolor modes shift out all four.
+			indices := uint8(2)
+			if multicolor {
+				indices = 4
+			}
+			for data := 0; data < 1<<16; data++ {
+				v.graphicsMode, v.multicolor = mode, multicolor
+				v.videoBuffer = uint16(data)
+				v.refreshGraphicsPalette()
+
+				for index := uint8(0); index < indices; index++ {
+					wantColor, wantForeground := perDotDecode(v, index)
+					gotColor := v.gdColor[index]
+					gotForeground := v.gdForeground&(1<<index) != 0
+					if gotColor != wantColor || gotForeground != wantForeground {
+						t.Fatalf("mode %d multicolor=%v data=%#04x index %d: palette says colour %#02x foreground=%v, per-dot decode says %#02x foreground=%v",
+							mode, multicolor, data, index, gotColor, gotForeground, wantColor, wantForeground)
+					}
+				}
+			}
+		}
+	}
+}
+
+// TestBackgroundWriteReachesTheNextDot pins the other half of the
+// palette's contract. Lifting the decode out of the dot path means the
+// colours are now derived ahead of the dots that use them, so a mid-line
+// write to a background register has to be picked up by the cycle that
+// follows it - that is what the raster tricks changing $D021 down the
+// screen depend on.
+func TestBackgroundWriteReachesTheNextDot(t *testing.T) {
+	saveMachine(t)
+	newMachine(t)
+	iecBus = nil
+
+	vic.rasterLine = 100
+	vic.dot = 48
+	vic.control1 = 0x1B // DEN=1, RSEL=1, YSCROLL=3
+	vic.control2 = 0x08
+	vic.syncLineVisibility()
+	// Reset seeds the border flip-flops set, because raster 0 is in the
+	// upper border; raster 100 is inside the display window.
+	vic.mainBorder, vic.verticalBorder = false, false
+	vic.background0 = 6
+	vic.gdPending, vic.videoBufferPending = 0x00, 0x0100
+	vic.loadGraphicsData() // sequencer all background
+
+	vic.StepCycle()
+	if !frameBufferPixelIs(52, 100, 6) {
+		t.Fatal("dot 52 was not painted with the background colour in force")
+	}
+
+	vic.WriteRegister(0xD021, 3)
+	vic.StepCycle()
+	if !frameBufferPixelIs(60, 100, 3) {
+		t.Fatal("a background write did not reach the dots of the following cycle")
+	}
+}
+
+// TestGraphicsPaletteStaysConsistentAcrossAFrame is the guard on the
+// palette's invalidation rule. The colours are derived ahead of the dots
+// that use them and rebuilt only at the points where their inputs can
+// change, so a new writer of the graphics mode, the latched g-access data
+// or any of the four background registers that does not rebuild would
+// leave the sequencer painting with stale colours - and would show up as
+// nothing more than a wrong colour somewhere down the frame.
+//
+// So drive a full frame of a live display with sprites and a program
+// writing registers, and after every bus cycle check the cached palette
+// still equals one built from the state as it stands. Anything that
+// changes an input without rebuilding fails here on the cycle it happens.
+func TestGraphicsPaletteStaysConsistentAcrossAFrame(t *testing.T) {
+	saveMachine(t)
+	Reset()
+	loadSpriteProgram()
+
+	// A program that walks values through all four background registers
+	// and through $D016, so the sweep below sees the palette's inputs
+	// change under it rather than sitting still. It leaves $D011 alone:
+	// writing YSCROLL mid-frame manufactures extra Bad Lines, and VC is
+	// incremented without the 10 bit wrap the real counter has, so the
+	// c-access runs off the end of colour RAM. That is a real bug, but
+	// not this one.
+	copy(Ram()[0x0800:], []byte{
+		0xE6, 0x20, // INC $20
+		0xA5, 0x20, // LDA $20
+		0x8D, 0x21, 0xD0, // STA $D021
+		0x8D, 0x22, 0xD0, // STA $D022
+		0x8D, 0x23, 0xD0, // STA $D023
+		0x8D, 0x24, 0xD0, // STA $D024
+		0x8D, 0x16, 0xD0, // STA $D016
+		0x4C, 0x00, 0x08, // JMP $0800
+	})
+	cpu.PC = 0x0800
+
+	for cycle := range CyclesPerFrame {
+		vic.StepCycle()
+
+		cached, cachedForeground := vic.gdColor, vic.gdForeground
+		vic.refreshGraphicsPalette()
+		if vic.gdColor != cached || vic.gdForeground != cachedForeground {
+			t.Fatalf("cycle %d (raster %d dot %d, mode %d multicolor=%v): palette held %v/%#02x, rebuilding from the same state gives %v/%#02x - something changed an input without rebuilding",
+				cycle, vic.rasterLine, vic.dot, vic.graphicsMode, vic.multicolor,
+				cached, cachedForeground, vic.gdColor, vic.gdForeground)
+		}
+	}
+}
