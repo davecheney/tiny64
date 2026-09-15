@@ -13,13 +13,11 @@ var paletteShaderSrc []byte
 
 // Four palette indices ride in the four channels of one RGBA texel, so the
 // texture carrying a frame is a quarter of the padded frame buffer's width.
-const (
-	packedWidth = tiny64.FrameBufferStride / 4
-)
+const packedWidth = tiny64.FrameBufferStride / 4
 
 // display hands the GPU one byte per pixel and lets the shader turn those
-// palette indices into colours, which keeps the frame buffer, the upload
-// and the texture to a quarter of the size of their RGBA equivalents.
+// palette indices into colours. Each texel stores four indices, not
+// premultiplied colour: even its alpha channel is pixel data.
 type display struct {
 	shader   *ebiten.Shader
 	frame    *ebiten.Image
@@ -67,7 +65,7 @@ func paletteUniform() []float32 {
 }
 
 // blit uploads the frame as palette indices and draws it through the
-// shader, which is the only place a whole pixel is ever assembled.
+// shader without an intermediate packing buffer.
 func (d *display) blit(screen *ebiten.Image) {
 	d.frame.WritePixels(tiny64.FrameBufferIndexed())
 

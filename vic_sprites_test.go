@@ -526,14 +526,9 @@ func TestVICSpriteShapeIsLatchedPerLine(t *testing.T) {
 		v.dot++
 	}
 
-	buf := FrameBufferRGBA()
 	red := C64Palette[2]
-	at := func(line, dot uint16) [4]byte {
-		idx := (int(line-FirstVisibleLine)*VisibleDotsPerLine + int(dot)) * 4
-		return [4]byte{buf[idx], buf[idx+1], buf[idx+2], buf[idx+3]}
-	}
 	for dot := uint16(48); dot < 56; dot++ {
-		if got := at(56, dot); got != red {
+		if got := frameBufferPixelRGBA(dot, 56); got != red {
 			t.Errorf("dot %d on line 56 = %v, want Red %v (shape was latched on line 55)", dot, got, red)
 		}
 	}
@@ -548,7 +543,7 @@ func TestVICSpriteShapeIsLatchedPerLine(t *testing.T) {
 		v.dot++
 	}
 	for dot := uint16(48); dot < 56; dot++ {
-		if got := at(57, dot); got == red {
+		if got := frameBufferPixelRGBA(dot, 57); got == red {
 			t.Errorf("dot %d on line 57 = Red, want background (shape was re-fetched on line 56)", dot)
 		}
 	}
