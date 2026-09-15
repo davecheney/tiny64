@@ -35,9 +35,6 @@ func TestVICBorderPlacement(t *testing.T) {
 	firstNonBorder := -1
 	lastNonBorder := -1
 	for x := range VisibleDotsPerLine {
-		if frameBufferPixelRGBA(uint16(x), 100)[3] == 0 {
-			continue
-		}
 		if !frameBufferPixelIs(uint16(x), 100, 0x0e) {
 			if firstNonBorder == -1 {
 				firstNonBorder = x

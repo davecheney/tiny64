@@ -154,24 +154,36 @@ Tufty's 320x240 framebuffer in RP2040 RAM.
 
 ## The frame buffer
 
-The VIC-II decides on a four bit colour index per pixel, and that is what
-the frame buffer holds: one byte per pixel, not an expanded RGBA quad.
-Turning an index into a colour is the display's job, and on the desktop
-the GPU does it.
+The VIC-II decides on a four bit colour index per pixel. The default Go
+frame buffer stores each index in one byte; the desktop GPU expands it
+through a palette shader. The `pixelsink_func` build uses the same storage
+but calls the pixel writer indirectly, for benchmarking.
 
 Four horizontally adjacent pixels are packed into the RGBA channels of one
-texel, so the texture uploaded each frame is a quarter of the picture's
-width, 116KB rather than 460KB. Raster lines are padded to a multiple of four
-pixels (408 bytes) during horizontal blanking so the entire buffer can be
-uploaded directly to the GPU texture without any per-frame CPU packing or
-re-striding. `cmd/internal/desktop/palette.kage` picks a pixel's lane out of the
-texel covering it and looks the colour up in the palette, which the shader
-holds as a uniform.
+texel, including the alpha channel. The 405-pixel rows have a
+`FrameBufferStride` of 408 bytes, with three unused padding bytes, so
+`FrameBufferIndexed` can be uploaded directly without CPU row repacking.
+The visible picture remains 405x284; the texture is 102x284 and the upload
+is 115,872 bytes rather than 460,080 bytes of RGBA. The indexed raster
+storage, including non-visible lines, occupies 127,296 bytes.
+`cmd/internal/desktop/palette.kage` selects each pixel's channel and looks
+up its colour in the palette uniform.
 
 `FrameBufferRGBA` expands a frame for the callers that do want whole
-pixels on the CPU — the tests and `cmd/snapshot` — but what it returns is
-a snapshot taken at the moment of the call, not a live view of the frame
-being drawn.
+pixels on the CPU -- the tests and `cmd/snapshot` -- into a tightly packed
+405x284 RGBA buffer (460,080 bytes), excluding the indexed row padding.
+It returns shared storage: emulation does not update it, but the next call
+overwrites it. Copy the result to retain a snapshot across calls.
+`FrameBufferIndexed`, in contrast, is a live view of the emulated frame.
+
+TinyGo targets retain their cropped 320x240 RGB565BE frame buffer and
+`FrameBufferRGB565BE` API; they do not use the desktop palette shader.
+The `headless` sink stores no pixels.
+
+The shader readback tests require a graphics session and run separately
+from the ordinary unit tests:
+
+    go test -tags gpu ./cmd/internal/desktop
 
 ## Status
 

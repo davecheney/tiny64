@@ -1,7 +1,6 @@
 package tiny64
 
 import (
-	"bytes"
 	"strings"
 	"testing"
 )
@@ -41,14 +40,13 @@ func saveMachine(t *testing.T) {
 	})
 }
 
-func frameBufferPixelRGBA(x, y uint16) []byte {
-	const stride = VisibleDotsPerLine * 4
-	idx := int(y-FirstVisibleLine)*stride + int(x)*4
-	return FrameBufferRGBA()[idx : idx+4]
+func frameBufferPixelRGBA(x, y uint16) [4]byte {
+	idx := int(y-FirstVisibleLine)*FrameBufferStride + int(x)
+	return C64Palette[FrameBufferIndexed()[idx]&0x0f]
 }
 
 func frameBufferPixelIs(x, y uint16, colorIndex byte) bool {
-	return bytes.Equal(frameBufferPixelRGBA(x, y), C64Palette[colorIndex&0x0f][:])
+	return frameBufferPixelRGBA(x, y) == C64Palette[colorIndex&0x0f]
 }
 
 // A key has to stay down long enough for the KERNAL to see it on one scan
