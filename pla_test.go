@@ -292,3 +292,110 @@ func TestPLAWedgeLatchIsCartridgeSpecific(t *testing.T) {
 		})
 	}
 }
+
+// TestPLABankSwitchingThroughPort moves the banking the way real code
+// does - by storing to the CPU's I/O port at $0001 - and reads back
+// through the bus after each move. The PLA answers from a page-decode
+// table now, and a table that is not rebuilt when the banking moves does
+// not fail loudly: it quietly keeps answering from the previous map. So
+// this banks each window out and back in again, reading through it every
+// time, rather than only checking the state it ends in.
+func TestPLABankSwitchingThroughPort(t *testing.T) {
+	saveMachine(t)
+	bus.Remove()
+	cpu = CPU{}
+
+	const ramMarker = 0x5A
+	for i := range ram {
+		ram[i] = ramMarker
+	}
+	// $D800 reads three different ways depending on the banking, which
+	// makes one address enough to tell I/O, character ROM and RAM apart.
+	// The colour RAM's upper nibble floats high, see ioLoad.
+	colorRAM[0] = 0x0A
+	const colorRead = 0xFA
+
+	cpu.store(0x0000, 0xFF) // drive all three lines, as IOINIT does
+
+	for _, step := range []struct {
+		port             uint8
+		name             string
+		a000, d800, e000 uint8
+	}{
+		{0x37, "BASIC, I/O, KERNAL", rom.Basic[0], colorRead, rom.Kernal[0]},
+		{0x36, "LORAM low: BASIC out", ramMarker, colorRead, rom.Kernal[0]},
+		{0x35, "HIRAM low: KERNAL out", ramMarker, colorRead, ramMarker},
+		{0x34, "both low: I/O out too", ramMarker, ramMarker, ramMarker},
+		{0x33, "CHAREN low: character ROM", rom.Basic[0], rom.Character[0x800], rom.Kernal[0]},
+		{0x37, "everything banked back in", rom.Basic[0], colorRead, rom.Kernal[0]},
+	} {
+		cpu.store(0x0001, step.port)
+		for _, probe := range []struct {
+			addr uint16
+			want uint8
+		}{
+			{0xA000, step.a000},
+			{0xD800, step.d800},
+			{0xE000, step.e000},
+		} {
+			if got := bus.Load(probe.addr); got != probe.want {
+				t.Errorf("port=$%02X (%s): load($%04X) = $%02X, want $%02X",
+					step.port, step.name, probe.addr, got, probe.want)
+			}
+		}
+	}
+}
+
+// TestPLACartridgeEventsRebuildDecode covers the other half of the
+// invalidation obligation. The page decode is cached per Cartridge, so
+// replacing the Cartridge discards it for free - but the paths that rewire
+// /EXROM in place, the wedge latch and a hardware reset, have to discard it
+// by hand. Every step reads through the map before the next one changes it,
+// so a cache that outlived its wiring would answer here.
+func TestPLACartridgeEventsRebuildDecode(t *testing.T) {
+	saveMachine(t)
+
+	const ramMarker = 0x77
+	for i := range ram {
+		ram[i] = ramMarker
+	}
+	cpu = CPU{}
+	bus.Remove()
+	if got := bus.Load(0x8000); got != ramMarker {
+		t.Fatalf("empty port: load($8000) = $%02X, want RAM $%02X", got, ramMarker)
+	}
+
+	cartROM := make([]byte, 0x2000)
+	for i := range cartROM {
+		cartROM[i] = byte(i)
+	}
+
+	bus.Insert(cartROM, false, true, false, true) // 8K, ROM chip on /ROML
+	if got := bus.Load(0x8000); got != cartROM[0] {
+		t.Fatalf("after Insert: load($8000) = $%02X, want cartridge $%02X", got, cartROM[0])
+	}
+
+	bus.Remove()
+	if got := bus.Load(0x8000); got != ramMarker {
+		t.Fatalf("after Remove: load($8000) = $%02X, want RAM $%02X", got, ramMarker)
+	}
+
+	bus.Insert(cartROM, true, false, true, false) // MAX mode, ROM on /ROMH
+	if got := bus.Load(0xE000); got != cartROM[0] {
+		t.Fatalf("after MAX-mode Insert: load($E000) = $%02X, want cartridge $%02X", got, cartROM[0])
+	}
+
+	EnableDOSWedge()
+	image := append([]byte(nil), cartridge.ROM...)
+	if got := bus.Load(0x8000); got != image[0] {
+		t.Fatalf("wedge mapped: load($8000) = $%02X, want $%02X", got, image[0])
+	}
+	bus.Store(dosWedgeLatch, dosWedgeKill) // releases /EXROM in place
+	if got := bus.Load(0x8000); got != ramMarker {
+		t.Fatalf("after wedge kill: load($8000) = $%02X, want RAM $%02X", got, ramMarker)
+	}
+	Reset() // asserts /EXROM again, also in place
+	if got := bus.Load(0x8000); got != image[0] {
+		t.Fatalf("after reset: load($8000) = $%02X, want $%02X", got, image[0])
+	}
+}

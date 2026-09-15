@@ -12,6 +12,64 @@ type Cartridge struct {
 
 	dosWedge bool
 	killed   bool
+
+	// pages caches the PLA's page decode for the CPU's view of memory:
+	// pages[bankSelect][addr>>8] is the kind of memory selected at addr
+	// while the CPU port drives that combination of LORAM/HIRAM/CHAREN.
+	// It lives here, rather than beside the PLA, because the cartridge
+	// lines are the only input to it that is not read live on every
+	// access: replacing the Cartridge value - Insert, Remove, or a test
+	// assigning the struct - zeroes the cache along with the wiring it
+	// described, and a zeroed entry is pageInvalid, which forces a
+	// rebuild. Mutating a line in place instead (reset, writeWedgeLatch)
+	// has to call invalidatePages by hand; a stale table here is silent
+	// corruption, not a crash.
+	pages [8][256]uint8
+}
+
+// invalidatePages discards the cached page decode, so the next CPU access
+// rebuilds it. Every path that changes /GAME, /EXROM or a populated
+// chip-select without replacing the whole Cartridge must call this.
+func (c *Cartridge) invalidatePages() {
+	c.pages = [8][256]uint8{}
+}
+
+// decodePages works out, for every page of the CPU's address space and
+// every state of its three bank-switching lines, which chip the PLA
+// selects. This is the same decode plaLoad and plaStore used to perform
+// inline on each access; doing it once per cartridge change instead is
+// only sound because nothing else it reads can change without the
+// Cartridge changing too.
+func (c *Cartridge) decodePages() {
+	// Whether the cartridge is wired to answer at all, and with which of
+	// its two chip-selects. Both are fixed for a given Cartridge value.
+	roml := c.eightK() && c.ROML
+	romh := c.ultimax() && c.ROMH
+	for sel := range c.pages {
+		loram := sel&0x01 != 0
+		hiram := sel&0x02 != 0
+		charen := sel&0x04 != 0
+		for page := range c.pages[sel] {
+			addr := uint16(page) << 8
+			kind := pageRAM
+			switch {
+			case addr >= 0x8000 && addr <= 0x9FFF && roml && loram && hiram:
+				kind = pageCartROML
+			case addr >= 0xA000 && addr <= 0xBFFF && loram && hiram:
+				kind = pageBasic
+			case addr >= 0xD000 && addr <= 0xDFFF && (loram || hiram):
+				kind = pageCharROM
+				if charen {
+					kind = pageIO
+				}
+			case addr >= 0xE000 && romh:
+				kind = pageCartROMH
+			case addr >= 0xE000 && hiram:
+				kind = pageKernal
+			}
+			c.pages[sel][page] = kind
+		}
+	}
 }
 
 var cartridge Cartridge
@@ -32,6 +90,7 @@ func (c *Cartridge) reset() {
 	if c.dosWedge {
 		c.killed = false
 		c.Exrom = true
+		c.invalidatePages()
 	}
 }
 
@@ -42,6 +101,7 @@ func (c *Cartridge) wedgeIO() bool {
 func (c *Cartridge) writeWedgeLatch(val byte) {
 	c.killed = val&dosWedgeKill != 0
 	c.Exrom = !c.killed && val&dosWedgeMap != 0
+	c.invalidatePages()
 }
 
 // ultimax reports whether the cartridge's /GAME and /EXROM lines are wired
