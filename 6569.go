@@ -839,11 +839,13 @@ func (v *VICII) stepCycle() {
 	v.dotclock7(reload)
 	v.phi0high()
 
-	// The CPU runs first, since the VIC has just handed it the bus, and
-	// only on the cycles the VIC has not taken the bus away for a fetch
-	// of its own.
-	if !v.badLineCAccess() {
+	// The CPU runs first, since the VIC has just handed it the bus. On the
+	// cycles the VIC takes the bus back for a fetch of its own, a CPU read
+	// is held instead: a write already has the bus and completes anyway.
+	if !v.vicCPUWindow() || cpuWriteCycles[cpu.Opcode]>>cpu.TState&1 != 0 {
 		cpu.TickPhi2()
+	} else {
+		cpu.TickPhi2Held()
 	}
 
 	// The CIAs clock on that Phi2's falling edge, so they run after the
@@ -854,6 +856,29 @@ func (v *VICII) stepCycle() {
 	// The IEC devices run last, because what they find on the bus is
 	// whatever CIA2 has just driven onto it.
 	iecTick()
+}
+
+// vicCPUWindow reports the cycles in which VIC memory access holds CPU reads.
+// The emulator models this scheduling effect directly rather than carrying
+// physical BA/AEC signal state.
+func (v *VICII) vicCPUWindow() bool {
+	slot := (v.dot - 1) / DotsPerCycle
+	if v.dot == 0 {
+		slot = CyclesPerLine - 1
+	}
+	if v.badLine && slot >= 1 && slot <= 43 {
+		return true
+	}
+	return spriteCPUSlotMask[slot]&v.spriteDisplay != 0
+}
+
+// spriteCPUSlotMask includes each sprite's pointer/data fetch slots and the
+// three preceding slots in which its pending DMA must stop CPU reads.
+var spriteCPUSlotMask = [CyclesPerLine]uint8{
+	44: 0x01, 45: 0x01, 46: 0x03, 47: 0x03, 48: 0x07, 49: 0x06,
+	50: 0x0E, 51: 0x0C, 52: 0x1C, 53: 0x18, 54: 0x38, 55: 0x30,
+	56: 0x70, 57: 0x60, 58: 0xE0, 59: 0xC0, 60: 0xC0, 61: 0x80,
+	62: 0x80,
 }
 
 // StepCycle advances the VIC-II, and therefore the rest of the machine it
@@ -1353,14 +1378,6 @@ func (v *VICII) phi0high() {
 	if slot >= 4 && slot <= 43 && v.badLine {
 		v.cycleCAccess()
 	}
-}
-
-// badLineCAccess reports whether the VIC is performing a Bad Line c-access
-// in the current Phi2 slot. The emulator omits CPU execution for this
-// high-level scheduling effect rather than modeling AEC.
-func (v *VICII) badLineCAccess() bool {
-	slot := (v.dot - 1) / DotsPerCycle
-	return v.badLine && slot >= 4 && slot <= 43
 }
 
 // cycleCAccess reads one character pointer + color entry from the video

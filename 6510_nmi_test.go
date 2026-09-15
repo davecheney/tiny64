@@ -148,8 +148,8 @@ func TestRestoreSurvivesKeyboardRelease(t *testing.T) {
 
 // nmiEligibleAfter returns how many Phi2 cycles pass after trigger before
 // the CPU will service the NMI, or -1 if it never does. Every cycle but
-// the last is stalled with BA low, which holds the CPU at T0 while Phi2
-// keeps running: that isolates the synchronization delay from whatever
+// the last is held by the VIC, which holds the CPU at T0 while Phi2 keeps
+// running: that isolates the synchronization delay from whatever
 // instruction boundary would otherwise have decided when T0 came round,
 // and at the same time pins the rule that a stalled cycle still counts
 // toward the delay. Phi2 does not stop because the VIC-II took the bus,
@@ -158,13 +158,10 @@ func nmiEligibleAfter(t *testing.T, trigger func()) int {
 	t.Helper()
 	for cycles := 1; cycles <= 8; cycles++ {
 		newNMIFixture(t)
-		vic.BA = true
 		trigger()
 		for range cycles - 1 {
-			vic.BA = false
-			cpu.TickPhi2()
+			cpu.TickPhi2Held()
 		}
-		vic.BA = true
 		cpu.TickPhi2()
 		if cpu.Interrupt == 2 {
 			return cycles
@@ -200,8 +197,7 @@ func TestNMISynchronizationDelay(t *testing.T) {
 	// would answer 1 here rather than 2.
 	if got := nmiEligibleAfter(t, func() {
 		keyboard.Restore()
-		vic.BA = false
-		cpu.TickPhi2()
+		cpu.TickPhi2Held()
 		keyboard.Restore()
 	}); got != 2 {
 		t.Errorf("a re-armed NMI edge was serviced after %d further Phi2 cycles, want 2", got)
