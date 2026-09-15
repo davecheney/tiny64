@@ -116,8 +116,8 @@ func TestNMIIsEdgeTriggered(t *testing.T) {
 	}
 }
 
-// The RESTORE monostable shares the NMI pin with CIA2, so pressing it must
-// deliver an NMI on its own, with CIA2 idle throughout.
+// RESTORE latches an NMI directly, so its press-edge event must deliver an
+// NMI on its own, with CIA2 idle throughout.
 func TestRestoreDeliversNMI(t *testing.T) {
 	newNMIFixture(t)
 
@@ -132,16 +132,17 @@ func TestRestoreDeliversNMI(t *testing.T) {
 	}
 }
 
-// Holding RESTORE down is still one press, and the monostable's pulse is
-// the same width either way, so the CPU must see a single NMI even though
-// the pulse spans far more than one instruction.
-func TestRestoreHeldDeliversOneNMI(t *testing.T) {
+// Rebuilding the keyboard matrix after a RESTORE press must not affect the
+// already-latched event: the NMI has no level to hold, so there is nothing
+// for ReleaseAll to disturb.
+func TestRestoreSurvivesKeyboardRelease(t *testing.T) {
 	newNMIFixture(t)
 
 	keyboard.Restore()
-	runCycles(restorePulseCycles + 100)
+	keyboard.ReleaseAll()
+	runCycles(100)
 
 	if ram[0x0010] != 1 {
-		t.Errorf("NMIs taken across a whole RESTORE pulse = %d, want 1", ram[0x0010])
+		t.Errorf("NMIs taken after RESTORE = %d, want 1", ram[0x0010])
 	}
 }

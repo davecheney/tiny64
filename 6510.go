@@ -158,6 +158,16 @@ func (c *CPU) pop() uint8 {
 	return val
 }
 
+// triggerNMI latches an external NMI edge at the current Phi2 clock. The
+// 6510 recognizes it after its normal two-cycle synchronization delay.
+// RESTORE uses this to assert NMI directly on its press edge, bypassing
+// the interruptSources bitmask entirely: unlike CIA2, it has no level to
+// track between Phi2 cycles, so it needs no per-cycle work of its own.
+func (c *CPU) triggerNMI() {
+	c.nmiLatch = true
+	c.nmiLatchClock = c.Clock
+}
+
 // TickPhi2 executes exactly one high-clock phase of the CPU. The CIAs are
 // clocked from here too, since on real hardware they share the system
 // Phi2 clock with the CPU (not the VIC-II's dot clock) and keep counting
@@ -167,17 +177,10 @@ func (c *CPU) TickPhi2() {
 
 	cia1.Tick()
 	cia2.Tick()
-	// The key matrix is combinational and needs no clock, but the RESTORE
-	// monostable is a timer, so it counts here with the CIAs. It isn't on
-	// the bus, so AEC is none of its business.
-	if keyboard.restore != 0 {
-		keyboard.tick()
-	}
 
 	nmi := c.interruptSources&nmiSources != 0
 	if nmi && !c.nmiLine {
-		c.nmiLatch = true
-		c.nmiLatchClock = c.Clock
+		c.triggerNMI()
 	}
 	c.nmiLine = nmi
 
