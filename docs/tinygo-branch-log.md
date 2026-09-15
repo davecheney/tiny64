@@ -373,6 +373,13 @@ One-shot measurement script: `files/hardware_simple_irq.py`.
 
 ## PR #75 CIA scheduler trial: 2026-09-16 AEST
 
+**Accepted explicitly:** at 08:42 AEST the user accepted the #75 adaptation
+as the new baseline on `origin/tinygo`. Adopt measured source `0d181a9`
+and report `d9a9923`, superseding the no-delay baseline's recorded timing.
+The new baseline is **70.415958 ms/frame**. This supersedes the trial-only
+verdict below, not the measurement's stated limitations. No additional
+flash is needed; the measured candidate was already left installed.
+
 Requested benchmark against accepted no-delay baseline `4bf2c3e`.
 Adapt upstream head `5fe18b87f031651cef149f35d197809739acedd7`;
 local measured source is `0d181a9a534361d615f00a4bbf39d7c541905341`.
