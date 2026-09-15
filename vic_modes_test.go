@@ -92,16 +92,31 @@ func TestVICBitmapIdleAccessUsesIdleData(t *testing.T) {
 }
 
 func TestVICXScrollDelaysGraphicsReload(t *testing.T) {
-	v := &VICII{control2: 3, gdPending: 0xFF, videoBufferPending: 0x0100}
-
-	v.dot = 48 // start of slot 6, where unscrolled data would reload
-	v.advanceGraphicsData()
-	if v.gdSequencer != 0 {
-		t.Fatalf("sequencer reloaded at dot %d with XSCROLL=3", v.dot)
+	// Dot 48 is the boundary of the first character cell of the display
+	// window, and where an unscrolled sequencer takes up its g-access
+	// result. reloadDot is asked at the start of the cycle that advances
+	// onto the dot in question, so dot 41-48's cycle begins at dot 40.
+	unscrolled := &VICII{}
+	unscrolled.dot = 40
+	if got := unscrolled.reloadDot(); got != 48 {
+		t.Fatalf("unscrolled reload dot = %d, want the cell boundary at 48", got)
 	}
 
-	v.dot = 51
-	v.advanceGraphicsData()
+	// XSCROLL=3 moves the reload three dots into the cell, to 51.
+	v := &VICII{control2: 3, gdPending: 0xFF, videoBufferPending: 0x0100}
+	v.dot = 40
+	if got := v.reloadDot(); got == 48 {
+		t.Fatal("sequencer reloaded on the cell boundary with XSCROLL=3")
+	}
+	v.dot = 48
+	if got := v.reloadDot(); got != 51 {
+		t.Fatalf("reload dot = %d with XSCROLL=3, want 51", got)
+	}
+
+	// And the data is actually taken up there. dotclock2 is the phase
+	// that advances the beam onto dot 51.
+	v.dot = 50
+	v.dotclock2(51)
 	if v.gdSequencer != 0xFF || v.videoBuffer != 0x0100 {
 		t.Fatalf("sequencer=%#02x buffer=%#04x at dot %d, want pending graphics data",
 			v.gdSequencer, v.videoBuffer, v.dot)
@@ -109,28 +124,40 @@ func TestVICXScrollDelaysGraphicsReload(t *testing.T) {
 }
 
 func TestVICMulticolorXScrollSevenReloadsAtPairBoundary(t *testing.T) {
+	// Multicolor pixels span two dot clocks, so XSCROLL=7 completes its
+	// pair at phase 7 and reloads on the following cell boundary at dot
+	// 56 rather than at 55.
 	v := &VICII{
 		control2:           0x17,
 		gdPending:          0xFF,
 		videoBufferPending: 0x0100,
 	}
-
-	v.dot = 55
-	v.advanceGraphicsData()
-	if v.gdSequencer != 0 {
-		t.Fatalf("sequencer reloaded at dot %d in multicolor mode with XSCROLL=7", v.dot)
+	v.dot = 47
+	if got := v.reloadDot(); got == 55 {
+		t.Fatal("sequencer reloaded at dot 55 in multicolor mode with XSCROLL=7")
+	}
+	v.dot = 48
+	if got := v.reloadDot(); got != 56 {
+		t.Fatalf("multicolor XSCROLL=7 reload dot = %d, want 56", got)
 	}
 
-	v.dot = 56
-	v.advanceGraphicsData()
+	// dotclock7 is the phase that advances the beam onto dot 56.
+	v.dot = 55
+	v.dotclock7(56)
 	if v.gdSequencer != 0xFF || v.videoBuffer != 0x0100 {
 		t.Fatalf("sequencer=%#02x buffer=%#04x at dot %d, want pending graphics data",
 			v.gdSequencer, v.videoBuffer, v.dot)
 	}
 
+	// At standard resolution the same XSCROLL reloads at 55, one dot
+	// earlier, because there is no pair to finish.
 	v = &VICII{control2: 7, gdPending: 0xA5}
-	v.dot = 55
-	v.advanceGraphicsData()
+	v.dot = 48
+	if got := v.reloadDot(); got != 55 {
+		t.Fatalf("standard-resolution XSCROLL=7 reload dot = %d, want 55", got)
+	}
+	v.dot = 54
+	v.dotclock6(55)
 	if v.gdSequencer != 0xA5 {
 		t.Fatal("standard-resolution XSCROLL=7 did not reload at dot 55")
 	}
@@ -308,7 +335,7 @@ func TestVICSideBorderWriteAtCompareDot(t *testing.T) {
 
 	// dotclock7 is the phase that owns the 40-column left comparison, so
 	// run just that one rather than a whole cycle around it.
-	v.dotclock7() // reaches the 40-column left compare with CSEL still clear
+	v.dotclock7(v.reloadDot()) // reaches the 40-column left compare with CSEL still clear
 	if !v.mainBorder {
 		t.Fatal("mainBorder=false before same-dot register write")
 	}
