@@ -468,6 +468,7 @@ func TestVICCAccessReadsTheInvisibleTailOfTheMatrix(t *testing.T) {
 	saveMachine(t)
 	newMachine(t)
 
+	vic.AEC = false        // A c-access requires VIC ownership of Phi2.
 	vic.memPointers = 0x14 // video matrix at $0400
 	cia2.PRA, cia2.DDRA = 3, 3
 

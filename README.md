@@ -41,9 +41,9 @@ a pulse during the hold; a stretched non-poll cycle cannot turn that pulse
 into a queued interrupt. CLI/SEI update I even while their terminal read
 is held, so subsequent repetitions use the new mask. PLP instead waits
 for its completing stack read. Writes, including interrupt stack pushes,
-continue under the existing BA/AEC contract. NMI/reset recognition and the
-VIC's bus scheduling are separate models and are not replaced by this IRQ
-implementation.
+continue during the BA warning while AEC still grants bus ownership.
+NMI/reset recognition and the VIC's bus scheduling are separate models
+and are not replaced by this IRQ implementation.
 
 The 6510 tracks interrupt producers in a source bitmask: VIC and CIA1 drive
 IRQ; CIA2 and RESTORE drive NMI. Producers update only their own bits, so
@@ -74,6 +74,30 @@ outcomes and the specified
 architectural I boundaries, not every bus address during a held read:
 the transistor model can update a crossing branch's address while RDY
 remains low.
+
+### BA/RDY and AEC
+
+BA drives the 6510's RDY input: the first read holds, even mid-instruction,
+while consecutive writes can finish. The CPU identifies writes with a
+small opcode/T-state predicate evaluated only while BA is low, not an
+opcode-indexed write-cycle table. The independent microcode/bus tests check
+the predicate, including stack writes during BRK/IRQ/NMI entry.
+
+AEC separately disconnects the CPU's external bus drivers. It is low during
+Phi1; after three completed consecutive BA-low cycles it also stays low
+in Phi2. BA rising releases the bus and resets the warning. This applies
+to badlines, late badlines and the existing sprite DMA windows. CPU
+external reads/writes obey AEC; the internal CPU port is unaffected.
+Synchronous reset-vector initialization does not sample the previous
+cycle's AEC. CIA clocks and interrupt sampling continue while reads hold.
+
+See [Bauer sections 2.4.3, 3.14.3 and 3.14.6](https://www.cebix.net/VIC-Article.txt).
+A late c-access with AEC high reads `$FF` for the character pointer.
+CPU-bus-derived colour during that warning remains unsupported and is
+represented as zero. Repeated held-read bus effects and electrical bus
+contention are not simulated; forced disconnected CPU reads return the
+last modeled bus byte. Sprite data fetches retain the existing batched
+model. These timing changes do not imply complete FLI/VSP bus fidelity.
 
 ## Scope
 

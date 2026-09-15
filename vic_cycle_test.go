@@ -23,8 +23,8 @@ func TestVICStepCycleStalledReadClocksCIAs(t *testing.T) {
 	startClock := cpu.Clock
 	for n := uint64(1); n <= 3; n++ {
 		vic.StepCycle()
-		if vic.BA || vic.AEC {
-			t.Fatalf("cycle %d: bad line did not take the bus", n)
+		if vic.BA || !vic.AEC {
+			t.Fatalf("cycle %d: expected BA warning with AEC still high", n)
 		}
 		if cpu.PC != 0x0200 || cpu.TState != 0 {
 			t.Fatalf("cycle %d: stalled CPU advanced to PC=%04X T=%d", n, cpu.PC, cpu.TState)

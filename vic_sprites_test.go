@@ -619,8 +619,8 @@ func TestSpriteDMAPullsBALow(t *testing.T) {
 	}
 	for slot := uint16(43); slot <= 50; slot++ {
 		// BA is driven by the slot's phi0low, four dots into the cycle,
-		// and nothing touches it again until the next cycle's phi0low -
-		// phi0high only copies it into AEC. Sampling at the end of the
+		// and nothing touches it again until the next cycle's phi0low.
+		// phi0high separately controls AEC. Sampling at the end of the
 		// slot's cycle therefore reads the value phi0low just set.
 		for v.dot != (slot+1)*DotsPerCycle {
 			v.StepCycle()

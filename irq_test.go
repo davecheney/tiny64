@@ -622,7 +622,7 @@ func TestIRQReadStalls(t *testing.T) {
 				c.program(0x01FD, tc.stackI, 0x00, 0x05)
 				for cycle := range tc.cycles + 3 {
 					stalled := cycle >= tc.hold && cycle < tc.hold+3
-					vic.AEC = !stalled
+					vic.BA = !stalled
 					c.pin(cycle == pulse, false)
 					pc, state := cpu.PC, cpu.TState
 					c.tick()
@@ -639,7 +639,7 @@ func TestIRQReadStalls(t *testing.T) {
 						t.Fatalf("cycle %d: PLP changed I before its completing read", cycle)
 					}
 				}
-				vic.AEC = true
+				vic.BA = true
 				c.pin(false, false)
 				if cpu.TState != 0 || cpu.PC != tc.target {
 					t.Fatalf("after instruction: PC=$%04X TState=%d", cpu.PC, cpu.TState)
@@ -663,7 +663,7 @@ func TestIRQEntryReadStallsAndWrites(t *testing.T) {
 			c.pin(false, false)
 			c.cycles(int(state))
 			pc, sp := cpu.PC, cpu.SP
-			vic.AEC = false
+			vic.BA = false
 			if state >= 2 && state <= 4 {
 				c.tick()
 				if cpu.TState != state+1 || cpu.SP != sp-1 {
@@ -674,10 +674,10 @@ func TestIRQEntryReadStallsAndWrites(t *testing.T) {
 				if cpu.TState != state || cpu.PC != pc || cpu.SP != sp {
 					t.Fatal("RDY did not hold an interrupt read")
 				}
-				vic.AEC = true
+				vic.BA = true
 				c.tick()
 			}
-			vic.AEC = true
+			vic.BA = true
 			c.cycles(6 - int(state))
 			if cpu.PC != 0x0400 || cpu.SP != 0xFC {
 				t.Fatalf("entry corrupted by hold: PC=$%04X SP=$%02X", cpu.PC, cpu.SP)
@@ -693,12 +693,12 @@ func TestIRQHeldPollNMIArbitration(t *testing.T) {
 	c.put(0xFFFB, 0x05)
 	c.pin(true, false)
 	c.tick()
-	vic.AEC = false
+	vic.BA = false
 	c.pin(false, false)
 	c.tick() // IRQ qualifies in the held NOP poll.
 	cia2.setIRQ(true)
 	c.cycles(3)
-	vic.AEC = true
+	vic.BA = true
 	c.tick()
 	c.tick()
 	if cpu.Interrupt != 2 {
@@ -712,11 +712,11 @@ func TestIRQResetDuringHeldPoll(t *testing.T) {
 	c := newIRQTestCPU(t, "6510")
 	c.pin(true, false)
 	c.tick()
-	vic.AEC = false
+	vic.BA = false
 	c.pin(false, false)
 	c.cycles(2)
 	c.reset()
-	vic.AEC = true
+	vic.BA = true
 	c.program(0x0200, 0x58, 0xEA, 0xEA)
 	for range 3 {
 		c.checkEntry(t, false, 0)
