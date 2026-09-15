@@ -8,3 +8,6 @@
 !go.sum
 !.github/workflows/*.yml
 !.github/dependabot.yml
+!/testdata/demos/*/manifest.json
+!/testdata/demos/*/*.prg
+!/testdata/demos/*/*.png
