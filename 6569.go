@@ -1316,7 +1316,17 @@ func (v *VICII) cycleGAccess() {
 	}
 	v.gdPending = plaVICLoad(addr)
 
-	v.VC++
+	// VC is ten bits wide (section 3.7.2), so it wraps at 1024 rather
+	// than counting on. That is not a guard against a case that cannot
+	// happen: section 3.14.4's "Linecrunch" walks VCBASE up by 40 a line
+	// by aborting Bad Lines, deliberately, to scroll the screen upwards
+	// without moving graphics memory, and the article is explicit that
+	// "VCBASE wraps around to zero when reaching 1024". Unmasked, VC
+	// carried out of its field into VM in the c-access address, shifted
+	// past the top of the bank in the bitmap g-access address, and
+	// indexed colour RAM - which is exactly these ten bits wide - out of
+	// range.
+	v.VC = (v.VC + 1) & 0x3FF
 	v.VMLI++
 }
 
