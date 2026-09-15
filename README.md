@@ -198,6 +198,13 @@ Tufty's 320x240 framebuffer in RP2040 RAM.
 
 ## Status
 
+RESTORE uses a direct NMI press event rather than a Phi2-clocked pulse.
+Front ends must call `Keyboard.Restore` once per press edge. A press can
+trigger NMI while CIA2 holds its NMI line asserted; pulse width and the
+hardware's combined-line suppression are not modeled. CIA2 sampling and
+the lightweight CPU's existing IRQ handling are otherwise unchanged.
+This is an independent adaptation of #57, without #54 or #56.
+
 This is a work in progress. See `docs/` for the reference material used
 to guide the implementation.
 

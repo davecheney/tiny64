@@ -117,8 +117,7 @@ func TestNMIIsEdgeTriggered(t *testing.T) {
 	}
 }
 
-// The RESTORE monostable shares the NMI pin with CIA2, so pressing it must
-// deliver an NMI on its own, with CIA2 idle throughout.
+// RESTORE must deliver an NMI on its own, with CIA2 idle throughout.
 func TestRestoreDeliversNMI(t *testing.T) {
 	newNMIFixture(t)
 
@@ -133,16 +132,71 @@ func TestRestoreDeliversNMI(t *testing.T) {
 	}
 }
 
-// Holding RESTORE down is still one press, and the monostable's pulse is
-// the same width either way, so the CPU must see a single NMI even though
-// the pulse spans far more than one instruction.
+// The frontend calls Restore only on the press edge.
 func TestRestoreHeldDeliversOneNMI(t *testing.T) {
 	newNMIFixture(t)
 
 	keyboard.Restore()
-	runCycles(restorePulseCycles + 100)
+	runCycles(2000)
 
 	if ram[0x0010] != 1 {
-		t.Errorf("NMIs taken across a whole RESTORE pulse = %d, want 1", ram[0x0010])
+		t.Errorf("NMIs from one RESTORE event = %d, want 1", ram[0x0010])
+	}
+}
+
+func TestRestoreDirectDelayAndHold(t *testing.T) {
+	newNMIFixture(t)
+	cpu.Clock = 123
+	keyboard.Restore()
+	if !cpu.nmiLatch || cpu.nmiLatchClock != 123 || cpu.nmiLine {
+		t.Fatal("RESTORE did not directly latch the press clock")
+	}
+	runCycles(1)
+	if cpu.Interrupt != 0 {
+		t.Fatal("NMI entered before the two-cycle recognition delay")
+	}
+	vic.AEC = false
+	runCycles(10)
+	if !cpu.nmiLatch || cpu.Interrupt != 0 {
+		t.Fatal("AEC hold lost or serviced the pending NMI")
+	}
+	vic.AEC = true
+	runCycles(100)
+	if ram[0x10] != 1 {
+		t.Fatalf("NMIs after hold = %d, want 1", ram[0x10])
+	}
+}
+
+func TestRestoreWhileCIA2Held(t *testing.T) {
+	newNMIFixture(t)
+	cia2.IRQ = true
+	runCycles(100)
+	if ram[0x10] != 1 {
+		t.Fatal("CIA2 did not deliver its initial NMI")
+	}
+	keyboard.Restore()
+	runCycles(100)
+	if ram[0x10] != 2 || !cpu.nmiLine || !cia2.IRQ {
+		t.Fatal("RESTORE did not deliver independently of held CIA2")
+	}
+	runCycles(1000)
+	if ram[0x10] != 2 {
+		t.Fatal("held CIA2 or consumed RESTORE retriggered")
+	}
+	cia2.IRQ = false
+	runCycles(20)
+	cia2.IRQ = true
+	runCycles(100)
+	if ram[0x10] != 3 {
+		t.Fatal("CIA2 no longer recognizes a fresh edge")
+	}
+}
+
+func TestResetDiscardsRestore(t *testing.T) {
+	newNMIFixture(t)
+	keyboard.Restore()
+	cpu.Reset()
+	if cpu.nmiLatch {
+		t.Fatal("reset preserved a pending RESTORE")
 	}
 }

@@ -175,10 +175,6 @@ func (c *CPU) TickPhi2() {
 
 	cia1.Tick()
 	cia2.Tick()
-	// The key matrix is combinational and needs no clock, but the RESTORE
-	// monostable is a timer, so it counts here with the CIAs. It isn't on
-	// the bus, so AEC is none of its business.
-	keyboard.tick()
 
 	// If VIC-II has pulled AEC low, the CPU is electronically
 	// disconnected from the bus. It stalls entirely.
@@ -188,13 +184,13 @@ func (c *CPU) TickPhi2() {
 
 	switch c.TState {
 	// T0: Fetch the opcode, unless a pending interrupt takes over instead.
-	// NMI is edge-triggered (CIA2 and the RESTORE monostable, latched);
+	// NMI is edge-triggered (CIA2 and direct RESTORE events, latched);
 	// IRQ is level-triggered (CIA1, masked by the (delayed) I flag) - both
 	// are serviced via BRK's microcode. Real hardware needs an asserted
 	// IRQ/NMI line to be stable for 2 cycles before it's recognized (see
 	// Clock/irqAssertClock/nmiLatchClock).
 	case 0:
-		nmi := nmiAsserted()
+		nmi := cia2.IRQ
 		if nmi && !c.nmiLine {
 			c.nmiLatch = true
 			c.nmiLatchClock = c.Clock
