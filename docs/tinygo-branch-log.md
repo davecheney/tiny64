@@ -17,6 +17,19 @@ that hardware model no longer exists on this branch.
 
 ## Independent #57 trial: no demonstrated improvement, 2026-09-15
 
+**Accepted explicitly after measurement:** at 22:19 AEST the user instructed
+"merge #57 onto origin/tinygo, #61 can rebase". This supersedes the earlier
+conditional decision below. The measured result remains effectively flat,
+not a demonstrated speedup. Adopt only this standalone #57 adaptation on
+the recovered lightweight baseline; #54 and #56 remain excluded.
+
+The canonical `tinygo` branch is restored to this lightweight history.
+Before replacement, preserve its main-based #61 head
+`142f67892a29dda180d6f69a0202567d8de96fbc` on
+`dfc/pr61-mainline-preserved`. Use an exact-SHA force-with-lease for `tinygo`
+so a concurrent update cannot be overwritten. #61's mainline changes must
+be migrated/rebased separately, not reapplied wholesale to this keeper.
+
 The user requested #57 alone against the accepted baseline, with adoption
 conditional on improvement. Source candidate `4fc9ccc` starts from recovery
 tip `2c34100` and changes only RESTORE handling, its tests and documentation.
