@@ -42,7 +42,16 @@ func newIRQTestCPU(t *testing.T, core string) irqTestCPU {
 		c = irqTestCPU{
 			pc: &cpu.PC, sp: &cpu.SP, p: &cpu.regP, x: &cpu.X, y: &cpu.Y,
 			opcode: &cpu.Opcode, tstate: &cpu.TState, interrupt: &cpu.Interrupt,
-			tick: cpu.TickPhi2, reset: cpu.Reset,
+			tick: func() {
+				// One whole bus cycle, not just the CPU's share of it.
+				// The C64's CIAs hang off the VIC-II's Phi2 rather than
+				// off the CPU (see ciaTick), so a harness that called
+				// only TickPhi2 would leave their timers frozen and the
+				// peripheral-sourced subtests below would assert nothing.
+				cpu.TickPhi2()
+				ciaTick()
+			},
+			reset: cpu.Reset,
 			pin: func(a, b bool) {
 				vic.setIRQ(a)
 				cia1.setIRQ(b)
@@ -560,13 +569,33 @@ func TestIRQPeripheralSampling(t *testing.T) {
 	for _, core := range []string{"6510", "6502"} {
 		t.Run(core+"/timer", func(t *testing.T) {
 			c := newIRQTestCPU(t, core)
+			// The two cores phase their timer against the CPU
+			// differently, so they recognize an underflow a cycle apart.
+			//
+			// On the C64 the CIAs are clocked after the CPU within a bus
+			// cycle (see ciaTick), which is the order the chips see Phi2
+			// fall in: the 6510 latches its IRQ input on that edge and
+			// the CIA's output only settles after it, so an underflow on
+			// cycle N is first sampled on cycle N+1.
+			//
+			// That one cycle costs two here, because acceptance needs the
+			// sample to be live at an instruction's poll cycle and NOP
+			// only polls every second cycle. Slipping past one poll waits
+			// for the next. The extra NOP retired is why entry lands a
+			// byte further on.
+			//
+			// The 1541 has no VIC-II to hang a clock tree off, so its
+			// VIAs are still clocked at the top of DriveCPU.TickPhi2 and
+			// an underflow is sampled in the cycle it happens.
+			cycles, entry := 2, uint16(0x0201)
 			if core == "6510" {
 				cia1 = CIA{timerA: 1, latchA: 0xFFFF, runningA: true, imr: 1}
+				cycles, entry = 4, 0x0202
 			} else {
 				via2 = VIA{t1c: 1, t1l: 0xFFFF, acr: 0x40, ier: 0x40}
 			}
-			c.cycles(2)
-			c.checkEntry(t, true, 0x0201)
+			c.cycles(cycles)
+			c.checkEntry(t, true, entry)
 		})
 		t.Run(core+"/final-read-acknowledgement", func(t *testing.T) {
 			c := newIRQTestCPU(t, core)

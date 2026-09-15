@@ -25,6 +25,26 @@ type CIA struct {
 
 var cia1, cia2 CIA
 
+// ciaTick clocks both CIAs for one Phi2 cycle. It is called from the
+// VIC-II's cycle scheduler, not from the CPU, because that is where the
+// clock physically comes from: the VIC-II divides the dot clock down to
+// Phi2 and drives it out to the CPU and to both CIAs in parallel. Nothing
+// the CPU does can gate it - not RDY, not AEC - so a CPU that is stalled
+// off the bus for a Bad Line still sees the jiffy clock advance
+// underneath it, exactly as the hardware does.
+//
+// Clocking the CIAs from inside CPU.TickPhi2 (where this used to live)
+// made that independence an accident of where the RDY early-return
+// happened to sit: moving the return above them would have cost the
+// timers every stalled cycle, which with the screen on is the 43 cycles
+// of each of a frame's 25 Bad Lines - 1075 of 19656, or 5.5% - plus up to
+// 420 more for sprite DMA. Hanging the CIAs off the VIC makes the
+// independence structural instead. TestCIATicksEveryBusCycle pins it.
+func ciaTick() {
+	cia1.Tick()
+	cia2.Tick()
+}
+
 func (c *CIA) setIRQ(asserted bool) {
 	c.IRQ = asserted
 	switch c {
