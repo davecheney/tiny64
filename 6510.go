@@ -34,9 +34,11 @@ type CPU struct {
 
 	// Clock counts elapsed Phi2 cycles, including cycles held by RDY.
 	// The existing NMI recognition model uses it; IRQ uses clocked state.
-	Clock         uint64
-	nmiLatchClock uint64
-	irq           irqState
+	Clock            uint64
+	nmiLatchClock    uint64
+	irq              irqState
+	interruptSources interruptSource
+	irqActive        bool
 
 	// Port and PortDDR implement the 6510's on-chip I/O port at $0001/$0000,
 	// a feature the plain 6502 does not have.
@@ -97,6 +99,7 @@ func (c *CPU) Reset() {
 	c.nmiLatch = false
 	c.regP |= P_INTERRUPT
 	c.irq = irqState{}
+	c.syncInterruptSources()
 	c.SP -= 3
 
 	lo := c.load(0xFFFC)
@@ -167,9 +170,11 @@ func (c *CPU) TickPhi2() {
 	// The key matrix is combinational and needs no clock, but the RESTORE
 	// monostable is a timer, so it counts here with the CIAs. It isn't on
 	// the bus, so AEC is none of its business.
-	keyboard.tick()
+	if keyboard.restore != 0 {
+		keyboard.tick()
+	}
 
-	nmi := nmiAsserted()
+	nmi := c.interruptSources&nmiSources != 0
 	if nmi && !c.nmiLine {
 		c.nmiLatch = true
 		c.nmiLatchClock = c.Clock
@@ -192,7 +197,9 @@ func (c *CPU) TickPhi2() {
 	// whatever instruction happens to be executing, which shows up as
 	// timing jitter in raster code that reprograms sprites mid-screen.
 	if !vic.AEC && cpuWriteCycles[c.Opcode]>>c.TState&1 == 0 {
-		c.irq.clock(cia1.IRQ || vic.IRQ, i, false, true)
+		if c.irqActive {
+			c.clockIRQ(i, false, true)
+		}
 		// CLI/SEI's I update is not held by RDY: their first terminal
 		// cycle polls with old I, later repetitions see the new value.
 		// PLP differs: it needs the completing stack read to restore P.
@@ -2781,7 +2788,9 @@ func (c *CPU) TickPhi2() {
 	default:
 		panic("Invalid T-state: " + fmt.Sprintf("%d", c.TState))
 	}
-	c.irq.clock(cia1.IRQ || vic.IRQ, i, irqPoll(opcode, tstate, c.TState), false)
+	if c.irqActive {
+		c.clockIRQ(i, irqPoll(opcode, tstate, c.TState), false)
+	}
 }
 
 // pch returns the high byte of PC

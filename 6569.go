@@ -226,7 +226,7 @@ func (v *VICII) Reset() {
 	v.rasterIRQTriggered = false
 	v.interruptStatus = 0
 	v.interruptEnable = 0
-	v.IRQ = false
+	v.setIRQ(false)
 	v.refreshGraphicsPalette()
 	v.spriteSpriteCollision = 0
 	v.spriteDataCollision = 0
@@ -246,7 +246,17 @@ func (v *VICII) checkRasterIRQ() {
 }
 
 func (v *VICII) updateIRQ() {
-	v.IRQ = (v.interruptStatus & v.interruptEnable & 0x0F) != 0
+	asserted := (v.interruptStatus & v.interruptEnable & 0x0F) != 0
+	if asserted != v.IRQ {
+		v.setIRQ(asserted)
+	}
+}
+
+func (v *VICII) setIRQ(asserted bool) {
+	v.IRQ = asserted
+	if v == &vic {
+		cpu.setInterrupt(sourceVIC, asserted)
+	}
 }
 
 // syncLineVisibility recomputes the cached line visibility flags from rasterLine.

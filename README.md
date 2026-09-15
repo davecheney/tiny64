@@ -45,6 +45,19 @@ continue under the existing BA/AEC contract. NMI/reset recognition and the
 VIC's bus scheduling are separate models and are not replaced by this IRQ
 implementation.
 
+The 6510 tracks interrupt producers in a source bitmask: VIC and CIA1 drive
+IRQ; CIA2 and RESTORE drive NMI. Producers update only their own bits, so
+acknowledging one device cannot clear another's request. NMI edge detection
+uses the combined NMI level, not individual source transitions.
+
+IRQ source assertions wake a CPU-owned clocking path. It preserves Phi2
+sampling and instruction polling until the line and sampled/held candidates
+are clear, then becomes inactive. Accepted requests remain latched for
+opcode-fetch arbitration even after clocking becomes inactive. CPU reset
+discards IRQ history but preserves the peripheral line levels. The drive
+6502 separately skips poll classification when no sampled or held candidate
+is present.
+
 The shared conformance cases in `irq_test.go` cover both cores, with
 additional RDY cases for the C64. Their basis is
 [NESdev's interrupt description](https://www.nesdev.org/wiki/CPU_interrupts),
