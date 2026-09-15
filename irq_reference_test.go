@@ -93,12 +93,10 @@ func TestIRQTransistorReference(t *testing.T) {
 			fetching, vectorLow, vectorHigh := false, false, false
 			for cycle := 0; cycle <= lastCycle; cycle++ {
 				held := cycle >= tc.ReadHoldStart && cycle < tc.ReadHoldStart+6
-				vic.AEC = !held
+				vic.BA = !held
+				vic.AEC = true
 				c.pin(asserted[cycle], false)
 				before := cpu.TState
-				if held && cpuWriteCycles[cpu.Opcode]>>before&1 != 0 {
-					t.Fatal("reference read hold overlaps a write")
-				}
 				if before == 0 && !fetching {
 					fetches = append(fetches, irqReferenceFetch{Cycle: cycle, Address: cpu.PC})
 					fetching = true

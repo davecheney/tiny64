@@ -3354,9 +3354,9 @@ func TestInstructions(t *testing.T) {
 	}
 }
 
-// TestCPUStallsWhenAECLow verifies the CPU is fully disconnected from the
-// bus (no state change at all) whenever the VIC-II owns Phi2.
-func TestCPUStallsWhenAECLow(t *testing.T) {
+// TestCPUStallsWhenBALow verifies BA/RDY holds CPU read cycles without
+// stopping the Phi2 clock.
+func TestCPUStallsWhenBALow(t *testing.T) {
 	ram = [65536]byte{}
 	bus = Bus{}
 	cpu = CPU{}
@@ -3366,13 +3366,13 @@ func TestCPUStallsWhenAECLow(t *testing.T) {
 	ram[0x0200] = 0xEA
 
 	vic.BA = false
-	vic.AEC = false
+	vic.AEC = true
 
 	before := cpu
 
 	cpu.TickPhi2()
 
-	// Clock legitimately advances even while AEC is low: the Phi2 clock
+	// Clock legitimately advances even while BA is low: the Phi2 clock
 	// itself doesn't stop just because the CPU's bus access is stalled.
 	before.Clock = cpu.Clock
 

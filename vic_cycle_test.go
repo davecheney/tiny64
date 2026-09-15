@@ -23,8 +23,11 @@ func TestVICStepCycleStalledReadClocksCIAs(t *testing.T) {
 	startClock := cpu.Clock
 	for n := uint64(1); n <= 3; n++ {
 		vic.StepCycle()
-		if vic.BA || vic.AEC {
-			t.Fatalf("cycle %d: bad line did not take the bus", n)
+		if vic.BA {
+			t.Fatalf("cycle %d: bad line did not assert BA/RDY", n)
+		}
+		if !vic.AEC {
+			t.Fatalf("cycle %d: AEC dropped during the bad line warning interval", n)
 		}
 		if cpu.PC != 0x0200 || cpu.TState != 0 {
 			t.Fatalf("cycle %d: stalled CPU advanced to PC=%04X T=%d", n, cpu.PC, cpu.TState)
@@ -32,6 +35,10 @@ func TestVICStepCycleStalledReadClocksCIAs(t *testing.T) {
 		if cpu.Clock != startClock+n || cia1.timerA != 10-uint16(n) || cia2.timerA != 10-uint16(n) {
 			t.Fatalf("cycle %d: clock delta=%d CIA timers=%d/%d", n, cpu.Clock-startClock, cia1.timerA, cia2.timerA)
 		}
+	}
+	vic.StepCycle()
+	if vic.BA || vic.AEC {
+		t.Fatalf("first bad line c-access: BA=%v AEC=%v, want both low", vic.BA, vic.AEC)
 	}
 }
 

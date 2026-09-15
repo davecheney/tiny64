@@ -107,8 +107,8 @@ type VICII struct {
 	memPointers  uint8
 
 	// Signals driven by the VIC-II and sensed by the CPU
-	BA  bool // Bus Available (true = high/free, false = low/stalled)
-	AEC bool // Address Enable Control (true = CPU owns Phi2, false = VIC owns Phi2)
+	BA  bool // Bus Available/RDY (true = high/free, false = CPU reads held)
+	AEC bool // Address Enable Control (true = CPU bus enabled, false = VIC owns Phi2)
 
 	// badLine/allowBadLine/denLatch implement the Bad Line Condition
 	// (section 3.5): allowBadLine is latched from DEN once per frame during
@@ -1169,9 +1169,11 @@ func (v *VICII) phi0low() {
 		v.cycleBorderComp()
 	}
 
-	// cycleIsCAccess: pulls BA low for the duration of a Bad Line's
-	// c-accesses, article cycles 12-54. Note the three cycle lead: the
-	// first c-access is at article cycle 15 (slot 4).
+	// cycleIsCAccess: pulls BA low for a Bad Line's c-access window,
+	// article cycles 12-54. The first three cycles are the VIC-II's
+	// warning interval: BA/RDY is low, but AEC still leaves the CPU on
+	// Phi2 so any in-flight writes can finish before the first c-access at
+	// article cycle 15 (slot 4).
 	//
 	// Sprite DMA (section 3.6.3) additionally pulls BA low for five
 	// cycles per DMA-active sprite - two fetch cycles plus the same three
@@ -1213,6 +1215,18 @@ var spriteBASlotMask = [CyclesPerLine]uint8{
 // slot is currently DMA active, and so is holding BA low.
 func (v *VICII) spriteDMAStall(slot uint16) bool {
 	return spriteBASlotMask[slot]&v.spriteDisplay != 0
+}
+
+// spriteDMAAccess reports whether a sprite DMA-active on this line is using
+// the current Phi2 slot for its actual pointer or data fetch. BA goes low
+// three cycles earlier; AEC only drops for these two fetch cycles.
+func (v *VICII) spriteDMAAccess(slot uint16) bool {
+	for n := uint16(0); n < 8; n++ {
+		if v.spriteDisplay&(1<<n) != 0 && slot >= 47+2*n && slot <= 48+2*n {
+			return true
+		}
+	}
+	return false
 }
 
 // latchSpriteDisplay advances each sprite's DMA state one raster line, and
@@ -1378,8 +1392,7 @@ func (v *VICII) phi0high() {
 		v.cycleCAccess()
 	}
 
-	// AEC mirrors BA with a delay, or is directly controlled here
-	v.AEC = v.BA
+	v.AEC = !(slot >= 4 && slot <= 43 && v.badLine) && !v.spriteDMAAccess(slot)
 }
 
 // cycleCAccess reads one character pointer + color entry from the video

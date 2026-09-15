@@ -142,7 +142,7 @@ func main() {
 		// returning, so report the cycle just executed.
 		vic.StepCycle()
 		n++
-		if !vic.AEC {
+		if !vic.BA {
 			stalled++
 		}
 

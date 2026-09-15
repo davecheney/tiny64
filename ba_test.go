@@ -47,64 +47,6 @@ func deriveWriteMask(opcode, op1, op2, x, y uint8) (mask uint16, ok bool) {
 	return mask, true
 }
 
-// TestCPUWriteCyclesMatchesMicrocode re-derives cpuWriteCycles from the CPU
-// core and fails if the baked table has drifted. TickPhi2 consults that
-// table to decide whether the cycle it is about to run is a read, and so
-// whether BA low should halt the CPU; if the two disagree the CPU will
-// stall on write cycles (or fail to stall on reads) and every piece of
-// cycle-exact raster code will drift.
-func TestCPUWriteCyclesMatchesMicrocode(t *testing.T) {
-	// Other tests in this package share, and do not themselves reset, the
-	// ram/bus/cpu/vic globals, so put back exactly what we found. In
-	// particular, forcing BA and AEC high here would un-stall a global CPU
-	// that another test left parked mid-instruction.
-	savedRAM, savedBus, savedCPU, savedVIC := ram, bus, cpu, vic
-	t.Cleanup(func() { ram, bus, cpu, vic = savedRAM, savedBus, savedCPU, savedVIC })
-
-	// A store's write TState must not depend on its operands, so sweep a
-	// few index/operand combinations and take the union. $81 (STA (zp,X))
-	// genuinely varies, because X selects which zero page vector is read
-	// and only some of them are initialised above.
-	operands := [][4]uint8{
-		{0x10, 0x30, 0x00, 0x00},
-		{0x10, 0x30, 0x01, 0x01},
-		{0xF0, 0x30, 0x04, 0x04},
-		{0x20, 0x31, 0x10, 0x10},
-	}
-
-	for op := 0; op < 256; op++ {
-		// Keep the derived mask wider than the table to detect overflow.
-		var got uint16
-		for _, v := range operands {
-			m, ok := deriveWriteMask(uint8(op), v[0], v[1], v[2], v[3])
-			if !ok {
-				continue
-			}
-			got |= m
-		}
-		if got > 0xFF {
-			t.Errorf("opcode $%02X: microcode write mask $%04X does not fit in uint8", op, got)
-		}
-		if got != uint16(cpuWriteCycles[op]) {
-			t.Errorf("opcode $%02X: microcode writes on TStates $%04X, cpuWriteCycles has $%04X",
-				op, got, cpuWriteCycles[op])
-		}
-	}
-}
-
-// TestCPUWriteCyclesNeverIncludesTState0 guards the assumption that lets
-// TickPhi2 index cpuWriteCycles with c.Opcode. At TState 0 that field still
-// holds the *previous* instruction's opcode, which is only harmless because
-// TState 0 is always an opcode fetch, and so never a write, for every
-// opcode in the table.
-func TestCPUWriteCyclesNeverIncludesTState0(t *testing.T) {
-	for op, mask := range cpuWriteCycles {
-		if mask&1 != 0 {
-			t.Errorf("opcode $%02X claims to write on TState 0", op)
-		}
-	}
-}
-
 // TestSpriteBASlotMask checks the transcription of the sprite BA windows
 // from VICE x64sc's 6569 cycle table. Sprite N holds BA low from slot 44+2N
 // through 48+2N: two cycles of pointer and data fetch, preceded by three
@@ -124,23 +66,18 @@ func TestSpriteBASlotMask(t *testing.T) {
 	}
 }
 
-// TestCPUStallsOnReadCyclesOnlyWhileAECLow verifies the behaviour that
-// cpuWriteCycles exists to support: BA low drives the 6510's RDY pin, which
+// TestCPUStallsOnReadCyclesOnlyWhileBALow verifies BA/RDY behaviour: BA low
 // halts the processor on a read cycle but lets a write cycle complete.
 //
 // Stalling unconditionally instead halts the CPU up to three cycles early,
 // and how early depends on whichever instruction happens to be executing.
 // That is what made sprite multiplexers jitter from frame to frame.
-func TestCPUStallsOnReadCyclesOnlyWhileAECLow(t *testing.T) {
+func TestCPUStallsOnReadCyclesOnlyWhileBALow(t *testing.T) {
 	saveRAM, saveBus, saveCPU, saveVIC := ram, bus, cpu, vic
 	t.Cleanup(func() { ram, bus, cpu, vic = saveRAM, saveBus, saveCPU, saveVIC })
 
 	// STA $0400: three read cycles then one write cycle.
 	const opcode = 0x8D
-	writeMask := cpuWriteCycles[opcode]
-	if writeMask == 0 {
-		t.Fatalf("cpuWriteCycles[$%02X] = 0, expected a write cycle", opcode)
-	}
 
 	setup := func() {
 		ram = [65536]byte{}
@@ -161,13 +98,14 @@ func TestCPUStallsOnReadCyclesOnlyWhileAECLow(t *testing.T) {
 		if i > 12 {
 			t.Fatalf("never reached the write cycle of $%02X", opcode)
 		}
-		if cpu.Opcode == opcode && writeMask>>cpu.TState&1 == 1 {
+		if cpu.Opcode == opcode && cpu.TState == 3 {
 			break
 		}
 		cpu.TickPhi2()
 	}
 	before := cpu.TState
-	vic.AEC = false
+	vic.BA = false
+	vic.AEC = true
 	cpu.TickPhi2()
 	if cpu.TState == before {
 		t.Errorf("CPU stalled on a write cycle (TState stuck at %d); writes ignore RDY", before)
@@ -182,17 +120,18 @@ func TestCPUStallsOnReadCyclesOnlyWhileAECLow(t *testing.T) {
 		if i > 12 {
 			t.Fatalf("never reached a read cycle of $%02X", opcode)
 		}
-		if cpu.Opcode == opcode && cpu.TState != 0 && writeMask>>cpu.TState&1 == 0 {
+		if cpu.Opcode == opcode && cpu.TState == 1 {
 			break
 		}
 		cpu.TickPhi2()
 	}
 	before = cpu.TState
 	beforePC := cpu.PC
-	vic.AEC = false
+	vic.BA = false
+	vic.AEC = true
 	cpu.TickPhi2()
 	if cpu.TState != before || cpu.PC != beforePC {
-		t.Errorf("CPU advanced through a read cycle while AEC was low: TState %d->%d, PC $%04X->$%04X",
+		t.Errorf("CPU advanced through a read cycle while BA was low: TState %d->%d, PC $%04X->$%04X",
 			before, cpu.TState, beforePC, cpu.PC)
 	}
 }

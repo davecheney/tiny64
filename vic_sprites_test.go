@@ -625,9 +625,13 @@ func TestSpriteDMAPullsBALow(t *testing.T) {
 		for v.dot != (slot+1)*DotsPerCycle {
 			v.StepCycle()
 		}
-		want := slot < 44 || slot > 48 // BA high outside sprite 0's window
-		if v.BA != want {
-			t.Errorf("slot %d: BA = %v, want %v", slot, v.BA, want)
+		wantBA := slot < 44 || slot > 48 // BA high outside sprite 0's warning/fetch window
+		if v.BA != wantBA {
+			t.Errorf("slot %d: BA = %v, want %v", slot, v.BA, wantBA)
+		}
+		wantAEC := slot < 47 || slot > 48 // AEC low only for sprite 0's two fetch slots
+		if v.AEC != wantAEC {
+			t.Errorf("slot %d: AEC = %v, want %v", slot, v.AEC, wantAEC)
 		}
 	}
 }
