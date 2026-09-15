@@ -90,6 +90,80 @@ is `files/hardware_restore_only.py`. The earlier combined trial and its
 reports remain preserved under `refs/backport-recovery/1c4c73da-full-irq-trial`
 at `e00f58b`; they were not discarded when this independent candidate began.
 
+## PR #63 CIA interrupt-check hoist: 2026-09-15
+
+At the user's explicit request, adapt #63's head `a710211` onto the accepted
+#57-only TinyGo baseline `0a95e47`; upstream #63 was open at inspection.
+Local source commit is `e207856`. Keep the lightweight CIA's direct
+`IRQ = true` output rather than importing #56's notifications. Move the
+ICR/IMR eligibility check from every Tick to Timer A/B underflows and mask
+writes. No #54/#56, renderer or real-drive changes are included.
+
+Mask writes now assert an eligible line immediately, rather than waiting
+for Tick. New IRQ and NMI tests ran against both the unchanged baseline
+and candidate: `STA $DC0D/$DD0D` unmasking a stopped timer's latched flag
+still enters at cycle 7, PC `$0204`. Thus the upstream timing argument
+was checked against TinyGo's older opcode-fetch sampling rather than
+assuming main's clocked IRQ machinery exists. Additional tests cover both
+timer sources, masked underflows, immediate unmasking, mask clearing
+without acknowledgement, and acknowledgement without spurious reassertion.
+
+All host tests, build and vet pass, as do both device builds. Binary
+analysis was reported to the user before flashing. TinyGo 0.42.0,
+LLVM 22.1.4, Go 1.27.1, `-opt=2`; Tufty `-scheduler=none`, Badge
+`-scheduler=cores`.
+
+| Metric | #57 baseline | #57+#63 | Delta |
+|---|---:|---:|---:|
+| Tufty flash | 199724 | 199476 | -248 |
+| Tufty data | 328 | 328 | 0 |
+| Tufty BSS | 223340 | 223340 | 0 |
+| Tufty static RAM, including stacks | 227764 | 227764 | 0 |
+| Badge flash | 145680 | 145432 | -248 |
+| Badge static RAM, including stacks | 226744 | 226744 | 0 |
+| CPU.TickPhi2 symbol | 11196 | 10932 | -264 |
+| CIA.Store symbol | 226 | 242 | +16 |
+
+Both CIAs remain inlined into CPU.TickPhi2; checkIRQ is also inlined.
+No new out-of-line helper calls appear. Non-underflow cycles skip both
+ICR/IMR checks and their branches. Static conditional-branch instruction
+counts across CPU.TickPhi2 change from 133 to 131, and CIA.Store from 19
+to 20. These are static counts, not executed branch counts. CIA.Load and
+main.main sizes are unchanged; CPU.TickPhi2's stack-frame prologue remains
+unchanged, while register allocation and internal layout change. The
+248-byte flash saving is accounted for by TickPhi2 -264 and Store +16.
+
+Reused the previous #57-only baseline, without another baseline flash.
+One candidate run used the same MAZE workload and ten 50-frame windows
+ending at frames 500 through 950, continuing through frame 1000:
+
+| Firmware | Mean ms/frame | Window range ms/frame |
+|---|---:|---:|
+| #57 only, reused | 74.868554 | 74.850760-74.894560 |
+| #57+#63 | 73.050182 | 73.013320-73.075780 |
+
+The measured saving is **1.818372ms/frame (2.428753%)**, with no overlap
+between window ranges. This is a sequential comparison against a reused
+baseline, not a new A/B/A. It supports taking this adaptation under the
+requested comparison, without claiming exclusive attribution to branch
+removal rather than generated layout. XIP counters saturate, so no
+cache-hit attribution is made.
+
+The candidate was left running. Verified UF2 copy completed at 12:24:37 UTC;
+serial reached frame 1000 at 12:25:52 UTC without reported panic/fatal/OOM.
+Boot/progress is not pixel verification, actual heap measurement or physical
+RESTORE input coverage. Identity evidence is the checked UF2 payload,
+successful bootloader copy and serial progress, not flash readback.
+
+Loadable SHA-256:
+`633f5fb477fe029cc267b866e1bab50afbb2a175fc082a53137d059488775480`.
+UF2 SHA-256:
+`49ee9953de514efb5d054a5ae37ca0e38fc2bf16ed60c8f1582d0316f01b7b4d`.
+Artifacts in session `1c4c73da-12e2-4bc3-98bb-878099dafd16/files/cia-hoist/`
+include both ELFs, UF2/BIN, section/symbol/disassembly reports, codegen JSON,
+serial logs/provenance and `comparison.json`. Reproduction uses
+`files/hardware_cia_hoist.py`. No native performance benchmark was run.
+
 ## Branch point
 
 `78e8f0e` "Align dotclock names with cycle phases" — the last commit that
