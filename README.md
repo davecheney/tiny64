@@ -21,6 +21,56 @@ cycles until both `VIC().Dot()` and `VIC().RasterLine()` are zero. To
 preserve `FinishFrame`'s behavior when already at that position, take at
 least one cycle before checking.
 
+### IRQ recognition
+
+The C64's 6510 and the drive's 6502 share a clocked IRQ model, not a delay
+measured from an assertion edge. IRQ is an active-low, level-sensitive pin:
+each Phi2 samples the combined interrupt sources, including changes caused
+by that cycle's peripheral ticks and CPU bus accesses. Instruction polls
+use the preceding Phi2 sample. Once accepted, a request survives pin
+release until interrupt entry or arbitration in favour of NMI.
+
+Ordinary instructions poll on their final execution cycle. Branches poll
+at operand fetch and again on a page-crossing correction, but not on the
+last cycle of a taken same-page branch. CLI, SEI and PLP poll with the old
+I flag; RTI restores I before its poll. IRQ entry performs seven bus
+cycles, including the discarded opcode read, and does not poll again.
+
+RDY holds reads without stopping IRQ sampling. A stretched poll can accept
+a pulse during the hold; a stretched non-poll cycle cannot turn that pulse
+into a queued interrupt. CLI/SEI update I even while their terminal read
+is held, so subsequent repetitions use the new mask. PLP instead waits
+for its completing stack read. Writes, including interrupt stack pushes,
+continue under the existing BA/AEC contract. NMI/reset recognition and the
+VIC's bus scheduling are separate models and are not replaced by this IRQ
+implementation.
+
+The shared conformance cases in `irq_test.go` cover both cores, with
+additional RDY cases for the C64. Their basis is
+[NESdev's interrupt description](https://www.nesdev.org/wiki/CPU_interrupts),
+the [Visual6502 recognition stages](https://www.nesdev.org/wiki/Visual6502wiki/6502_Interrupt_Recognition_Stages_and_Tolerances),
+and transistor-model RDY schedules, not demo screenshots. Run them with
+`go test . -run '^TestIRQ'`.
+
+`testdata/irq/irq-rdy-cycles.json` preserves 24 original pin schedules and
+their expected fetch/IRQ and I-flag outcomes. `TestIRQTransistorReference`
+replays them offline against the CPU. For an independent replay, obtain the
+six Visual6502 source files listed in the JSON from its pinned repository
+revision, then run:
+
+```
+node testdata/irq/verify-cycle-fixture.js \
+  testdata/irq/irq-rdy-cycles.json /path/to/visual6502-sources
+```
+
+The script checks the source hashes before simulating. An optional fourth
+argument names an output JSON file for the raw cycle traces. Node and the
+external sources are only needed for this independent replay, not normal
+Go tests or CI. These fixtures verify IRQ outcomes and the specified
+architectural I boundaries, not every bus address during a held read:
+the transistor model can update a crossing branch's address while RDY
+remains low.
+
 ## Scope
 
 tiny64 emulates:
@@ -142,6 +192,7 @@ Raspberry Pi Pico.
   using its parallel ST7789 display through PIO/DMA
 - `cmd/drivec` is a standalone 1541 drive/IEC bus test harness
 - `cmd/prg` inspects `.prg` files: header, BASIC listing, disassembly
+- `cmd/snapshot` captures headless PNGs and checks `testdata/demos` goldens
 - `cmd/internal/prg` and `cmd/internal/disasm` are the PRG decoder and the
   6502 disassembler behind it
 - `cmd/deadtest` and `cmd/destestmax` run C64 diagnostic cartridges
@@ -195,6 +246,107 @@ The shader readback tests require a graphics session and run separately
 from the ordinary unit tests:
 
     go test -tags gpu ./cmd/internal/desktop
+
+## Snapshot regression tests
+
+`cmd/snapshot` boots headlessly to `READY.`, injects a PRG directly into RAM,
+and types `RUN` for BASIC programs (including BASIC `SYS` stubs). Machine-code
+programs start at their load address, or the optional `-start` address. It
+writes an exact CPU-expanded C64 palette PNG, without involving the desktop
+GPU. Loading bypasses KERNAL/IEC file transfer: these tests cover program
+execution and VIC output, not disk loading, fastloaders, or GPU rendering.
+
+```sh
+go run ./cmd/snapshot -prg demo.prg -frames 120 -border -o frame-000120.png
+go run ./cmd/snapshot -prg demo.prg -start '$2000' -frames 120 -crop -o cropped.png
+go test ./cmd/snapshot
+go test -tags integration ./cmd/snapshot -run '^TestSnapshotFixtures$' -count=1
+go test -tags integration ./cmd/snapshot -run '^TestSnapshotFixtures$/^colour-bars$/^frame-000002$' -count=1
+```
+
+Integration tests are opt-in and offline; CI runs them once, separately from
+ordinary unit tests. Each checkpoint executes the already-built test binary
+in a fresh subprocess, so emulator globals cannot leak between captures.
+Frame counts use `cmd/snapshot`'s `-frames` semantics: frames stepped after
+starting the program, including completion of `RUN` key injection for BASIC.
+They are not absolute frames since reset.
+
+Fixtures live in `testdata/demos/<lowercase-hyphenated-slug>/`, each with a
+`manifest.json`, its PRG, committed reference PNGs, and a provenance README.
+The manifest schema is:
+
+```json
+{
+  "version": 1,
+  "program": {
+    "file": "demo.prg",
+    "sha256": "<64 lowercase hexadecimal characters>"
+  },
+  "crop": false,
+  "start": "$2000",
+  "checkpoints": [
+    {"frame": 120, "png": "frame-000120.png"}
+  ]
+}
+```
+
+`start` is optional; omit it to preserve BASIC `RUN` or the PRG load address.
+It accepts a string containing decimal, `$hex`, or `0xhex`. `crop` is
+required and explicit: `false` selects the full 405x284 visible PAL raster;
+`true` selects the 320x200 active display. All other fields shown are
+required. Checkpoints must be nonempty, with positive, unique frame numbers
+and unique PNG filenames. File names must be local basenames with `.prg` or
+`.png` extensions. Unknown fields, missing files, and PRG hash mismatches
+fail; there are no missing-fixture skips or automatic golden updates.
+Compute hashes with `shasum -a 256 testdata/demos/<slug>/<program>.prg`.
+
+Generate references deliberately with `go run ./cmd/snapshot`, matching
+the manifest's frame, crop, and optional start settings, then visually
+review and commit the PRG and PNGs together. Comparisons decode every opaque
+RGB colour to its exact `tiny64.C64Palette` index: PNG compression or palette
+entry ordering does not matter, but even one changed pixel, a non-palette
+colour, transparency, or wrong dimensions fails. No nearest-colour matching
+or tolerance is applied. Failures report the mismatch count and first pixel.
+For known colours, the first mismatch also reports expected and actual C64
+colour indices. RGBA goldens are validated against the current
+`tiny64.C64Palette`; palette changes do not automatically preserve validity
+and require explicit review and regeneration of affected goldens.
+
+Set `SNAPSHOT_ARTIFACT_DIR` to an absolute directory to retain
+`<slug>/frame-<six-digit-frame>/{expected,actual,diff}.png`. The diff marks
+changed pixels magenta and unchanged pixels black (decode/size failures
+produce an empty diff). Without this setting the test uses a temporary
+directory that Go removes after the test. CI uploads failure images.
+
+The included `colour-bars` program is original test code. Before adding an
+external demo, establish permission to redistribute both the PRG and its
+captures, and record author, source URL, version, licence or permission,
+and any transformations in the fixture README. Public availability alone
+does not grant redistribution permission. Tests must never download assets.
+
+When redistribution permission is unconfirmed, keep supplied PRGs and their
+fixtures outside the repository. Select an external fixture root explicitly:
+
+```sh
+go test -tags integration ./cmd/snapshot -run '^TestSnapshotFixtures$' -count=1 -args -snapshot-fixtures=/absolute/path/to/demos
+```
+
+This replaces the default `testdata/demos` root; it does not supplement it.
+Use an absolute path because Go tests run from the package directory.
+The external directory has the same layout and manifest schema:
+`<root>/<slug>/manifest.json`, the `program.file` PRG, every checkpoint's
+`png` file, and `README.md`. Provenance belongs in that freeform README,
+not an additional JSON field: record author, source URL, version, licence
+or permission status (including unconfirmed redistribution permission),
+transformations, and how the reference captures were obtained and reviewed.
+The README is documentation, not machine-validated manifest data.
+
+A generated PNG alone cannot execute an integration test: the matching PRG
+and its verified SHA-256 are required to reproduce the capture. An absent
+root, empty root, missing manifest, missing PRG, or missing checkpoint PNG
+fails rather than skipping or falling back to committed fixtures. Do not
+approve a new golden simply because changed emulator code generated it;
+reference accuracy must be established independently.
 
 ## Status
 

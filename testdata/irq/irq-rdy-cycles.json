@@ -1,0 +1,68 @@
+{
+  "schema": "nmos6502-irq-rdy-cycles-v1",
+  "reference": {
+    "repository": "https://github.com/trebonian/visual6502",
+    "revision": "d8ecc129b34e0eaf320e0400fcf33329475bdb1e",
+    "files": ["nodenames.js", "segdefs.js", "transdefs.js", "wires.js", "chipsim.js", "macros.js"],
+    "sha256": {
+      "nodenames.js": "82d676dabc3e190a50c1ac41b44c0e30c5d0a4675d30827333427ae67eefdf37",
+      "segdefs.js": "52bec71bdee12e8bca8bffb15753a9472b17c3e69878f1bb1fc8881ca7356e2e",
+      "transdefs.js": "d49b4a9b3c4969048ca6a82d5c2338d3699fb96cee25b34e85630854cd8443d2",
+      "wires.js": "e0c18a58bbed7b494b6bdec380978e0022c31adfe1bd92ce24b02404ca109ec1",
+      "chipsim.js": "c6fbb5c9065f976f609f603c7f592ab94b475c9a1ca8fb1cb27d73da91ed17c2",
+      "macros.js": "fd4fa9a4f270190791f39bbd7602091198c001c5fcbdb208ca78f5c6845d2951"
+    },
+    "origin": "Original diagnostic programs and pin schedules, checked against the pinned NMOS transistor netlist; no emulator implementation or upstream test vectors used.",
+    "reproduce": "node verify-cycle-fixture.js irq-rdy-cycles.json /path/to/pinned-public-source-files"
+  },
+  "conventions": {
+    "cycles": "Physical Phi2 bus cycles; opcode fetch of program[0] is cycle 0. Pin levels are established in preceding Phi1. Stalls do not stop cycle numbering.",
+    "irqAssertedCycles": "IRQ pin is low throughout each listed cycle, high in all other cycles, including before cycle 0.",
+    "readHold": "RDY low for startCycle through startCycle+length-1 inclusive; high on cycle startCycle+length, which completes the held read. length counts rejected attempts, not total attempts.",
+    "firstFollowingFetch": "First distinct SYNC fetch after the fetch of program[0]; repeats of a held fetch are not new fetches. cycle is its first attempt, completionCycle its completing attempt.",
+    "irq": "True means the fetch is substituted with hardware interrupt BRK, not that its bus address is the handler. Confirm by IR=00 after completion, three stack writes with B clear, and IRQ-vector reads.",
+    "iAfterCycle": "Array indexed by physical cycle. I sampled on immediately following Phi1, after that Phi2's poll. Suitable for architectural post-tick assertions only when a tick includes these trailing Phi1 effects.",
+    "initialI": "I before cycle 0. Default initial IRQ synchronizer and accepted IRQ are clear.",
+    "integers": "All program bytes, addresses, cycles, and I values are ordinary JSON integers."
+  },
+  "defaults": {
+    "programAddress": 768,
+    "memoryFill": 234,
+    "initialI": 0,
+    "initialZ": 0,
+    "initialA": 1,
+    "initialX": 254,
+    "initialS": 254,
+    "memory": [{"address": 16384, "bytes": [66]}, {"address": 511, "bytes": [32]}],
+    "irqVector": 32768,
+    "handler": [76, 0, 128],
+    "nmiAsserted": false,
+    "resetAsserted": false
+  },
+  "cases": [
+    {"name":"nop-terminal-interior","program":[234],"initialI":0,"irqAssertedCycles":[2,3],"readHold":{"startCycle":1,"length":6},"expected":{"firstFollowingFetch":{"cycle":8,"completionCycle":8,"address":769,"irq":true}}},
+    {"name":"nop-terminal-first","program":[234],"initialI":0,"irqAssertedCycles":[0,1],"readHold":{"startCycle":1,"length":6},"expected":{"firstFollowingFetch":{"cycle":8,"completionCycle":8,"address":769,"irq":true}}},
+    {"name":"nop-terminal-completing","program":[234],"initialI":0,"irqAssertedCycles":[6,7],"readHold":{"startCycle":1,"length":6},"expected":{"firstFollowingFetch":{"cycle":8,"completionCycle":8,"address":769,"irq":true}}},
+    {"name":"nop-terminal-too-late","program":[234],"initialI":0,"irqAssertedCycles":[7,8],"readHold":{"startCycle":1,"length":6},"expected":{"firstFollowingFetch":{"cycle":8,"completionCycle":8,"address":769,"irq":false},"secondFollowingFetch":{"cycle":10,"completionCycle":10,"address":770,"irq":true}}},
+    {"name":"lda-terminal-interior","program":[173,0,64],"initialI":0,"irqAssertedCycles":[4,5],"readHold":{"startCycle":3,"length":6},"expected":{"firstFollowingFetch":{"cycle":10,"completionCycle":10,"address":771,"irq":true}}},
+    {"name":"lda-operand-lost","program":[173,0,64],"initialI":0,"irqAssertedCycles":[2,3],"readHold":{"startCycle":1,"length":6},"expected":{"firstFollowingFetch":{"cycle":10,"completionCycle":10,"address":771,"irq":false}}},
+    {"name":"held-opcode-pulse-lost","program":[234],"initialI":0,"irqAssertedCycles":[1,2],"readHold":{"startCycle":0,"length":6},"expected":{"opcodeFetchIRQ":false,"firstFollowingFetch":{"cycle":8,"completionCycle":8,"address":769,"irq":false}}},
+    {"name":"held-opcode-level-waits","program":[234],"initialI":0,"irqAssertedCycles":[1,2,3,4,5,6,7,8,9,10,11],"readHold":{"startCycle":0,"length":6},"expected":{"opcodeFetchIRQ":false,"firstFollowingFetch":{"cycle":8,"completionCycle":8,"address":769,"irq":true}}},
+    {"name":"accepted-before-held-successor-fetch","programAddress":519,"program":[76,0,3],"initialI":0,"irqAssertedCycles":[1,2,3],"readHold":{"startCycle":3,"length":6},"expected":{"firstFollowingFetch":{"cycle":3,"completionCycle":9,"address":768,"irq":true}}},
+    {"name":"cli-first-window","program":[88],"initialI":1,"irqAssertedCycles":[0,1],"readHold":{"startCycle":1,"length":6},"expected":{"firstFollowingFetch":{"cycle":8,"completionCycle":8,"address":769,"irq":true},"iAfterCycle":[1,0,0,0,0,0,0,0,0]}},
+    {"name":"cli-late-window","program":[88],"initialI":1,"irqAssertedCycles":[2,3],"readHold":{"startCycle":1,"length":6},"expected":{"firstFollowingFetch":{"cycle":8,"completionCycle":8,"address":769,"irq":true},"iAfterCycle":[1,0,0,0,0,0,0,0,0]}},
+    {"name":"sei-first-window","program":[120],"initialI":0,"irqAssertedCycles":[0,1],"readHold":{"startCycle":1,"length":6},"expected":{"firstFollowingFetch":{"cycle":8,"completionCycle":8,"address":769,"irq":true},"iAfterCycle":[0,1,1,1,1,1,1,1,1]}},
+    {"name":"sei-late-window","program":[120],"initialI":0,"irqAssertedCycles":[1,2],"readHold":{"startCycle":1,"length":6},"expected":{"firstFollowingFetch":{"cycle":8,"completionCycle":8,"address":769,"irq":false},"iAfterCycle":[0,1,1,1,1,1,1,1,1]}},
+    {"name":"plp-clear-retains-old-mask","program":[40],"initialI":1,"irqAssertedCycles":[4,5],"readHold":{"startCycle":3,"length":6},"expected":{"firstFollowingFetch":{"cycle":10,"completionCycle":10,"address":769,"irq":false},"iAfterCycle":[1,1,1,1,1,1,1,1,1,0,0]}},
+    {"name":"plp-set-retains-acceptance","program":[40],"initialI":0,"memory":[{"address":511,"bytes":[36]}],"irqAssertedCycles":[4,5],"readHold":{"startCycle":3,"length":6},"expected":{"firstFollowingFetch":{"cycle":10,"completionCycle":10,"address":769,"irq":true},"iAfterCycle":[0,0,0,0,0,0,0,0,0,1,1]}},
+    {"name":"branch-taken-operand","program":[208,2],"initialI":0,"irqAssertedCycles":[2,3],"readHold":{"startCycle":1,"length":6},"expected":{"firstFollowingFetch":{"cycle":9,"completionCycle":9,"address":772,"irq":true}}},
+    {"name":"branch-not-taken-operand","program":[208,2],"initialI":0,"initialZ":1,"initialA":0,"irqAssertedCycles":[2,3],"readHold":{"startCycle":1,"length":6},"expected":{"firstFollowingFetch":{"cycle":8,"completionCycle":8,"address":770,"irq":true}}},
+    {"name":"branch-same-page-final-lost","program":[208,2],"initialI":0,"irqAssertedCycles":[3,4],"readHold":{"startCycle":2,"length":6},"expected":{"firstFollowingFetch":{"cycle":9,"completionCycle":9,"address":772,"irq":false}}},
+    {"name":"branch-same-page-final-level","program":[208,2],"initialI":0,"irqAssertedCycles":[3,4,5,6,7,8,9,10,11,12,13],"readHold":{"startCycle":2,"length":6},"expected":{"firstFollowingFetch":{"cycle":9,"completionCycle":9,"address":772,"irq":false},"secondFollowingFetch":{"cycle":11,"completionCycle":11,"address":773,"irq":true}}},
+    {"name":"branch-cross-operand","programAddress":12541,"program":[208,2],"initialI":0,"irqAssertedCycles":[2,3],"readHold":{"startCycle":1,"length":6},"expected":{"firstFollowingFetch":{"cycle":10,"completionCycle":10,"address":12545,"irq":true}}},
+    {"name":"branch-cross-t3-lost","programAddress":12541,"program":[208,2],"initialI":0,"irqAssertedCycles":[3,4],"readHold":{"startCycle":2,"length":6},"expected":{"firstFollowingFetch":{"cycle":10,"completionCycle":10,"address":12545,"irq":false}}},
+    {"name":"branch-cross-t3-level","programAddress":12541,"program":[208,2],"initialI":0,"irqAssertedCycles":[3,4,5,6,7,8,9,10,11,12,13],"readHold":{"startCycle":2,"length":6},"expected":{"firstFollowingFetch":{"cycle":10,"completionCycle":10,"address":12545,"irq":true}}},
+    {"name":"branch-cross-terminal","programAddress":12541,"program":[208,2],"initialI":0,"irqAssertedCycles":[4,5],"readHold":{"startCycle":3,"length":6},"expected":{"firstFollowingFetch":{"cycle":10,"completionCycle":10,"address":12545,"irq":true}}},
+    {"name":"cli-successor-fetch-pulse-lost","program":[88],"initialI":1,"irqAssertedCycles":[3,4],"readHold":{"startCycle":2,"length":6},"expected":{"firstFollowingFetch":{"cycle":2,"completionCycle":8,"address":769,"irq":false},"iAfterCycle":[1,0,0,0,0,0,0,0,0]}}
+  ]
+}
