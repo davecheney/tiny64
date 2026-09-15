@@ -53,6 +53,7 @@ func (c *CIA) Tick() {
 				c.runningA = false
 			}
 			c.timerA = c.latchA
+			c.checkIRQ()
 		}
 	}
 
@@ -66,9 +67,13 @@ func (c *CIA) Tick() {
 				c.runningB = false
 			}
 			c.timerB = c.latchB
+			c.checkIRQ()
 		}
 	}
+}
 
+// Only underflows and mask writes can make a latched source eligible.
+func (c *CIA) checkIRQ() {
 	if c.icr&c.imr&0x1F != 0 {
 		c.icr |= 0x80
 		c.IRQ = true
@@ -156,6 +161,7 @@ func (c *CIA) Store(addr uint16, val uint8) {
 		} else {
 			c.imr &^= val & 0x1F
 		}
+		c.checkIRQ()
 	case 0xE:
 		c.runningA = val&0x01 != 0
 		c.oneShotA = val&0x08 != 0
