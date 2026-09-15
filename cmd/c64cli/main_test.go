@@ -15,6 +15,12 @@ import (
 )
 
 func TestTraceCompletedCycles(t *testing.T) {
+	// The trace this checks is built from the bus Address/RW lines, which
+	// the nobustrace build compiles out; main() refuses to start without
+	// them rather than print a stale trace, so there is nothing to assert.
+	if !tiny64.BusTrace {
+		t.Skip("bus Address/RW tracing is compiled out (nobustrace build)")
+	}
 	const cycles = tiny64.CyclesPerLine + 1
 	if os.Getenv("TINY64_TEST_C64CLI") == "1" {
 		flag.CommandLine = flag.NewFlagSet("c64cli", flag.ExitOnError)

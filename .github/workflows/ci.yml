@@ -24,6 +24,19 @@ jobs:
       - name: Test
         run: go test ./...
 
+      # The firmware builds compile the diagnostic Bus.Address/Bus.RW stores
+      # out (see bus_notrace.go). TinyGo is not installed here, so nobustrace
+      # is how the ordinary toolchain reaches the same configuration - it
+      # keeps that path compiling and proves the emulator does not quietly
+      # depend on lines nothing is supposed to read. The bus-cycle assertions
+      # skip themselves here; they are covered by the untagged run above,
+      # which is the default and stays complete.
+      - name: Build (nobustrace)
+        run: go build -tags nobustrace ./...
+
+      - name: Test (nobustrace)
+        run: go test -tags nobustrace ./...
+
       # There's no golangci-lint in the repo yet, so "lint" is what the
       # standard toolchain offers: vet, plus a formatting check, written
       # out longhand because gofmt -l only lists offending files and
@@ -31,6 +44,7 @@ jobs:
       - name: Lint
         run: |
           go vet ./...
+          go vet -tags nobustrace ./...
           unformatted=$(gofmt -l .)
           if [ -n "$unformatted" ]; then
             echo "not gofmt'd:"

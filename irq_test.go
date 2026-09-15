@@ -308,6 +308,7 @@ func TestIRQMaskPolling(t *testing.T) {
 }
 
 func TestIRQEntryBusCycles(t *testing.T) {
+	requireBusTrace(t)
 	for _, core := range []string{"6510", "6502"} {
 		t.Run(core, func(t *testing.T) {
 			c := newIRQTestCPU(t, core)

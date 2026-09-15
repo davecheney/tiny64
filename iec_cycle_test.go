@@ -17,6 +17,7 @@ func (p *iecATNRecorder) iecTick() {
 }
 
 func TestIECObservesCIA2WriteOnSameCycle(t *testing.T) {
+	requireBusTrace(t)
 	savedBus := bus
 	t.Cleanup(func() { bus = savedBus })
 	newMachine(t)

@@ -54,6 +54,7 @@ func deriveWriteMask(opcode, op1, op2, x, y uint8) (mask uint16, ok bool) {
 // stall on write cycles (or fail to stall on reads) and every piece of
 // cycle-exact raster code will drift.
 func TestCPUWriteCyclesMatchesMicrocode(t *testing.T) {
+	requireBusTrace(t)
 	// Other tests in this package share, and do not themselves reset, the
 	// ram/bus/cpu/vic globals, so put back exactly what we found. In
 	// particular, forcing BA and AEC high here would un-stall a global CPU

@@ -24,6 +24,7 @@ type irqReferenceCase struct {
 }
 
 func TestIRQTransistorReference(t *testing.T) {
+	requireBusTrace(t)
 	// Original schedules checked against Visual6502 revision
 	// d8ecc129b34e0eaf320e0400fcf33329475bdb1e.
 	// Cycles count physical Phi2 attempts from the initial opcode fetch.

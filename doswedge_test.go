@@ -194,6 +194,7 @@ func TestDOSWedgeSavesBASICProgram(t *testing.T) {
 }
 
 func TestDOSWedgeQuitUntilReset(t *testing.T) {
+	requireBusTrace(t)
 	m := newWedgeMachine(t, virtualDriveDisk(t, "HELLO", helloPRG))
 
 	m.press(false, KeyAt)
@@ -301,6 +302,7 @@ func TestDOSWedgeFailedLoadsLeaveRAMVisible(t *testing.T) {
 }
 
 func TestDOSWedgeRESTOREDuringCommand(t *testing.T) {
+	requireBusTrace(t)
 	for _, phase := range []string{"entry", "ROM", "call", "service", "return", "exit"} {
 		for _, stop := range []bool{false, true} {
 			t.Run(fmt.Sprintf("%s/stop=%v", phase, stop), func(t *testing.T) {

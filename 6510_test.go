@@ -39,6 +39,7 @@ type instrTest struct {
 
 func runInstrTest(t *testing.T, tc instrTest) {
 	t.Helper()
+	requireBusTrace(t)
 
 	// Reset all global state so tests don't leak into one another.
 	ram = [65536]byte{}

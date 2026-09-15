@@ -22,6 +22,13 @@ var driveRAM [0x0800]byte
 // DriveBus represents the physical wiring between the drive's CPU and its
 // RAM/ROM/VIAs - the 1541 equivalent of Bus/PLA, but much simpler since the
 // 1541 has no banking: the memory map is fixed.
+//
+// As with Bus, Address and RW are diagnostics that nothing in the emulator
+// reads back, and so are only maintained when BusTrace is set. The drive is
+// not on the firmware's hot path - it is only clocked when one is attached -
+// but irq_test.go drives both buses through one helper, and two structurally
+// identical buses that disagree about when their diagnostic lines are live
+// would be a trap for the next reader.
 type DriveBus struct {
 	Address uint16
 	Data    uint8
@@ -65,23 +72,27 @@ func driveTickPhi2() {
 }
 
 // GetDriveBus returns the singleton DriveBus instance, for debugging/
-// tracing tools.
+// tracing tools. Address and RW are only meaningful if BusTrace is true.
 func GetDriveBus() *DriveBus {
 	return &driveBus
 }
 
 // Load performs a Phi2 read cycle at addr on the drive's bus.
 func (b *DriveBus) Load(addr uint16) uint8 {
-	b.Address = addr
-	b.RW = true
+	if BusTrace {
+		b.Address = addr
+		b.RW = true
+	}
 	b.Data = driveLoad(addr)
 	return b.Data
 }
 
 // Store performs a Phi2 write cycle at addr on the drive's bus.
 func (b *DriveBus) Store(addr uint16, val uint8) {
-	b.Address = addr
-	b.RW = false
+	if BusTrace {
+		b.Address = addr
+		b.RW = false
+	}
 	b.Data = val
 	driveStore(addr, val)
 }

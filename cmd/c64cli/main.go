@@ -134,6 +134,14 @@ func main() {
 	bus := tiny64.GetBus()
 	vic := tiny64.VIC()
 
+	// Every report below keys off bus.Address and bus.RW, which are only
+	// latched when tiny64.BusTrace is set. Built with -tags nobustrace they
+	// would be stale rather than absent, so the trace would look plausible
+	// and be wrong; refuse to run instead of lying.
+	if !tiny64.BusTrace {
+		log.Fatal("c64cli needs the bus Address/RW lines, which -tags nobustrace compiles out")
+	}
+
 	var n int64
 	var stalled int64
 	var lastPC uint16

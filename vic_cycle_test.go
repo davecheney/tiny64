@@ -36,6 +36,7 @@ func TestVICStepCycleStalledReadClocksCIAs(t *testing.T) {
 }
 
 func TestVICStepCycleCPUWriteFollowsPixels(t *testing.T) {
+	requireBusTrace(t)
 	savedBus := bus
 	t.Cleanup(func() { bus = savedBus })
 	newMachine(t)
