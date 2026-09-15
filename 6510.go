@@ -32,10 +32,13 @@ type CPU struct {
 	nmiLine   bool // last-seen state of the CPU's NMI pin, for edge detection
 	nmiLatch  bool // latched by a 0->1 transition of nmiLine, until serviced
 
-	// Clock counts elapsed Phi2 cycles, including cycles held by RDY.
-	// The existing NMI recognition model uses it; IRQ uses clocked state.
-	Clock            uint64
-	nmiLatchClock    uint64
+	// nmiDelay counts the Phi2 cycles still owed by the 6510's two-cycle
+	// NMI synchronization delay, from 2 down to 0. It is a countdown and
+	// not a timestamp because nothing needs to know *when* the edge
+	// arrived, only whether two cycles have gone by since; that keeps the
+	// CPU free of an absolute cycle counter entirely.
+	nmiDelay uint8
+
 	irq              irqState
 	interruptSources interruptSource
 	irqActive        bool
@@ -97,6 +100,7 @@ func (c *CPU) Reset() {
 	// stored, but the stack pointer still moves.
 	c.Interrupt = 0
 	c.nmiLatch = false
+	c.nmiDelay = 0
 	c.regP |= P_INTERRUPT
 	c.irq = irqState{}
 	c.syncInterruptSources()
@@ -158,14 +162,18 @@ func (c *CPU) pop() uint8 {
 	return val
 }
 
-// triggerNMI latches an external NMI edge at the current Phi2 clock. The
-// 6510 recognizes it after its normal two-cycle synchronization delay.
-// RESTORE uses this to assert NMI directly on its press edge, bypassing
-// the interruptSources bitmask entirely: unlike CIA2, it has no level to
-// track between Phi2 cycles, so it needs no per-cycle work of its own.
+// triggerNMI latches an external NMI edge and arms the 6510's two-cycle
+// synchronization delay before it may be recognized. RESTORE uses this to
+// assert NMI directly on its press edge, bypassing the interruptSources
+// bitmask entirely: unlike CIA2, it has no level to track between Phi2
+// cycles, so it needs no per-cycle work of its own.
+//
+// Re-arming on a later edge while an earlier one is still latched restarts
+// the delay, which is what the hardware does: the synchronizing flip-flops
+// see the newest edge.
 func (c *CPU) triggerNMI() {
 	c.nmiLatch = true
-	c.nmiLatchClock = c.Clock
+	c.nmiDelay = 2
 }
 
 // TickPhi2 executes exactly one high-clock phase of the CPU. The CIAs are
@@ -173,7 +181,23 @@ func (c *CPU) triggerNMI() {
 // Phi2 clock with the CPU (not the VIC-II's dot clock) and keep counting
 // regardless of whether the CPU itself is stalled by BA/AEC.
 func (c *CPU) TickPhi2() {
-	c.Clock++
+	// Retire one cycle of a pending NMI's synchronization delay. Two
+	// things about where this sits are load-bearing, and neither is
+	// obvious from the statement itself:
+	//
+	//   - it runs *before* the NMI edge detect below, so an edge latched
+	//     on this very cycle arms a full 2 and is first recognized on the
+	//     third TickPhi2, not the second;
+	//   - it runs *before* the RDY/AEC early return, so cycles the CPU
+	//     spends stalled still count toward the delay. Phi2 keeps running
+	//     when the VIC-II owns the bus, and so do the NMI synchronizing
+	//     flip-flops.
+	//
+	// Moving it below either of those is a one-cycle timing bug that no
+	// compiler and no type checker will catch.
+	if c.nmiDelay != 0 {
+		c.nmiDelay--
+	}
 
 	cia1.Tick()
 	cia2.Tick()
@@ -224,7 +248,7 @@ func (c *CPU) TickPhi2() {
 	// Both are serviced via BRK's microcode.
 	case 0:
 		switch {
-		case c.nmiLatch && c.Clock >= c.nmiLatchClock+2:
+		case c.nmiLatch && c.nmiDelay == 0:
 			// NMI is checked before IRQ because it wins when both are
 			// pending, and it is deliberately not gated on the I flag: the
 			// I flag masks IRQ only, which is what makes this interrupt

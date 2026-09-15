@@ -3372,10 +3372,8 @@ func TestCPUStallsWhenAECLow(t *testing.T) {
 
 	cpu.TickPhi2()
 
-	// Clock legitimately advances even while AEC is low: the Phi2 clock
-	// itself doesn't stop just because the CPU's bus access is stalled.
-	before.Clock = cpu.Clock
-
+	// Compared whole, with nothing exempted: the CPU keeps no count of
+	// Phi2 cycles, so a stalled one leaves it bit for bit unchanged.
 	if cpu != before {
 		t.Errorf("CPU state changed while AEC was low: got %+v, want %+v", cpu, before)
 	}

@@ -8,7 +8,21 @@ import (
 	"github.com/davecheney/tiny64"
 )
 
-const keyPhaseCycles = 40_000
+// main advances the machine exactly one PAL frame per demoLoader.tick, so
+// the demo's delays are counted in ticks rather than in CPU cycles: the
+// caller already knows how much emulated time has passed, and asking the
+// CPU for a cycle count only to divide it back down again is a counter the
+// emulator would otherwise have to keep on every one of a frame's 19,656
+// cycles.
+//
+// These are the numbers of ticks *skipped* between actions. The 40,000
+// CPU cycles a key phase used to wait for is 2.03 frames, so the next key
+// transition landed on the third tick; the 1,000,000 cycles of listing
+// pause is 50.9 frames, so it resumed on the fifty-first.
+const (
+	keyPhaseFrames = 2
+	listingFrames  = 50
+)
 
 type keyStroke struct {
 	key   tiny64.Key
@@ -56,8 +70,6 @@ const (
 	demoDone
 )
 
-const listingCycles = 1_000_000
-
 // demoLoader types LOAD and RUN with human-length keyboard transitions. It
 // gates RUN on the actual tokenized program in RAM instead of a wall-clock
 // delay, so the sequence remains correct if IEC transfer timing changes.
@@ -66,25 +78,26 @@ type demoLoader struct {
 	keys     []keyStroke
 	keyIndex int
 	pressed  bool
-	deadline uint64
+	delay    uint16 // ticks still to skip before the next action
 }
 
 func (d *demoLoader) start(keys []keyStroke) {
 	d.keys = keys
 	d.keyIndex = 0
 	d.pressed = false
-	d.deadline = tiny64.GetCPU().Clock
+	d.delay = 0
 }
 
 func (d *demoLoader) typeKeys() bool {
-	if tiny64.GetCPU().Clock < d.deadline {
+	if d.delay > 0 {
+		d.delay--
 		return false
 	}
 	if d.pressed {
 		tiny64.Keys().ReleaseAll()
 		d.pressed = false
 		d.keyIndex++
-		d.deadline = tiny64.GetCPU().Clock + keyPhaseCycles
+		d.delay = keyPhaseFrames
 		return d.keyIndex == len(d.keys)
 	}
 
@@ -94,7 +107,7 @@ func (d *demoLoader) typeKeys() bool {
 	}
 	tiny64.Keys().Press(key.key)
 	d.pressed = true
-	d.deadline = tiny64.GetCPU().Clock + keyPhaseCycles
+	d.delay = keyPhaseFrames
 	return false
 }
 
@@ -125,7 +138,7 @@ func (d *demoLoader) reset() {
 	d.keys = nil
 	d.keyIndex = 0
 	d.pressed = false
-	d.deadline = 0
+	d.delay = 0
 }
 
 func (d *demoLoader) tick() {
@@ -152,11 +165,13 @@ func (d *demoLoader) tick() {
 		}
 	case demoListing:
 		if d.typeKeys() {
-			d.deadline = tiny64.GetCPU().Clock + listingCycles
+			d.delay = listingFrames
 			d.stage = demoWaitAfterList
 		}
 	case demoWaitAfterList:
-		if tiny64.GetCPU().Clock >= d.deadline {
+		if d.delay > 0 {
+			d.delay--
+		} else {
 			d.start(runMaze)
 			d.stage = demoRunning
 		}
