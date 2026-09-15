@@ -64,6 +64,7 @@ func (c *CIA) Tick() {
 				c.runningA = false
 			}
 			c.timerA = c.latchA
+			c.checkIRQ()
 		}
 	}
 
@@ -77,9 +78,25 @@ func (c *CIA) Tick() {
 				c.runningB = false
 			}
 			c.timerB = c.latchB
+			c.checkIRQ()
 		}
 	}
+}
 
+// checkIRQ sets the master interrupt flag and asserts the chip's interrupt
+// line if any enabled source has fired.
+//
+// Tick used to run this test on the way out of every Phi2 cycle, for both
+// CIAs, which is 39,312 re-derivations per PAL frame of an answer that
+// changes a handful of times a frame at most.
+//
+// Only icr and imr feed the test, so it runs at exactly the points that
+// can newly satisfy it: a Timer A or Timer B underflow latching a flag
+// into icr, and a CPU write to the mask register enabling a flag that is
+// already latched. Reading the ICR is the only other writer of either
+// field, and it zeroes icr and drops the line itself, which can only
+// falsify the test - never satisfy it - so it needs no check of its own.
+func (c *CIA) checkIRQ() {
 	if c.icr&c.imr&0x1F != 0 {
 		c.icr |= 0x80
 		if !c.IRQ {
@@ -169,6 +186,9 @@ func (c *CIA) Store(addr uint16, val uint8) {
 		} else {
 			c.imr &^= val & 0x1F
 		}
+		// Unmasking a flag that already fired asserts the line; masking
+		// one off cannot, but checkIRQ is a no-op in that direction.
+		c.checkIRQ()
 	case 0xE:
 		c.runningA = val&0x01 != 0
 		c.oneShotA = val&0x08 != 0
