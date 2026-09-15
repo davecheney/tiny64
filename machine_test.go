@@ -40,6 +40,21 @@ func saveMachine(t *testing.T) {
 	})
 }
 
+// skipShort skips a test under -short.
+//
+// The DOS wedge, 1541 and IEC drive tests are the expensive ones: each
+// boots a whole emulated C64, waits for the KERNAL to come up, and then
+// talks to a drive one bus transition at a time, which costs tens of
+// millions of emulated cycles. Together they are most of the suite's
+// runtime, so `go test -short .` gives a fast local run of everything
+// else. CI runs without -short, so they still guard every change.
+func skipShort(t *testing.T) {
+	t.Helper()
+	if testing.Short() {
+		t.Skip("boots an emulated machine and drives a disk drive; skipped under -short")
+	}
+}
+
 func frameBufferPixelRGBA(x, y uint16) [4]byte {
 	idx := int(y-FirstVisibleLine)*FrameBufferStride + int(x)
 	return C64Palette[FrameBufferIndexed()[idx]&0x0f]

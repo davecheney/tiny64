@@ -65,6 +65,8 @@ func assertWedgeRAM(t *testing.T) {
 }
 
 func TestDOSWedgeDisabledByDefault(t *testing.T) {
+	skipShort(t)
+
 	m := newMachine(t)
 	useDrive(t, virtualDriveDisk(t, "HELLO", helloPRG))
 
@@ -78,6 +80,8 @@ func TestDOSWedgeDisabledByDefault(t *testing.T) {
 }
 
 func TestDOSWedgeLoadsPRGThroughBASICAndKERNAL(t *testing.T) {
+	skipShort(t)
+
 	m := newWedgeMachine(t, virtualDriveDisk(t, "HELLO", helloPRG))
 
 	m.typeLine("/HELLO")
@@ -92,6 +96,8 @@ func TestDOSWedgeLoadsPRGThroughBASICAndKERNAL(t *testing.T) {
 }
 
 func TestDOSWedgeDirectoryPreservesBASICProgram(t *testing.T) {
+	skipShort(t)
+
 	m := newWedgeMachine(t, virtualDriveDisk(t, "HELLO", helloPRG))
 
 	m.typeLine(`10 PRINT"STILL HERE"`)
@@ -107,6 +113,8 @@ func TestDOSWedgeDirectoryPreservesBASICProgram(t *testing.T) {
 }
 
 func TestDOSWedgeStatusAndCommandsUseCommandChannel(t *testing.T) {
+	skipShort(t)
+
 	m := newWedgeMachine(t, virtualDriveDisk(t, "HELLO", helloPRG))
 
 	m.typeLine("@")
@@ -128,6 +136,8 @@ func TestDOSWedgeStatusAndCommandsUseCommandChannel(t *testing.T) {
 }
 
 func TestDOSWedgeSelectsDevice(t *testing.T) {
+	skipShort(t)
+
 	m := newMachine(t)
 	AttachVirtualPRG(9, "HELLO", helloPRG)
 	EnableDOSWedge()
@@ -146,6 +156,8 @@ func TestDOSWedgeSelectsDevice(t *testing.T) {
 }
 
 func TestDOSWedgeLoadRunAndMachineLoad(t *testing.T) {
+	skipShort(t)
+
 	runPRG := []byte{
 		0x01, 0x08,
 		0x0B, 0x08,
@@ -163,6 +175,8 @@ func TestDOSWedgeLoadRunAndMachineLoad(t *testing.T) {
 }
 
 func TestDOSWedgeMachineCodeLoadUsesFileLoadAddress(t *testing.T) {
+	skipShort(t)
+
 	mcPRG := []byte{0x00, 0x20, 0xDE, 0xAD, 0xBE, 0xEF}
 	m := newWedgeMachine(t, virtualDriveDisk(t, "CODE", mcPRG))
 
@@ -177,6 +191,8 @@ func TestDOSWedgeMachineCodeLoadUsesFileLoadAddress(t *testing.T) {
 }
 
 func TestDOSWedgeSavesBASICProgram(t *testing.T) {
+	skipShort(t)
+
 	m := newWedgeMachine(t, FormatDisk("BLANK", "01"))
 
 	m.typeLine(`10 PRINT"X"`)
@@ -194,6 +210,8 @@ func TestDOSWedgeSavesBASICProgram(t *testing.T) {
 }
 
 func TestDOSWedgeQuitUntilReset(t *testing.T) {
+	skipShort(t)
+
 	m := newWedgeMachine(t, virtualDriveDisk(t, "HELLO", helloPRG))
 
 	m.press(false, KeyAt)
@@ -240,6 +258,8 @@ func TestDOSWedgeQuitUntilReset(t *testing.T) {
 }
 
 func TestDOSWedgeFullMemoryProgramAndSave(t *testing.T) {
+	skipShort(t)
+
 	// A BASIC program whose last line lives above $8000, followed by string
 	// allocation near $A000. The lines and string must not read cartridge ROM.
 	prg := []byte{0x01, 0x08}
@@ -281,6 +301,8 @@ func TestDOSWedgeFullMemoryProgramAndSave(t *testing.T) {
 }
 
 func TestDOSWedgeFailedLoadsLeaveRAMVisible(t *testing.T) {
+	skipShort(t)
+
 	for _, command := range []string{"/MISSING", "%MISSING", "↑MISSING"} {
 		t.Run(command, func(t *testing.T) {
 			m := newWedgeMachine(t, FormatDisk("EMPTY", "00"))
@@ -301,6 +323,8 @@ func TestDOSWedgeFailedLoadsLeaveRAMVisible(t *testing.T) {
 }
 
 func TestDOSWedgeRESTOREDuringCommand(t *testing.T) {
+	skipShort(t)
+
 	for _, phase := range []string{"entry", "ROM", "call", "service", "return", "exit"} {
 		for _, stop := range []bool{false, true} {
 			t.Run(fmt.Sprintf("%s/stop=%v", phase, stop), func(t *testing.T) {
@@ -353,6 +377,8 @@ func TestDOSWedgeRESTOREDuringCommand(t *testing.T) {
 }
 
 func TestDOSWedgeNMIGateBoundaries(t *testing.T) {
+	skipShort(t)
+
 	m := newWedgeMachine(t, FormatDisk("EMPTY", "00"))
 	prompt := uint16(ram[wedgeRAMEntry+1]) | uint16(ram[wedgeRAMEntry+2])<<8
 	m.press(false, KeyAt)
@@ -402,6 +428,8 @@ func TestDOSWedgeNMIGateBoundaries(t *testing.T) {
 }
 
 func TestDOSWedgeServiceGatePreservesRegisters(t *testing.T) {
+	skipShort(t)
+
 	service := newWedgeAssembler(0x9000)
 	service.abs(0x8D, 0xC010)
 	service.abs(0x8E, 0xC011)
@@ -445,6 +473,8 @@ func TestDOSWedgeServiceGatePreservesRegisters(t *testing.T) {
 }
 
 func TestDOSWedgeIRQHandlerInHighRAM(t *testing.T) {
+	skipShort(t)
+
 	handler := []byte{
 		0xEE, 0x00, 0xC0, // INC $C000
 		0xD0, 0x03,
@@ -482,6 +512,8 @@ func TestDOSWedgeIRQHandlerInHighRAM(t *testing.T) {
 }
 
 func TestDOSWedgeDoesNotInterceptStoredBASICLines(t *testing.T) {
+	skipShort(t)
+
 	m := newWedgeMachine(t, virtualDriveDisk(t, "HELLO", helloPRG))
 
 	m.typeLine("10 /HELLO")
@@ -496,6 +528,8 @@ func TestDOSWedgeDoesNotInterceptStoredBASICLines(t *testing.T) {
 // and the user reach by fixed address rather than by following a vector:
 // the autostart signature and its bootstrap/NMI entry points in I/O ROM.
 func TestDOSWedgeCartridgeImage(t *testing.T) {
+	skipShort(t)
+
 	img := buildDOSWedge()
 
 	if len(img) != dosWedgeSize {
@@ -529,6 +563,8 @@ func TestDOSWedgeCartridgeImage(t *testing.T) {
 // the reason is written down, rather than as a machine that boots to a
 // blank screen somewhere else in the suite.
 func TestDOSWedgeEntryPointsMatchROM(t *testing.T) {
+	skipShort(t)
+
 	kernal := func(addr uint16, n int) []byte {
 		return rom.Kernal[addr-0xE000 : addr-0xE000+uint16(n)]
 	}
@@ -558,6 +594,8 @@ func TestDOSWedgeEntryPointsMatchROM(t *testing.T) {
 // touches $0302, so finding it pointing into the installed dispatcher means
 // the KERNAL found the signature and handed over.
 func TestDOSWedgeBootsFromCartridgeSignature(t *testing.T) {
+	skipShort(t)
+
 	newWedgeMachine(t, virtualDriveDisk(t, "HELLO", helloPRG))
 
 	main := uint16(ram[0x0302]) | uint16(ram[0x0303])<<8
@@ -574,6 +612,8 @@ func TestDOSWedgeBootsFromCartridgeSignature(t *testing.T) {
 // middle of the machine's RAM behind the CPU's back. The wedge's only RAM
 // is its workspace in the cassette buffer.
 func TestDOSWedgeLeavesRAMAlone(t *testing.T) {
+	skipShort(t)
+
 	m := newWedgeMachine(t, virtualDriveDisk(t, "HELLO", helloPRG))
 	m.typeLine("@#9")
 
@@ -595,6 +635,8 @@ func TestDOSWedgeLeavesRAMAlone(t *testing.T) {
 // TestDOSWedgeReportsCartridgeMemoryTop checks the free-memory line, which
 // nothing in the emulator arranges: RAMTAS must see RAM, not cartridge ROM.
 func TestDOSWedgeReportsCartridgeMemoryTop(t *testing.T) {
+	skipShort(t)
+
 	m := newWedgeMachine(t, virtualDriveDisk(t, "HELLO", helloPRG))
 	if !screenHas("38911 BASIC BYTES FREE") {
 		t.Errorf("boot screen does not report 38911 bytes free: row 3 is %q", screenLine(3))
@@ -618,6 +660,8 @@ func TestDOSWedgeReportsCartridgeMemoryTop(t *testing.T) {
 // jumps through $8002, so a cartridge that leaves that vector pointing
 // anywhere careless crashes on the first RESTORE.
 func TestDOSWedgeSurvivesRestore(t *testing.T) {
+	skipShort(t)
+
 	m := newWedgeMachine(t, virtualDriveDisk(t, "HELLO", helloPRG))
 
 	keyboard.Restore()
