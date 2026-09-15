@@ -55,13 +55,20 @@ cycle-accurate VIC-II/6502-opcode push (the commits below).
 | `7093968` | doswedge: deliver the wedge as an 8K autostart cartridge | **picked**, commit `4290e95` | Preserved the removed-drive state when resolving Reset and test snapshot conflicts. Host tests and both device builds pass. The measured full-series cost of 0.08998ms/frame (0.1204%) was explicitly accepted on 2026-09-15; this supersedes the initial rejection below. No experimental decoder reordering was included. |
 | `0882c98` | doswedge: test the cartridge boot path | **picked (full)**, commit `686c4e3` | Cartridge tests cover ROM signature, boot vector, free-memory report, workspace, and RESTORE behavior; all pass on the virtual-drive branch. |
 | `90081d2` | doc: describe the wedge as the cartridge it now is | **picked**, commit `65cba3d` | Kept the cartridge README and CLI exclusivity guard. Follow-up documentation removes this branch's obsolete `-drive=virtual` example flag and clarifies that DisableDOSWedge immediately unmaps ROM, so Reset must precede further CPU stepping. |
+| `3473b18` | tiny64: stop callers assuming the frame buffer is a live RGBA view | **skip** | Preparation for the desktop indexed sink, including migrations in the absent snapshot/sprite code. Its only device-source change adds unused `ClearFrameBuffer`; an isolated Tufty build with that hunk is byte-identical to the accepted baseline, and both device targets build. No device behavior or performance improvement. |
+| `5caeefd` | tiny64: add a paletted pixel sink | **skip** | The new sink is explicitly excluded by `tinygo`; device builds retain the cropped RGB565BE buffer. Keep with its desktop presentation series rather than introduce an unused alternative here. |
+| `b4e4a33` | desktop: expand palette indices on the GPU | **skip** | Desktop shader/upload path and `.kage` handling, with no import into either firmware target. |
+| `5a9e1cb` | doc: describe the paletted frame buffer experiment | **skip** | Documents the skipped desktop experiment and its temporary `paletted` tag. |
+| `8177007` | tiny64: make the paletted frame buffer the only one | **skip** | Makes indexing the default for host builds, not TinyGo. Requires the skipped presentation and framebuffer-lifetime migrations. |
+| `0ae9df8` | desktop: pad framebuffer row stride to avoid per-frame CPU packing | **skip** | Pads the host indexed buffer to 408 bytes per row for GPU upload. Does not alter the device RGB565BE layout or draw path. |
+| `672c3f8` | Consolidate indexed framebuffer storage and verify shader output | **skip** | Consolidates host sinks, corrects tag overlap and documents shared snapshot storage; adds layout and GPU readback tests. TinyGo remains on its existing sink. No complete desktop-series or GPU test run was needed for this device-scope exclusion. |
 
 ## Review and Tufty A/B/A: 2026-09-15
 
 Reviewed the 13 commits after the previous checkpoint, `a0c5bbe`, through
 `origin/main` at `90081d26b3035f92d13741b70e37c99dde064fd7`, confirmed by
 `git fetch origin` at 00:09:40 UTC. The earlier 17 logged decisions remain
-unchanged; the table now accounts for all 30 mainline commits since
+unchanged; that checkpoint accounted for all 30 mainline commits since
 `78e8f0e`. The baseline was `tinygo` at
 `b6dab7f17eab7bb7f03caecbd4c568ed9779bf19`.
 
@@ -138,6 +145,126 @@ cartridge trial (`arm-none-eabi-objcopy -O binary`, then `cmp`). The accepted
 firmware was flashed to the Tufty and left running: a fresh ten-window
 capture ending at frames 500 through 950 measured 74.797738ms/frame
 (window range 74.769480-74.830820ms), reproducing the earlier cartridge run.
+
+## Upstream branch review: 2026-09-15
+
+Fetched at 00:28:01 UTC with `origin/main` at `672c3f8`. The table above
+now covers all 37 commits from `78e8f0e` through that pinned mainline tip.
+Trials below used the accepted cartridge baseline `b65f8ab`; none of these
+new source candidates was adopted during this review.
+
+The remaining remote branches at that snapshot were:
+
+| branch (under `origin/`) | reviewed tip | disposition |
+|---|---|---|
+| `worktree-stepcycle-only` | `5be22fc` | Eligible together with its follow-up; final upstream integration pending. |
+| `davecheney-stepdot-removal-review` | `74fcf1c` | Follow-up to StepCycle; see combined trial below. |
+| `wedge-bank-out` | `49278da` | Functional, but measured Tufty regression; defer. |
+| `copilot/full-crt-support` | `17fc62c` | Included in successor CRT branch; do not take independently. |
+| `davecheney-crt-support-testing` | `789d0d0` | Static-CRT adaptation needs corrections and Tufty timing; defer. |
+| `paletted-framebuffer` | `8104e24` | Seven commits patch-equivalent to the new mainline framebuffer series; desktop-only. |
+| `dfc/tinygo-backports` | `5cf19bc` | Three remaining differing hashes are patch-equivalent to changes already on this branch. |
+| `copilot/improve-dos-wedge-implementation` | `a6b9546` | Superseded RAM-wedge alternative: cached installation through a PLA store hook and `-kernal stock\|wedge`, rather than the accepted cartridge. |
+| `davecheney-dfc/vic-mask-uint8-hot-path` | `d5d4a64` | Historical mask optimization family, not reopened or freshly hardware-tested. |
+| `dfc/backup-vic-hoist-20260911` | `c61d0bd` | Historical hoist alternative, not reopened or freshly hardware-tested. |
+| `dfc/backup-vic-hoist-f06b4c9` | `f06b4c9` | Historical hoist alternative, not reopened or freshly hardware-tested. |
+| `dfc/vic-hoist-commits-2-4` | `8b6a30f` | Previously rejected hoist series documented below; not remeasured. |
+
+The mask/hoist alternatives are not all patch-identical. Their disposition
+does not claim a new timing result for each branch.
+
+### StepCycle-only candidate
+
+Reviewed `5be22fc` with `74fcf1c`, adapting only the existing TinyGo
+surfaces. The combined candidate removes public `StepDot`, package
+`FinishFrame`, and `VICII.FinishFrame`, migrates callers/tests, and corrects
+CLI trace timing. It preserves all 25 retained VIC function bodies,
+including `stepCycle`, and does not import absent graphics, sprite or IRQ
+features. The follow-up fixes an upstream sprite test that resumed cycle
+stepping at dot 51, making its dot-48 target unreachable; that test is absent
+here.
+
+Host tests/build/vet and both device builds passed. A CPU-before-IEC
+ordering mutation was rejected by the new test. Extracted loadable images
+were byte-identical to the accepted baseline on both targets:
+
+| target | SHA-256 |
+|---|---|
+| Tufty | `50dd1fa34a378749742d85fb865dbe0f59682b5814a6e4493bf55b57564fc632` |
+| Badge | `47f7fdf9ee60bb29782f2cf127061e9b78d2abdd7259152ced7decf3fa2517b1` |
+
+No new hardware timing was needed for these identical device executables.
+On 2026-09-15 the maintainer authorized backporting the finalized series
+**after it merges upstream**, not applying this trial immediately. The
+separate Step cycle review is adding regression tests and comment fixes;
+the final merged revision must be reconciled with this candidate and
+validated again. At 00:36:03 UTC GitHub reported PR #49 open, not merged.
+
+### Cartridge bank-out candidate
+
+`49278da` adds an I/O1 release latch at `$DE00-$DEFF`, cleared on reset,
+and small screen-page/cassette-buffer stubs. It restores 38911 BASIC bytes
+and RAM at `$8000`, with reactivation changed to `SYS 828`. This is a
+separate change from the five explicitly accepted cartridge commits.
+
+The isolated adaptation passed host tests/build/vet and both device builds.
+Using the same MAZE workload, compiler flags, and ten windows ending at
+frames 500 through 950:
+
+| run | mean ms/frame |
+|---|---:|
+| accepted cartridge A before | 74.797738 |
+| bank-out B | 75.354062 |
+| restored accepted cartridge A after | 74.796380 |
+
+Against the averaged baseline of 74.797059ms/frame, bank-out costs
+0.557003ms/frame (0.7447%). It fails the default no-regression gate.
+The accepted firmware was restored and remeasured for the final A run.
+The earlier cartridge exception does not authorize this regression.
+
+### CRT candidates
+
+The successor includes all seven original CRT commits (`1dc9e8c`,
+`dab9cfa`, `6dda3bd`, `63328ef`, `b52891c`, `c2782cc`, `17fc62c`) and
+four follow-ups (`c4f507a`, `0af1482`, `76e975f`, `789d0d0`).
+Do not merge its ancestry wholesale: it includes rejected mainline work.
+The intermediate command deletion and reversal cancel each other;
+`789d0d0` finally supplies the DiSTestMAX CRT fixture with that cleanup.
+
+A static type-0, bank-zero candidate was adapted and tested, but is deferred.
+Its practical loading benefit is desktop/headless, and its Tufty executable
+changes without a hardware timing result. It requires these corrections
+rather than a verbatim cherry-pick:
+
+- Hardware type 1 is Action Replay, not Ultimax. Static Ultimax uses type 0
+  and the GAME/EXROM header lines. Reject unsupported bank-switching types.
+- Reject empty/duplicate CHIP windows, invalid line values and incompatible
+  sizes/addresses. Added tests expose 13 failures in the unchanged upstream
+  loader; corrected parsing passes them.
+- Normal 16K ROMH depends on HIRAM independently of LORAM. Upstream's
+  combined condition fails mapping tests at CPU-port values 2 and 6.
+- Extend frontend cartridge exclusivity so CRT, wedge and diagnostics do
+  not silently replace each other.
+- Migrate all three TinyGo cartridge test literals atomically with the
+  public `Cartridge.ROM` removal and new ROML/ROMH representation.
+
+The candidate preserves accepted 8K wedge banking and RAM writes beneath
+ROM, virtual-drive behavior, reset behavior and the lightweight renderer.
+It does not import upstream CIA2 video-bank or sprite mapping logic. It
+does not implement full Ultimax RAM holes/I/O/write decoding or arbitrary
+bank-switching hardware.
+
+Host tests/build/vet, repeated wedge/parser/mapping tests, 23 CLI checks,
+and both device builds passed. Loading the wedge through the CRT parser
+also passed a virtual-drive load test. The CRT diagnostic fixture's ROMH
+payload equals `rom.DiagCart`; CRT and existing headless diagnostic startup
+reach the same 100000-cycle checkpoint. Badge firmware is byte-identical;
+Tufty is not (text +408 bytes, BSS +28 bytes). No CRT candidate was flashed.
+At 00:35:34 UTC GitHub reported PR #39 closed without merging.
+
+All review-owned detached worktrees were removed. Tested StepCycle,
+bank-out and corrected CRT patches were preserved as session artifacts;
+they are not source backports on this branch.
 
 ## Performance investigation: frame-time gap vs main's ~70ms target
 
