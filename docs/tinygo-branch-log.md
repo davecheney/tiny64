@@ -42,6 +42,74 @@ cycle-accurate VIC-II/6502-opcode push (the commits below).
 | `c19872c` | Fix VIC-II right-edge raster seam | **skip** | Isolated cherry-pick conflicts in `6569.go` and its test; the raster path is part of the rejected graphics-mode/sprite implementation. |
 | `e5c0950` | Use fs.FS for D64 loader | **picked (full)** | Refactors D64 filesystem loader to use standard library `io/fs.FS`. Applied cleanly; `go test ./...` and device builds passed. |
 | `a0c5bbe` | 6510: implement missing illegal opcodes ANC and LAX family | **picked (full)** | Implements ANC (0x0B/0x2B) and full LAX family (0xA3/0xA7/0xAF/0xB3/0xB7/0xBF) in 6510 CPU core. Applied cleanly; on-device measurement on Tufty 2040 at `-opt=2 -scheduler=none` confirmed no frame-time regression (steady `emulate≈74.67ms/frame` across 10 50-frame windows, matching baseline). |
+| `31e8125` | Improve VIC-II border trick timing | **skip** | Requires the rejected graphics-mode path: `advanceGraphicsData`, `paintGraphicsPixel`, and `vic_modes_test.go`. Adds deferred right-border pixel storage and repainting. Patch applicability check fails in `6569.go`, `vic_border_test.go`, and the absent modes test file; not a standalone correction to this branch's renderer. |
+| `d3168e1` | Fix VIC-II wrapped sprites and multicolor scroll | **skip** | Changes sprite positioning and multicolor reload timing in the skipped graphics/sprite implementation, plus the right-border state introduced by `31e8125`. Patch check fails; both associated test files are absent. |
+| `eb78866` | Test wrapped left-border sprite block | **skip** | Test-only extension of `d3168e1`; `vic_sprites_test.go` and the sprite renderer it exercises are absent. |
+| `e864ea1` | Fix same-line VIC raster IRQ triggers | **skip** | Requires `rasterCompare`, `interruptStatus`, `IRQ`, and `checkRasterIRQ` from rejected `e9f8ccc`. This branch does not generate VIC raster IRQs. Patch check fails in the implementation and tests. |
+| `d8ec797` | Stabilize raster IRQ timing | **skip** | Both the line-zero VIC comparison change and its CPU test require the skipped raster IRQ implementation. The CPU hunk assumes per-cycle IRQ sampling from skipped `3ede1ec`; this branch samples CIA1 at instruction boundaries. Changing its delay constant alone would not implement the same behavior. Patch check fails. |
+| `1c72cf1` | Match raster IRQ recognition timing | **skip** | Revises `d8ec797`'s delay again and uses `VICII.IRQ` in the new CPU test. Neither that test's base nor the per-cycle combined VIC/CIA IRQ sampling exists here. Patch check fails; do not transplant the constant into the different CIA-only path. |
+| `6ea675f` | Sample border color writes during Phi2 | **skip** | Repaints the deferred right-border buffer introduced by skipped `31e8125`; that buffer and its edge constants do not exist here. Implementation and test patch checks fail. |
+| `0887b36` | desktop: allow the window to be resized | **skip** | Applies cleanly and the isolated desktop build passes with this branch's Ebitengine 2.9.11. `tinygo list -deps` confirms neither device imports Ebitengine or the desktop package. Like `f482449`, this is a desktop-only change rather than a device improvement; no GUI behavior claim was made. |
+| `c0ef07e` | pla: map an 8K cartridge's ROML image at $8000-$9FFF | **deferred** | Device-relevant prerequisite for the cartridge wedge, but adds a condition to CPU memory reads. Tested with the complete cartridge series below, which failed the no-regression gate. Not measured independently. Its test-file conflict must omit the unrelated CIA2 video-bank test from rejected `e9f8ccc`, while retaining both new CPU ROML tests. |
+| `be1a4e1` | doswedge: give the assembler an origin, drop patchWord | **skip** | Applies cleanly; included in the tested cartridge series. Preparatory assembler refactor, with no independent device feature needed while the RAM-resident wedge is retained. No standalone firmware timing or image-equivalence measurement was made in this review. |
+| `7093968` | doswedge: deliver the wedge as an 8K autostart cartridge | **rejected as tested** | Host tests and both device builds pass after preserving this branch's removed-drive state, but the complete cartridge series costs an additional 0.08998ms/frame (0.1204%) in the Tufty A/B/A below. The series, not any individual hunk, is the measured unit. Keep the RAM wedge and its existing API/SYS address. |
+| `0882c98` | doswedge: test the cartridge boot path | **skip** | All new cartridge tests pass in the isolated series, including ROM signature, boot vector, free-memory report, workspace, and RESTORE checks. They assert the rejected cartridge behavior, not this branch's retained RAM wedge. |
+| `90081d2` | doc: describe the wedge as the cartridge it now is | **skip** | README changes and the CLI cartridge-exclusivity guard belong with `7093968`. Tested as part of that series, but taking them alone would document the wrong SYS address and memory layout and forbid combinations the RAM wedge does not consume a cartridge slot for. |
+
+## Review and Tufty A/B/A: 2026-09-15
+
+Reviewed the 13 commits after the previous checkpoint, `a0c5bbe`, through
+`origin/main` at `90081d26b3035f92d13741b70e37c99dde064fd7`, confirmed by
+`git fetch origin` at 00:09:40 UTC. The earlier 17 logged decisions remain
+unchanged; the table now accounts for all 30 mainline commits since
+`78e8f0e`. The baseline was `tinygo` at
+`b6dab7f17eab7bb7f03caecbd4c568ed9779bf19`.
+
+The cartridge trial was isolated from `tinygo`: apply `c0ef07e`, `be1a4e1`,
+`7093968`, `0882c98`, and `90081d2`, in that order. Besides the PLA test
+conflict described above, resolve `7093968` by removing `resetDOSWedge`
+and the obsolete wedge-state snapshot without restoring `ResetDrive`,
+the real-drive fields, or `driveResetDisk`. Retain the virtual-drive
+snapshot and restore. No VIC accuracy changes were included.
+
+Both baseline and cartridge trial passed `go test ./...`, `go build ./...`,
+and `go vet ./...` with Go 1.27.1. The trial additionally passed
+`go test -count=3 -run 'Test(DOSWedge|PLALoad)' .`. TinyGo 0.42.0 / LLVM
+22.1.4 built both variants using:
+
+```sh
+tinygo build -target=tufty2040 -opt=2 -scheduler=none -o tufty.uf2 ./cmd/tufty2040
+tinygo build -target=gopher-badge -opt=2 -scheduler=cores -o badge.uf2 ./cmd/gopher-badge64
+```
+
+The connected Tufty initially appeared as the `RPI-RP2` bootloader volume.
+After flashing it enumerated as `/dev/cu.usbmodem112201`. Each run used
+`tinygo flash -target=tufty2040 -opt=2 -scheduler=none ./cmd/tufty2040`
+(with `-port=/dev/cu.usbmodem112201` once serial was available). Measurements
+used the existing MAZE demo and `emulate=` telemetry at 115200 baud, without
+firmware instrumentation changes. Each result below is the mean of ten
+50-frame windows ending at frames 500, 550, ..., 950, excluding boot and
+program-loading windows.
+
+| run | mean ms/frame | minimum window mean | maximum window mean |
+|---|---:|---:|---:|
+| baseline A | 74.707578 | 74.677880 | 74.736700 |
+| cartridge B | 74.797776 | 74.769880 | 74.832160 |
+| restored baseline A | 74.708014 | 74.677260 | 74.740320 |
+
+The two baseline means differ by only 0.000436ms. Relative to their mean
+(74.707796ms), the cartridge trial is 0.089980ms/frame slower (0.1204%);
+its window range does not overlap either baseline's. This is a small
+regression, not a large performance problem, but it does not pass this
+branch's strict no-regression rule. It does not establish which part of
+the series causes the difference, and no Gopher Badge timing was measured.
+The baseline firmware was restored and its serial timing re-measured as
+the final A run. No source backports from this review were retained.
+
+The XIP telemetry becomes invalid near frame 650 (over 100%, followed by
+0/0 access deltas) in all three runs. Those samples were not used to infer
+cache behavior or explain the timing difference; `emulate=` is measured
+separately. This review did not change the telemetry implementation.
 
 ## Performance investigation: frame-time gap vs main's ~70ms target
 
