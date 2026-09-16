@@ -1,0 +1,12 @@
+{
+  "version": 1,
+  "program": {
+    "file": "self-portrait-electric.prg",
+    "sha256": "6f4c2d420ac09cee66a8b81350cc2abf98d50b0d6aa18e091854703966fd8302"
+  },
+  "crop": false,
+  "checkpoints": [
+    {"frame": 159, "png": "frame-000159.png"},
+    {"frame": 160, "png": "frame-000160.png"}
+  ]
+}
