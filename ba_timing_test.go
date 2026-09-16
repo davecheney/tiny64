@@ -146,7 +146,6 @@ func TestCPUWriteSequencesDuringBAWarning(t *testing.T) {
 				}
 			}
 			before := cpu
-			vic.AEC = false
 			for n := 0; n < 4; n++ {
 				cpu.TickPhi2()
 			}
@@ -157,50 +156,71 @@ func TestCPUWriteSequencesDuringBAWarning(t *testing.T) {
 	}
 }
 
-func TestAECOwnershipDoesNotActAsRDY(t *testing.T) {
-	newMachine(t)
-	savedBus := bus
-	t.Cleanup(func() { bus = savedBus })
-	cpu.PortDDR, cpu.Port = 0xFF, 7
-	cpu.A, cpu.Opcode, cpu.TState = 0x42, 0x8D, 3
-	vic.BA, vic.AEC = false, false
-	for _, addr := range []uint16{0x0400, 0xD020, 0xDC0D} {
-		cpu.Operand, cpu.TState = addr, 3
-		beforeBus, beforeRAM := bus, ram
-		border, mask := vic.borderColor, cia1.imr
-		cpu.TickPhi2()
-		if cpu.TState != 0 {
-			t.Fatal("AEC incorrectly stalled a CPU write")
-		}
-		if bus != beforeBus || ram != beforeRAM || vic.borderColor != border || cia1.imr != mask {
-			t.Fatalf("disconnected CPU wrote external address %04X", addr)
-		}
-	}
-	cpu.store(0, 0xA5)
-	cpu.store(1, 0x5A)
-	if cpu.PortDDR != 0xA5 || cpu.Port != 0x5A {
-		t.Fatal("AEC disabled the internal CPU port")
-	}
-	cpu.PortDDR, cpu.Port = 0xFF, 7
-	cia1.icr = 1
-	bus.Data = 0xEA
-	if got := cpu.load(0xDC0D); got != 0xEA || cia1.icr != 1 {
-		t.Fatal("disconnected CPU read had an I/O side effect")
-	}
-}
+// TestCPUIsOffTheBusBeforeAECDrops states the invariant that lets load and
+// store ignore AEC entirely, on the emulator's hottest path.
+//
+// BA drives RDY, which halts the CPU on a read but lets an in-flight write
+// finish, so while BA is low the CPU advances only as long as it has writes
+// to retire. The VIC gives three cycles of warning before AEC drops. The
+// longest run of consecutive writes any opcode can present is also three -
+// BRK's three pushes - so the CPU is always parked on a held read by the
+// time AEC goes low, and never performs a bus access while disconnected.
+//
+// The margin is exactly zero, in both directions. Widening a write run or
+// shortening the warning would let a disconnected CPU read RAM it cannot
+// see and write to addresses it cannot reach, and nothing else in the tree
+// would notice. This is the test that would.
+func TestCPUIsOffTheBusBeforeAECDrops(t *testing.T) {
+	savedRAM, savedBus, savedCPU, savedVIC := ram, bus, cpu, vic
+	t.Cleanup(func() { ram, bus, cpu, vic = savedRAM, savedBus, savedCPU, savedVIC })
 
-func TestCPUResetWhileBusDisconnected(t *testing.T) {
-	newMachine(t)
-	savedBus := bus
-	t.Cleanup(func() { bus = savedBus })
-	cpu.PortDDR, cpu.Port = 0xFF, 0
-	ram[0xFFFC], ram[0xFFFD] = 0x34, 0x12
-	vic.BA, vic.AEC = false, false
-	cpu.Reset()
-	if cpu.PC != 0x1234 || cpu.TState != 0 {
-		t.Fatalf("synchronous reset sampled disconnected bus: PC=%04X T=%d", cpu.PC, cpu.TState)
+	// Derive the runs from the microcode rather than from cpuWritesThisCycle,
+	// so that adding a longer-writing instruction is caught even if the
+	// decoder is faithfully updated to describe it.
+	operands := [][4]uint8{
+		{0x10, 0x30, 0x00, 0x00},
+		{0x10, 0x30, 0x01, 0x01},
+		{0xF0, 0x30, 0x04, 0x04},
+		{0x20, 0x31, 0x10, 0x10},
 	}
-	if vic.BA || vic.AEC {
-		t.Fatal("CPU-only reset altered VIC signals")
+	longest, longestOp := 0, 0
+	for op := 0; op < 256; op++ {
+		for _, v := range operands {
+			mask, ok := deriveWriteMask(uint8(op), v[0], v[1], v[2], v[3])
+			if !ok {
+				continue
+			}
+			run := 0
+			for ts := 0; ts < 16; ts++ {
+				if mask>>ts&1 == 0 {
+					run = 0
+					continue
+				}
+				if run++; run > longest {
+					longest, longestOp = run, op
+				}
+			}
+		}
 	}
+
+	// And the warning: cycles AEC stays high after BA falls.
+	var v VICII
+	v.BA = true
+	v.phi0high()
+	v.BA = false
+	warning := 0
+	for i := 0; i < 16; i++ {
+		v.phi0high()
+		if !v.AEC {
+			break
+		}
+		warning++
+	}
+
+	if longest > warning {
+		t.Errorf("opcode $%02X writes for %d consecutive cycles but AEC only warns for %d; "+
+			"a disconnected CPU can now reach the bus, so load and store must test AEC again",
+			longestOp, longest, warning)
+	}
+	t.Logf("longest write run %d cycles (opcode $%02X), AEC warning %d cycles", longest, longestOp, warning)
 }

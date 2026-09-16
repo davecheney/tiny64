@@ -106,10 +106,8 @@ func (c *CPU) Reset() {
 	c.syncInterruptSources()
 	c.SP -= 3
 
-	// Reset is synchronous, not a stepped bus cycle; do not sample the
-	// previous cycle's AEC when initializing the reset vector.
-	lo := bus.Load(0xFFFC)
-	hi := bus.Load(0xFFFD)
+	lo := c.load(0xFFFC)
+	hi := c.load(0xFFFD)
 	c.PC = uint16(hi)<<8 | uint16(lo)
 }
 
@@ -131,10 +129,6 @@ func (c *CPU) load(addr uint16) uint8 {
 	case 0x0001:
 		return (c.Port & c.PortDDR) | ^c.PortDDR // input pins float high
 	default:
-		if !vic.AEC {
-			// Disconnected CPU inputs see the last modeled bus value.
-			return bus.Data
-		}
 		return bus.Load(addr)
 	}
 }
@@ -148,9 +142,7 @@ func (c *CPU) store(addr uint16, val uint8) {
 	case 0x0001:
 		c.Port = val
 	default:
-		if vic.AEC {
-			bus.Store(addr, val)
-		}
+		bus.Store(addr, val)
 	}
 }
 
@@ -223,8 +215,9 @@ func (c *CPU) TickPhi2() {
 	// spriteBASlotMask and the Bad Line c-access lead): the longest run of
 	// consecutive writes a 6502 can perform is three - the interrupt
 	// sequence's three pushes - so by the time AEC drops and the VIC owns
-	// the bus, the CPU is guaranteed to have stopped. AEC separately
-	// disconnects the external bus in load and store.
+	// the bus, the CPU is guaranteed to have stopped - which is why load
+	// and store need not consult AEC at all. See
+	// TestCPUIsOffTheBusBeforeAECDrops for that invariant stated as a test.
 	//
 	// Modelling this matters for cycle-exact code: stalling unconditionally
 	// halts the CPU up to three cycles early, and how early depends on
