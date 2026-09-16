@@ -12,8 +12,6 @@ placed second in the C64 graphics competition.
 - SHA-256: `04f264f0f9819e079670fba8b259ef789e889c56c57ff7c507e3b6d88b460fbe`
 - Transformations: none. The cached PRG is byte-identical to the upstream file.
 
-The author granted permission to redistribute this PRG and its snapshot golden
-in tiny64's test suite under the same terms as the other cached PRG fixtures.
 The copy here is a cache of the publicly released file, committed so the
 snapshot tests run offline instead of scraping CSDB on every run.
 

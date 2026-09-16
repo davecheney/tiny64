@@ -16,10 +16,8 @@ The slug follows the release title. CSDB publishes the file itself as
 `uncle-angus_mcfungus.prg`, spelling the name "Angus"; the upstream URL above
 keeps that spelling so it resolves.
 
-The author granted permission to redistribute this PRG and its snapshot golden
-in tiny64's test suite. The copy here is a cache of the publicly released file,
-committed so the snapshot tests run offline instead of scraping CSDB on every
-run.
+The copy here is a cache of the publicly released file, committed so the
+snapshot tests run offline instead of scraping CSDB on every run.
 
 The PRG contains a BASIC `SYS 2061` stub. Capture the committed reference from
 the repository root:
