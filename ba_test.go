@@ -234,3 +234,18 @@ func TestCPUStallsOnReadCyclesOnlyWhileBALow(t *testing.T) {
 			before, cpu.TState, beforePC, cpu.PC)
 	}
 }
+
+// TestCPUWriteCyclesMatchesDecoder checks the table TickPhi2 reads against
+// the decoder that built it, across every T-state and not merely the eight
+// a row has room for. A write past T7 would not fit, and would be dropped
+// in silence - unstalling a CPU that is in fact holding the bus.
+func TestCPUWriteCyclesMatchesDecoder(t *testing.T) {
+	for op := range 256 {
+		for ts := range 256 {
+			want := cpuWritesThisCycle(uint8(op), uint8(ts))
+			if got := ts < 8 && cpuWriteCycles[op]>>ts&1 != 0; got != want {
+				t.Errorf("opcode $%02X T%d: table=%v, decoder=%v", op, ts, got, want)
+			}
+		}
+	}
+}
