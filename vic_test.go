@@ -484,9 +484,10 @@ func TestVICCAccessReadsTheInvisibleTailOfTheMatrix(t *testing.T) {
 		{1016, 0x0CA5},
 	} {
 		vic.VC, vic.VMLI = tc.vc, 0
-		// The three cycles of BA warning that precede a real Bad Line's
-		// first c-access have already dropped AEC by the time it runs.
-		vic.AEC = false
+		// A real Bad Line spends three cycles warning the CPU off the bus
+		// before its first c-access, so by the time one runs the warning
+		// has expired. Calling cycleCAccess directly skips that, so say so.
+		vic.baLowCycles = baWarningCycles
 		vic.cycleCAccess()
 		if got := vic.videoMatrixColor[0]; got != tc.want {
 			t.Errorf("c-access at VC=%d read %#04x, want %#04x (colour nibble in the high byte)", tc.vc, got, tc.want)
