@@ -888,6 +888,14 @@ func (v *VICII) StepFrame() {
 // and g-access-commit logic only ever trigger on specific dots within a
 // cycle (see each function's comment), so the six interior dots' bodies are
 // smaller besides.
+//
+// The one-call-site rule constrains this function's shape too, not just the
+// dotclocks': phase 6 is reached from two of the three branches below, so
+// it has two functions - dotclock6 and the identical dotclock6Cropped -
+// one per branch. Calling a single dotclock6 from both sites was enough to
+// lose it every inlining decision: it was the only dotclock left as a real
+// function in the Gopher Badge binary, entered by a BL twice per bus cycle
+// while the other seven inlined into this one.
 func (v *VICII) stepCycle() {
 	// Two answers the whole cycle shares, established before any dot
 	// moves. Vertical blanking is a property of the raster line, not of
@@ -912,7 +920,7 @@ func (v *VICII) stepCycle() {
 		v.dotclock6(reload)
 	} else if v.lineVisible {
 		v.dot += 2
-		v.dotclock6(reload)
+		v.dotclock6Cropped(reload)
 	} else {
 		v.dot += 3
 	}
@@ -985,6 +993,10 @@ func StepFrame() {
 // in stepCycle's comment. Note the trap: the shared version is *smaller*
 // in flash precisely because it failed to inline, so code size is not
 // evidence that it is faster.
+//
+// The rule is not confined to these six. Phase 6 is reached from two of
+// stepCycle's branches, and so has two identical functions of its own for
+// exactly the same reason - see dotclock6Cropped.
 func (v *VICII) dotclock0(reload uint16) {
 	if v.dot == rightEdge40 {
 		// CPU writes at the boundary occur after its pixel was first
@@ -1094,7 +1106,63 @@ func (v *VICII) dotclock5(reload uint16) {
 
 // dotclock6 handles cycle phase 6. Its beam advance reaches phase 6
 // (8N+7), where the 38-column left border comparison occurs.
+//
+// This is stepCycle's drawable-line call site; dotclock6Cropped below is
+// the byte-for-byte identical copy for its visible-but-not-drawable one.
+// Two copies rather than one function called from both places, for the
+// reason dotclock0 spells out at length: while both branches called the
+// same dotclock6, it was the only one of the eight dotclocks that
+// survived as a real function in the Gopher Badge binary - two call sites
+// meant inlining it would have meant two copies, LLVM's cost threshold
+// refused both, and stepCycle paid a BL into it on every bus cycle of a
+// visible line. Giving each branch its own copy costs the same two copies
+// of the body, but as inlined code with the call, the prologue and the
+// spills around it gone.
 func (v *VICII) dotclock6(reload uint16) {
+	v.dot++
+	if v.dot == reload {
+		v.loadGraphicsData()
+	}
+
+	if v.dot == rightEdge38 && v.control2&csel == 0 {
+		v.rightBorderAt = rightEdge38
+	}
+	if v.dot == leftComp38 && v.control2&csel == 0 {
+		rsel := (v.control1 >> 3) & 1
+		if v.rasterLine == bottomComp[rsel] {
+			v.verticalBorder = true
+		}
+		if v.rasterLine == topComp[rsel] && v.control1&0x10 != 0 {
+			v.verticalBorder = false
+		}
+		if !v.verticalBorder {
+			v.mainBorder = false
+		}
+	}
+
+	if v.dot >= VisibleDotsPerLine {
+		return
+	}
+	if !v.lineDrawable || v.dot < renderFirstDot || v.dot >= renderDotAfter {
+		return
+	}
+
+	v.paintGraphicsPixel()
+}
+
+// dotclock6Cropped is dotclock6 for stepCycle's other call site: a raster
+// line inside the visible picture that the active pixel sink does not
+// store, which on the Gopher Badge is every visible line outside the
+// 320x240 crop. Phase 6 still has to run on those lines - it owns the
+// 38-column left border comparison, and the border flip-flops it moves
+// are carried into the lines that are drawn - so the branch cannot simply
+// skip the dot the way it skips phases 4 and 5.
+//
+// It is byte-for-byte identical to dotclock6, and deliberately so. Do not
+// deduplicate them: one function called from both branches is exactly the
+// shape that kept dotclock6 out of stepCycle's inlining, and dotclock0's
+// comment explains why in full.
+func (v *VICII) dotclock6Cropped(reload uint16) {
 	v.dot++
 	if v.dot == reload {
 		v.loadGraphicsData()
