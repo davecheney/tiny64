@@ -31,7 +31,7 @@ func newIRQTestCPU(t *testing.T, core string) irqTestCPU {
 	cia1, cia2 = CIA{}, CIA{}
 	via1, via2 = VIA{}, VIA{}
 	keyboard = Keyboard{}
-	vic = VICII{BA: true, AEC: true}
+	vic = VICII{BA: true}
 	cartridge = Cartridge{}
 	bus = Bus{}
 	ram = [65536]byte{}

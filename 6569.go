@@ -108,8 +108,7 @@ type VICII struct {
 
 	// Signals driven by the VIC-II and sensed by the CPU
 	BA          bool  // Bus Available, wired to CPU RDY (low holds reads, not writes)
-	AEC         bool  // Address Enable Control (true = CPU owns Phi2, false = VIC owns Phi2)
-	baLowCycles uint8 // Completed consecutive BA-low cycles, saturated at baWarningCycles.
+	baLowCycles uint8 // Consecutive BA-low cycles so far, this one included.
 
 	// badLine/allowBadLine/denLatch implement the Bad Line Condition
 	// (section 3.5): allowBadLine is latched from DEN once per frame during
@@ -198,7 +197,6 @@ func (v *VICII) Reset() {
 	v.dot = 0
 	v.rasterLine = 0
 	v.BA = true
-	v.AEC = true
 	// Raster line 0 is inside the upper border, which the border unit only
 	// leaves at the top comparison on line $33/$37. Both flip-flops
 	// therefore have to start set, or the first frame paints graphics over
@@ -1134,10 +1132,6 @@ func (v *VICII) dotclock7(reload uint16) {
 // directly here (each had exactly one call site, unconditional or nearly
 // so) to remove function-call overhead from the frame fast path.
 func (v *VICII) phi0low() {
-	// AEC is not driven here. The CPU's clock is low for all of Phi1, so
-	// the one thing that senses AEC cannot see a value set during it, and
-	// phi0high drives the pin afresh before the CPU is clocked.
-	//
 	// slot indexes the 8-dot bus cycles across a line. The article's cycle
 	// numbering starts 10 slots later (its cycle N is our slot N-11, mod
 	// 63), so the constants below are the article's rebased onto slot.
@@ -1202,7 +1196,18 @@ func (v *VICII) phi0low() {
 	if slot >= 47 && slot&1 == 1 {
 		v.latchSpriteShape(uint8((slot - 47) / 2))
 	}
-	v.BA = !(slot >= 1 && slot <= 43 && badLine) && !v.spriteDMAStall(slot)
+	ba := !(slot >= 1 && slot <= 43 && badLine) && !v.spriteDMAStall(slot)
+	v.BA = ba
+
+	// How far into that three cycle lead this cycle is, counted here
+	// because it is part of driving BA rather than something Phi2 works
+	// out again from a pin. It saturates one past the warning: nothing
+	// asks a finer question than whether the warning has expired.
+	if ba {
+		v.baLowCycles = 0
+	} else if v.baLowCycles <= baWarningCycles {
+		v.baLowCycles++
+	}
 
 	if slot >= 5 && slot <= 44 {
 		v.cycleGAccess()
@@ -1386,30 +1391,11 @@ func (v *VICII) cycleBorderComp() {
 // Line's c-access (article cycles 15-54) and hands the bus to the CPU for
 // Phi2.
 func (v *VICII) phi0high() {
-	// BA and AEC are outputs. The VIC drives them and the CPU senses them;
-	// nothing in here reads them back, because what the VIC knows about
-	// its own DMA is baLowCycles, the warning it is part way through
-	// giving. Even a late badline must give the CPU its three cycles.
-	//
-	// This is the only place AEC is driven during a cycle, and it runs
-	// immediately before the CPU is clocked, which is the only moment the
-	// pin is sensed.
-	v.AEC = v.baLowCycles < baWarningCycles || v.BA
-
 	// slot as in phi0low, but 4 dots later, so its offset from the
 	// article's cycle numbering differs by one.
 	slot := (v.dot - 1) / 8
 	if slot >= 4 && slot <= 43 && v.badLine {
 		v.cycleCAccess()
-	}
-
-	// Counted after the c-access, not before it, so that the access above
-	// and the AEC driven at the top describe the same cycle: the warning
-	// this one falls inside, rather than the next one's.
-	if v.BA {
-		v.baLowCycles = 0
-	} else if v.baLowCycles < baWarningCycles {
-		v.baLowCycles++
 	}
 }
 
@@ -1419,10 +1405,21 @@ func (v *VICII) phi0high() {
 // perform, which is not a coincidence - see TestCPUIsOffTheBusBeforeAECDrops.
 const baWarningCycles = 3
 
+// AEC reports the Address Enable Control pin: true while the CPU still
+// reaches the bus, false once the VIC has taken it. It is derived rather
+// than stored because it is not independent state - it is the far end of
+// the warning baLowCycles is counting - and a stored copy would only be
+// another thing to keep in step. Nothing inside the machine senses it: the
+// CPU is held by BA, three cycles earlier (see CPU.TickPhi2). It is here
+// for front ends that want to show who owns the bus.
+func (v *VICII) AEC() bool {
+	return v.baLowCycles <= baWarningCycles
+}
+
 // cycleCAccess reads one character pointer + color entry from the video
 // matrix into the current row's buffer, during a Bad Line (section 3.7.2).
 func (v *VICII) cycleCAccess() {
-	if v.baLowCycles < baWarningCycles {
+	if v.baLowCycles <= baWarningCycles {
 		// Late DMA. The CPU keeps the bus for the three cycles of warning
 		// BA gives it to retire its writes, so a c-access landing inside
 		// that window finds the VIC's D0-D7 still disconnected and cannot

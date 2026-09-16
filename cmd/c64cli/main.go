@@ -147,7 +147,7 @@ func main() {
 		if held {
 			stalled++
 		}
-		access := !held && vic.AEC
+		access := !held && vic.AEC()
 
 		// Print a checkpoint whenever the CPU starts executing a known
 		// KERNAL routine, regardless of -trace, to track boot progress.

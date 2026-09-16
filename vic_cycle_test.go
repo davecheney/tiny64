@@ -27,7 +27,7 @@ func TestVICStepCycleStalledReadClocksCIAs(t *testing.T) {
 	// progress on any of them.
 	for n := uint16(1); n <= 3; n++ {
 		vic.StepCycle()
-		if vic.BA || !vic.AEC {
+		if vic.BA || !vic.AEC() {
 			t.Fatalf("cycle %d: expected BA warning with AEC still high", n)
 		}
 		if cpu.PC != 0x0200 || cpu.TState != 0 {
