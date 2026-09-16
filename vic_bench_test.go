@@ -58,7 +58,6 @@ func loadTestProgram() {
 	// KERNAL, BASIC and I/O are all visible.
 	cpu.Port, cpu.PortDDR = 0, 0
 
-
 	ram := Ram()
 	for i := range ram {
 		ram[i] = 0

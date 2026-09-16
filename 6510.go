@@ -186,10 +186,10 @@ func (c *CPU) tickPhi2Clock() uint8 {
 	//   - it runs *before* the NMI edge detect below, so an edge latched
 	//     on this very cycle arms a full 2 and is first recognized on the
 	//     third TickPhi2, not the second;
-	//   - it runs *before* the RDY/AEC early return, so cycles the CPU
-	//     spends stalled still count toward the delay. Phi2 keeps running
-	//     when the VIC-II owns the bus, and so do the NMI synchronizing
-	//     flip-flops.
+	//   - it sits in the half of the cycle that TickPhi2Held shares, so
+	//     cycles the CPU spends held off the bus still count toward the
+	//     delay. Phi2 keeps running when the VIC-II is fetching, and so
+	//     do the NMI synchronizing flip-flops.
 	//
 	// Moving it below either of those is a one-cycle timing bug that no
 	// compiler and no type checker will catch.

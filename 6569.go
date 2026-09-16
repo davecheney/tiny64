@@ -839,6 +839,14 @@ func (v *VICII) stepCycle() {
 	v.dotclock7(reload)
 	v.phi0high()
 
+	// Only the machine's own VIC-II drives Phi2 out to the rest of the
+	// chips. A free-standing VICII is a video model on its own, stepped by
+	// tests that care about beam geometry, and must not clock the global
+	// CPU, CIAs and IEC devices from its own unrelated bus schedule.
+	if v != &vic {
+		return
+	}
+
 	// The CPU runs first, since the VIC has just handed it the bus. On the
 	// cycles the VIC takes the bus back for a fetch of its own, a CPU read
 	// is held instead: a write already has the bus and completes anyway.
