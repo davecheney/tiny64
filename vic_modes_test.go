@@ -154,8 +154,10 @@ func TestVICXScrollDelaysGraphicsReload(t *testing.T) {
 	// that advances the beam onto dot 51.
 	v.dot = 50
 	v.dotclock2(51)
-	if v.gdSequencer != 0xFF || v.videoBuffer != 0x0100 {
-		t.Fatalf("sequencer=%#02x buffer=%#04x at dot %d, want pending graphics data",
+	// The sequencer holds two bits per dot, so the pending $FF is 0x5555
+	// once widened - see expandGraphicsData.
+	if v.gdSequencer != 0x5555 || v.videoBuffer != 0x0100 {
+		t.Fatalf("sequencer=%#04x buffer=%#04x at dot %d, want pending graphics data",
 			v.gdSequencer, v.videoBuffer, v.dot)
 	}
 }
@@ -181,8 +183,11 @@ func TestVICMulticolorXScrollSevenReloadsAtPairBoundary(t *testing.T) {
 	// dotclock7 is the phase that advances the beam onto dot 56.
 	v.dot = 55
 	v.dotclock7(56)
-	if v.gdSequencer != 0xFF || v.videoBuffer != 0x0100 {
-		t.Fatalf("sequencer=%#02x buffer=%#04x at dot %d, want pending graphics data",
+	// $FF widened two bits to the dot. This character is not multicolor
+	// itself - bit 11 of the video buffer is clear - so it widens as a
+	// standard one even though MCM is set.
+	if v.gdSequencer != 0x5555 || v.videoBuffer != 0x0100 {
+		t.Fatalf("sequencer=%#04x buffer=%#04x at dot %d, want pending graphics data",
 			v.gdSequencer, v.videoBuffer, v.dot)
 	}
 
@@ -195,7 +200,7 @@ func TestVICMulticolorXScrollSevenReloadsAtPairBoundary(t *testing.T) {
 	}
 	v.dot = 54
 	v.dotclock6(55)
-	if v.gdSequencer != 0xA5 {
+	if v.gdSequencer != 0x4411 { // $A5 widened two bits to the dot
 		t.Fatal("standard-resolution XSCROLL=7 did not reload at dot 55")
 	}
 }
@@ -210,8 +215,8 @@ func TestVICXScrollWriteReloadsAtCurrentDot(t *testing.T) {
 
 	v.WriteRegister(0xD016, 0)
 
-	if v.gdSequencer != 0xA5 || v.videoBuffer != 0x0D06 {
-		t.Fatalf("sequencer=%#02x buffer=%#04x after same-dot XSCROLL write, want pending graphics data",
+	if v.gdSequencer != 0x4411 || v.videoBuffer != 0x0D06 { // $A5 widened
+		t.Fatalf("sequencer=%#04x buffer=%#04x after same-dot XSCROLL write, want pending graphics data",
 			v.gdSequencer, v.videoBuffer)
 	}
 }
@@ -520,6 +525,52 @@ func TestGraphicsPaletteMatchesPerDotDecode(t *testing.T) {
 						t.Fatalf("mode %d multicolor=%v data=%#04x index %d: palette says colour %#02x foreground=%v, per-dot decode says %#02x foreground=%v",
 							mode, multicolor, data, index, gotColor, gotForeground, wantColor, wantForeground)
 					}
+				}
+			}
+		}
+	}
+}
+
+// TestGraphicsDataExpansionMatchesPerDotShift holds expandGraphicsData
+// to the shifting nextGraphicsColor used to perform per dot, across every
+// g-access byte and both pixel widths.
+//
+// The mode test moved out of the dot path and into the reload, which is
+// only sound if the widened register shifts out the same sequence of
+// palette indices the 8-bit one did - including past the eighth dot,
+// where the register has emptied and every further dot has to read as
+// index 0. Ten dots, so two of them land there.
+func TestGraphicsDataExpansionMatchesPerDotShift(t *testing.T) {
+	// perDotShift is what nextGraphicsColor did for one dot, before the
+	// pixel width was baked into the register.
+	perDotShift := func(seq *uint8, half *bool, multicolor bool) uint8 {
+		if !multicolor {
+			index := *seq >> 7
+			*seq <<= 1
+			return index
+		}
+		index := *seq >> 6
+		if *half {
+			*seq <<= 2
+		}
+		*half = !*half
+		return index
+	}
+
+	v := &VICII{}
+	for _, multicolor := range []bool{false, true} {
+		for data := 0; data < 1<<8; data++ {
+			seq, half := uint8(data), false
+			v.gdSequencer = expandGraphicsData(uint8(data), multicolor)
+			for dot := range 10 {
+				want := perDotShift(&seq, &half, multicolor)
+				// gdColor is the identity here, so the colour the
+				// sequencer reports is the index it shifted out.
+				v.gdColor = [4]uint8{0, 1, 2, 3}
+				got, _ := v.nextGraphicsColor()
+				if got != want {
+					t.Fatalf("data=%#02x multicolor=%v dot %d: widened register shifts out index %d, per-dot shift gives %d",
+						data, multicolor, dot, got, want)
 				}
 			}
 		}

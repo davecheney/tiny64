@@ -88,10 +88,12 @@ type VICII struct {
 	rightBorderAt   uint16
 	rightBorderOpen bool
 	rightBorder     [VisibleDotsPerLine - rightEdge38]uint8
-	gdSequencer     uint8
-	graphicsMode    uint8
-	multicolor      bool
-	multicolorHalf  bool
+	// gdSequencer is the graphics data shift register, held two bits per
+	// dot rather than as the hardware's eight bits so that both pixel
+	// widths shift out under one rule - see expandGraphicsData.
+	gdSequencer  uint16
+	graphicsMode uint8
+	multicolor   bool
 
 	// gdColor holds the colours the sequencer can emit for each value it
 	// shifts out - two of them in the standard modes, four in the
@@ -208,7 +210,6 @@ func (v *VICII) Reset() {
 	v.gdSequencer = 0
 	v.graphicsMode = modeStandardText
 	v.multicolor = false
-	v.multicolorHalf = false
 	v.videoBuffer = 0
 	v.gdPending = 0
 	v.videoBufferPending = 0
@@ -432,13 +433,47 @@ func graphicsReloadPhase(control2 uint8) uint16 {
 }
 
 func (v *VICII) loadGraphicsData() {
-	v.gdSequencer = v.gdPending
 	v.videoBuffer = v.videoBufferPending
 	v.graphicsMode = v.selectedGraphicsMode()
 	v.multicolor = v.graphicsMode == modeMulticolorBitmap ||
 		(v.graphicsMode == modeMulticolorText && v.videoBuffer&0x0800 != 0)
-	v.multicolorHalf = false
+	v.gdSequencer = expandGraphicsData(v.gdPending, v.multicolor)
 	v.refreshGraphicsPalette()
+}
+
+// expandGraphicsData widens a g-access byte into the form the dot path
+// shifts out: two bits per dot, leftmost dot in the high bits.
+//
+// The standard modes shift out eight one-bit pixels and the multicolor
+// ones four two-bit pixels, each two dots wide - but both cover the same
+// eight dots and both index the same gdColor/gdForeground palette, so the
+// only thing that differed was how the bits were taken. That is what made
+// nextGraphicsColor test v.multicolor on every one of the up to 115,020
+// dots a frame, an answer that can only change when the sequencer
+// reloads: v.multicolor is written nowhere else, and loadGraphicsData
+// runs at most once per bus cycle (see reloadDot).
+//
+// So the mode is asked here instead, and baked into the encoding. A
+// standard pixel becomes the two-bit value 0 or 1; a multicolor pair is
+// stored twice, once for each of its dots. Both then shift out under one
+// uniform rule, and the dot path keeps no pixel-width state of its own -
+// the multicolorHalf parity flag it used to read-modify-write per painted
+// dot is subsumed by the duplication.
+//
+// Eight dots consume all 16 bits either way, after which the register is
+// zero and shifts out index 0, exactly as the 8-bit register did.
+func expandGraphicsData(data uint8, multicolor bool) uint16 {
+	x := uint16(data)
+	x = (x | x<<4) & 0x0F0F // ----7654----3210
+	x = (x | x<<2) & 0x3333 // --76--54--32--10
+	if multicolor {
+		// Each pair now sits in its own nibble. Copy it up into the
+		// other half of that nibble, so the pixel's two dots each shift
+		// out the same value.
+		return x | x<<2
+	}
+	x = (x | x<<1) & 0x5555 // -7-6-5-4-3-2-1-0
+	return x
 }
 
 // noReloadDot is a dot no cycle can advance onto, marking a cycle in
@@ -542,22 +577,12 @@ func (v *VICII) refreshGraphicsPalette() {
 
 // nextGraphicsColor shifts one pixel out of the graphics sequencer and
 // reports its colour and whether it is foreground. The shift is the only
-// part of this that is genuinely per dot; the colour it lands on was
-// decided for the whole cycle by refreshGraphicsPalette.
+// part of this that is genuinely per dot: the colour it lands on was
+// decided for the whole cycle by refreshGraphicsPalette, and the pixel
+// width by expandGraphicsData when the sequencer last reloaded.
 func (v *VICII) nextGraphicsColor() (byte, bool) {
-	var index uint8
-	if !v.multicolor {
-		index = v.gdSequencer >> 7
-		v.gdSequencer <<= 1
-	} else {
-		// A multicolor pixel is two dots wide, so the pair is only
-		// shifted out on the second of them.
-		index = v.gdSequencer >> 6
-		if v.multicolorHalf {
-			v.gdSequencer <<= 2
-		}
-		v.multicolorHalf = !v.multicolorHalf
-	}
+	index := uint8(v.gdSequencer >> 14)
+	v.gdSequencer <<= 2
 	return v.gdColor[index], v.gdForeground&(1<<index) != 0
 }
 
