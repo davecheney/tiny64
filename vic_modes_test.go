@@ -95,6 +95,7 @@ func TestVICReloadDotMatchesPerDotRule(t *testing.T) {
 	for start := uint16(0); start < DotsPerLine; start++ {
 		for control := 0; control < 256; control++ {
 			v := VICII{dot: start, control2: uint8(control)}
+			v.refreshGraphicsReloadPhase()
 			// Preserve the old per-dot rule independently of graphicsReloadPhase.
 			phase := uint16(control & 7)
 			if control&0x10 != 0 && phase == 7 {
@@ -135,12 +136,14 @@ func TestVICXScrollDelaysGraphicsReload(t *testing.T) {
 	// onto the dot in question, so dot 41-48's cycle begins at dot 40.
 	unscrolled := &VICII{}
 	unscrolled.dot = 40
+	unscrolled.refreshGraphicsReloadPhase()
 	if got := unscrolled.reloadDot(); got != 48 {
 		t.Fatalf("unscrolled reload dot = %d, want the cell boundary at 48", got)
 	}
 
 	// XSCROLL=3 moves the reload three dots into the cell, to 51.
 	v := &VICII{control2: 3, gdPending: 0xFF, videoBufferPending: 0x0100}
+	v.refreshGraphicsReloadPhase()
 	v.dot = 40
 	if got := v.reloadDot(); got == 48 {
 		t.Fatal("sequencer reloaded on the cell boundary with XSCROLL=3")
@@ -171,6 +174,7 @@ func TestVICMulticolorXScrollSevenReloadsAtPairBoundary(t *testing.T) {
 		gdPending:          0xFF,
 		videoBufferPending: 0x0100,
 	}
+	v.refreshGraphicsReloadPhase()
 	v.dot = 47
 	if got := v.reloadDot(); got == 55 {
 		t.Fatal("sequencer reloaded at dot 55 in multicolor mode with XSCROLL=7")
@@ -194,6 +198,7 @@ func TestVICMulticolorXScrollSevenReloadsAtPairBoundary(t *testing.T) {
 	// At standard resolution the same XSCROLL reloads at 55, one dot
 	// earlier, because there is no pair to finish.
 	v = &VICII{control2: 7, gdPending: 0xA5}
+	v.refreshGraphicsReloadPhase()
 	v.dot = 48
 	if got := v.reloadDot(); got != 55 {
 		t.Fatalf("standard-resolution XSCROLL=7 reload dot = %d, want 55", got)
@@ -657,6 +662,45 @@ func TestGraphicsPaletteStaysConsistentAcrossAFrame(t *testing.T) {
 			t.Fatalf("cycle %d (raster %d dot %d, mode %d multicolor=%v): palette held %v/%#02x, rebuilding from the same state gives %v/%#02x - something changed an input without rebuilding",
 				cycle, vic.rasterLine, vic.dot, vic.graphicsMode, vic.multicolor,
 				cached, cachedForeground, vic.gdColor, vic.gdForeground)
+		}
+	}
+}
+
+// TestGraphicsReloadPhaseStaysConsistentAcrossAFrame is the guard on the
+// reload phase's invalidation rule, and the sibling of the palette test
+// above. reloadDot no longer derives the sequencer's take-up phase from
+// $D016 per cycle; it reads gdReloadPhase, which only WriteRegister's
+// $D016 case and Reset maintain. A future writer of control2 that forgets
+// to refresh it would leave the sequencer reloading on the phase the
+// previous XSCROLL selected - a whole character cell's pixels landing up
+// to seven dots out, somewhere down the frame, with nothing failing.
+//
+// So drive a full frame of a live display while a program walks values
+// through $D016, and after every bus cycle check the cached phase still
+// equals one derived from control2 as it stands.
+func TestGraphicsReloadPhaseStaysConsistentAcrossAFrame(t *testing.T) {
+	saveMachine(t)
+	Reset()
+	loadSpriteProgram()
+
+	// INC/LDA/STA walks every value - and so every XSCROLL, and both
+	// states of MCM and CSEL - through $D016 over the course of the frame,
+	// so the phase genuinely moves under the sweep rather than sitting at
+	// whatever loadSpriteProgram left.
+	copy(Ram()[0x0800:], []byte{
+		0xE6, 0x20, // INC $20
+		0xA5, 0x20, // LDA $20
+		0x8D, 0x16, 0xD0, // STA $D016
+		0x4C, 0x00, 0x08, // JMP $0800
+	})
+	cpu.PC = 0x0800
+
+	for cycle := range CyclesPerFrame {
+		vic.StepCycle()
+
+		if want := graphicsReloadPhase(vic.control2); vic.gdReloadPhase != want {
+			t.Fatalf("cycle %d (raster %d dot %d): cached reload phase %d, but $D016=%#02x says %d - something changed control2 without refreshing it",
+				cycle, vic.rasterLine, vic.dot, vic.gdReloadPhase, vic.control2, want)
 		}
 	}
 }
