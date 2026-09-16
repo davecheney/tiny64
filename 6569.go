@@ -109,7 +109,7 @@ type VICII struct {
 	// Signals driven by the VIC-II and sensed by the CPU
 	BA          bool  // Bus Available, wired to CPU RDY (low holds reads, not writes)
 	AEC         bool  // Address Enable Control (true = CPU owns Phi2, false = VIC owns Phi2)
-	baLowCycles uint8 // Completed consecutive BA-low cycles, saturated at three.
+	baLowCycles uint8 // Completed consecutive BA-low cycles, saturated at baWarningCycles.
 
 	// badLine/allowBadLine/denLatch implement the Bad Line Condition
 	// (section 3.5): allowBadLine is latched from DEN once per frame during
@@ -1383,27 +1383,46 @@ func (v *VICII) cycleBorderComp() {
 // Line's c-access (article cycles 15-54) and hands the bus to the CPU for
 // Phi2.
 func (v *VICII) phi0high() {
-	// Even a late badline must give the CPU three cycles' warning.
-	v.AEC = v.baLowCycles < 3 || v.BA
-	if v.BA {
-		v.baLowCycles = 0
-	} else if v.baLowCycles < 3 {
-		v.baLowCycles++
-	}
+	// BA and AEC are outputs. The VIC drives them and the CPU senses them;
+	// nothing in here reads them back, because what the VIC knows about
+	// its own DMA is baLowCycles, the warning it is part way through
+	// giving. Even a late badline must give the CPU its three cycles.
+	v.AEC = v.baLowCycles < baWarningCycles || v.BA
+
 	// slot as in phi0low, but 4 dots later, so its offset from the
 	// article's cycle numbering differs by one.
 	slot := (v.dot - 1) / 8
 	if slot >= 4 && slot <= 43 && v.badLine {
 		v.cycleCAccess()
 	}
+
+	// Counted after the c-access, not before it, so that the access above
+	// and the AEC driven at the top describe the same cycle: the warning
+	// this one falls inside, rather than the next one's.
+	if v.BA {
+		v.baLowCycles = 0
+	} else if v.baLowCycles < baWarningCycles {
+		v.baLowCycles++
+	}
 }
+
+// baWarningCycles is how long BA stays low before AEC follows it: the
+// lead time the VIC gives the CPU to retire in-flight writes before taking
+// the bus. Three is the longest run of consecutive writes a 6502 can
+// perform, which is not a coincidence - see TestCPUIsOffTheBusBeforeAECDrops.
+const baWarningCycles = 3
 
 // cycleCAccess reads one character pointer + color entry from the video
 // matrix into the current row's buffer, during a Bad Line (section 3.7.2).
 func (v *VICII) cycleCAccess() {
-	if v.AEC {
-		// Late DMA: VIC D0-D7 are disconnected during the BA warning.
-		// CPU-bus-derived colour data is not modeled by this renderer.
+	if v.baLowCycles < baWarningCycles {
+		// Late DMA. The CPU keeps the bus for the three cycles of warning
+		// BA gives it to retire its writes, so a c-access landing inside
+		// that window finds the VIC's D0-D7 still disconnected and cannot
+		// see the video matrix. Only a badline started late enough gets
+		// here; a normal one begins its warning at slot 1 and reads from
+		// slot 4. CPU-bus-derived colour data is not modeled by this
+		// renderer.
 		v.videoMatrixColor[v.VMLI] = 0xFF
 		return
 	}
