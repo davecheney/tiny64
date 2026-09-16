@@ -70,6 +70,7 @@ func TestVICRegisterStorage(t *testing.T) {
 // incremented unconditionally every line regardless of state, counted up
 // to 7 and got stuck there, and VCBase/VC grew without bound).
 func TestVICStaysIdleWithoutDEN(t *testing.T) {
+	quietMachine(t)
 	v := &VICII{}
 	v.Reset()
 
@@ -96,6 +97,7 @@ func TestVICStaysIdleWithoutDEN(t *testing.T) {
 // to idle state once raster lines stop matching YSCROLL (i.e. past $F7,
 // where no further Bad Line Condition can occur).
 func TestVICBadLineEntersDisplayState(t *testing.T) {
+	quietMachine(t)
 	v := &VICII{}
 	v.Reset()
 	v.control1 = 0x13 // DEN=1, YSCROLL=3, RSEL=0
@@ -161,6 +163,7 @@ func TestVICBadLineEntersDisplayState(t *testing.T) {
 // early, leaving the 40th column's gdSequencer stale (displaying as blank)
 // and VC drifting out of sync with the video matrix every row.
 func TestVICGAccessCountPerRow(t *testing.T) {
+	quietMachine(t)
 	v := &VICII{}
 	v.Reset()
 	v.control1 = 0x1B // DEN=1, RSEL=1, YSCROLL=3
@@ -183,6 +186,7 @@ func TestVICGAccessCountPerRow(t *testing.T) {
 // and that VC stays within the 1000-entry video matrix range across a
 // full frame instead of drifting to unrelated pages of memory.
 func TestVICVideoMatrixAddress(t *testing.T) {
+	quietMachine(t)
 	v := &VICII{}
 	v.Reset()
 	v.control1 = 0x1B    // DEN=1, RSEL=1, YSCROLL=3 (KERNAL defaults)
@@ -196,6 +200,7 @@ func TestVICVideoMatrixAddress(t *testing.T) {
 			ram[page*256+i] = byte(page)
 		}
 	}
+	parkCPU() // the fill above wrote over the parked loop
 
 	maxVC := uint16(0)
 	for range CyclesPerFrame {
@@ -212,6 +217,7 @@ func TestVICVideoMatrixAddress(t *testing.T) {
 }
 
 func TestVICRasterIRQ(t *testing.T) {
+	quietMachine(t)
 	v := &VICII{}
 	v.Reset()
 
@@ -291,6 +297,7 @@ func TestVICRasterIRQTriggersWhenCompareIsWrittenOnCurrentLine(t *testing.T) {
 }
 
 func TestVICRasterLineZeroIRQTriggersInCycleTwo(t *testing.T) {
+	quietMachine(t)
 	v := &VICII{}
 	v.Reset()
 	v.rasterLine = RasterLinesPerFrame - 1

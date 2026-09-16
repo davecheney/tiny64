@@ -7,6 +7,7 @@ import (
 // TestVICSpriteSingleColorRendering verifies that a single-color sprite
 // draws at the configured X/Y position with the individual sprite color.
 func TestVICSpriteSingleColorRendering(t *testing.T) {
+	quietMachine(t)
 	ClearFrameBuffer()
 
 	v := &VICII{}
@@ -67,6 +68,7 @@ func TestVICSpriteSingleColorRendering(t *testing.T) {
 // TestVICSpriteMulticolorRendering verifies multicolor sprite bit pairs:
 // 01 -> Extra Color 0 ($D025), 10 -> Sprite Color ($D027), 11 -> Extra Color 1 ($D026).
 func TestVICSpriteMulticolorRendering(t *testing.T) {
+	quietMachine(t)
 	ClearFrameBuffer()
 
 	v := &VICII{}
@@ -133,6 +135,7 @@ func TestVICSpriteMulticolorRendering(t *testing.T) {
 
 // TestVICSpriteExpansionXY tests 2x horizontal and vertical expansion.
 func TestVICSpriteExpansionXY(t *testing.T) {
+	quietMachine(t)
 	v := &VICII{}
 	v.Reset()
 	cia2.PRA, cia2.DDRA = 3, 3
@@ -198,6 +201,7 @@ func TestVICSpriteExpansionXY(t *testing.T) {
 
 // TestVICSpritePriority verifies $D01B priority (front vs behind foreground graphics).
 func TestVICSpritePriority(t *testing.T) {
+	quietMachine(t)
 	v := &VICII{}
 	v.Reset()
 	cia2.PRA, cia2.DDRA = 3, 3
@@ -223,6 +227,7 @@ func TestVICSpritePriority(t *testing.T) {
 	v.WriteRegister(0xD01B, 0x00)
 	v.gdSequencer = 0x80   // foreground graphics pixel
 	v.videoBuffer = 0x0100 // color 1 (White)
+	v.refreshGraphicsPalette()
 	v.dot = 48
 	v.paintGraphicsPixel()
 	if got := [4]byte(frameBufferPixelRGBA(48, 56)); got != red {
@@ -233,6 +238,7 @@ func TestVICSpritePriority(t *testing.T) {
 	v.WriteRegister(0xD01B, 0x01)
 	v.gdSequencer = 0x80   // foreground graphics pixel
 	v.videoBuffer = 0x0100 // color 1 (White)
+	v.refreshGraphicsPalette()
 	v.dot = 48
 	v.paintGraphicsPixel()
 	if got := [4]byte(frameBufferPixelRGBA(48, 56)); got != white {
@@ -251,6 +257,7 @@ func TestVICSpritePriority(t *testing.T) {
 
 // TestVICSpriteSpriteCollision verifies $D01E and sprite-sprite collision IRQ.
 func TestVICSpriteSpriteCollision(t *testing.T) {
+	quietMachine(t)
 	v := &VICII{}
 	v.Reset()
 	cia2.PRA, cia2.DDRA = 3, 3
@@ -292,6 +299,7 @@ func TestVICSpriteSpriteCollision(t *testing.T) {
 
 // TestVICSpriteDataCollision verifies $D01F and sprite-data collision IRQ.
 func TestVICSpriteDataCollision(t *testing.T) {
+	quietMachine(t)
 	v := &VICII{}
 	v.Reset()
 	cia2.PRA, cia2.DDRA = 3, 3
@@ -331,6 +339,7 @@ func TestVICSpriteDataCollision(t *testing.T) {
 // TestVICSpriteXMSBForSprites1To7 verifies that setting bit i in $D010 places
 // sprite i (1..7) at X = x + 256 rather than scaling by 2^i.
 func TestVICSpriteXMSBForSprites1To7(t *testing.T) {
+	quietMachine(t)
 	ClearFrameBuffer()
 
 	v := &VICII{}
@@ -494,6 +503,7 @@ func TestVICSpriteDMATriggerIsOneShot(t *testing.T) {
 // is still being drawn, so a VIC that re-read the pointer per pixel would
 // switch shape mid-line and truncate the sprite.
 func TestVICSpriteShapeIsLatchedPerLine(t *testing.T) {
+	quietMachine(t)
 	ClearFrameBuffer()
 
 	v := &VICII{}
@@ -581,6 +591,7 @@ func TestVICSpriteYCompareWrapsAtEightBits(t *testing.T) {
 // are spent. A multiplexer that disables a sprite after handing it off relies
 // on the rows already in flight still being drawn.
 func TestVICSpriteDisableDoesNotRetractBand(t *testing.T) {
+	quietMachine(t)
 	v := &VICII{}
 	v.Reset()
 	v.WriteRegister(0xD015, 0x01)

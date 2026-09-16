@@ -40,6 +40,44 @@ func saveMachine(t *testing.T) {
 	})
 }
 
+// quietMachine puts the singletons a stepping VIC-II drives into a state
+// where they do nothing, and restores them afterwards.
+//
+// Phi2 comes from the VIC-II, so stepping any VICII clocks the CPU, both
+// CIAs and the IEC bus along with it. A test holding its own &VICII{} is
+// still driving the one machine: the chips it clocks are the same
+// package-level singletons every other test uses. So a video test that
+// only means to look at what the beam painted is running the CPU too,
+// against whatever PC and whatever RAM the test before it happened to
+// leave behind. TestVICBorderPlacement panicked on an $FF opcode that
+// way, and only because deleting an unrelated file changed who ran
+// before it; the passing runs were as accidental as the panic.
+func quietMachine(t *testing.T) {
+	saveMachine(t)
+
+	cia1, cia2 = CIA{}, CIA{}
+	keyboard = Keyboard{}
+	parkCPU()
+}
+
+// parkCPU points the CPU at a branch to itself with interrupts masked, so
+// the cycles a stepping VIC-II hands it reach nothing but three
+// instruction fetches per loop. $4000 is outside VIC bank 0, so the beam
+// never fetches the loop as screen, character or sprite data.
+//
+// quietMachine calls this. A test that rewrites the whole of RAM after it
+// has to call it again, since the loop lives in RAM like any other code.
+const cpuParkAddr = 0x4000
+
+func parkCPU() {
+	cpu = CPU{}
+	cpu.regP = P_INTERRUPT
+	ram[cpuParkAddr] = 0x4C // JMP $4000
+	ram[cpuParkAddr+1] = byte(cpuParkAddr & 0xFF)
+	ram[cpuParkAddr+2] = byte(cpuParkAddr >> 8)
+	cpu.PC = cpuParkAddr
+}
+
 // skipShort skips a test under -short.
 //
 // The DOS wedge, 1541 and IEC drive tests are the expensive ones: each
