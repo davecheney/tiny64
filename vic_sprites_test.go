@@ -221,7 +221,7 @@ func TestVICSpritePriority(t *testing.T) {
 
 	// Test 1: Priority = 0 (sprite in front of graphics). Sprite (Red) shows over foreground graphics (White).
 	v.WriteRegister(0xD01B, 0x00)
-	v.gdSequencer = 0x80   // foreground graphics pixel
+	v.gdSequencer = 0x4000 // foreground graphics pixel, two bits a dot
 	v.videoBuffer = 0x0100 // color 1 (White)
 	v.dot = 48
 	v.paintGraphicsPixel()
@@ -231,7 +231,7 @@ func TestVICSpritePriority(t *testing.T) {
 
 	// Test 2: Priority = 1 (sprite behind graphics). Foreground graphics (White) shows over sprite.
 	v.WriteRegister(0xD01B, 0x01)
-	v.gdSequencer = 0x80   // foreground graphics pixel
+	v.gdSequencer = 0x4000 // foreground graphics pixel, two bits a dot
 	v.videoBuffer = 0x0100 // color 1 (White)
 	v.dot = 48
 	v.paintGraphicsPixel()
@@ -305,7 +305,7 @@ func TestVICSpriteDataCollision(t *testing.T) {
 	v.WriteRegister(0xD01A, 0x08) // Enable Sprite-Data Collision IRQ (bit 3)
 
 	// Set up text mode so nextGraphicsColor returns isForeground = true
-	v.gdSequencer = 0x80 // top bit set
+	v.gdSequencer = 0x4000 // top pixel set, two bits a dot
 	v.videoBuffer = 0x0100
 
 	v.control1 = 0x1B
