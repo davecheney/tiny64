@@ -21,9 +21,9 @@ func TestVICBadLineBusWarning(t *testing.T) {
 		// The start-of-StepCycle slot is article cycle minus 11.
 		wantBA := slot < 1 || slot > 43  // Article cycles 12-54.
 		wantAEC := slot < 4 || slot > 43 // Article cycles 15-54.
-		if vic.BA != wantBA || vic.AEC != wantAEC {
+		if vic.BA != wantBA || vic.AEC() != wantAEC {
 			t.Fatalf("article cycle %d: BA/AEC=%v/%v, want %v/%v",
-				slot+11, vic.BA, vic.AEC, wantBA, wantAEC)
+				slot+11, vic.BA, vic.AEC(), wantBA, wantAEC)
 		}
 		if !wantBA && wantAEC {
 			warnings++
@@ -58,8 +58,8 @@ func TestVICLateBadLineWarning(t *testing.T) {
 	}
 	for n := 0; n < 4; n++ {
 		vic.StepCycle()
-		if vic.BA || vic.AEC != (n < 3) {
-			t.Fatalf("late-DMA cycle %d: BA/AEC=%v/%v", n, vic.BA, vic.AEC)
+		if vic.BA || vic.AEC() != (n < 3) {
+			t.Fatalf("late-DMA cycle %d: BA/AEC=%v/%v", n, vic.BA, vic.AEC())
 		}
 		want := uint16(0xFF) // Colour during warning is explicitly unsupported.
 		if n == 3 {
@@ -78,26 +78,26 @@ func TestVICWarningReleaseAndReset(t *testing.T) {
 	for n := 0; n < 2; n++ {
 		vic.phi0low()
 		vic.phi0high()
-		if !vic.AEC {
+		if !vic.AEC() {
 			t.Fatal("AEC low before warning expires")
 		}
 	}
 	vic.control1 = 0x14 // Cancel the badline and reset the warning.
 	vic.phi0low()
 	vic.phi0high()
-	if !vic.BA || !vic.AEC || vic.baLowCycles != 0 {
+	if !vic.BA || !vic.AEC() || vic.baLowCycles != 0 {
 		t.Fatal("cancelled warning did not release the bus")
 	}
 	vic.control1 = 0x13
 	for n := 0; n < 4; n++ {
 		vic.phi0low()
 		vic.phi0high()
-		if vic.AEC != (n < 3) {
-			t.Fatalf("restarted warning cycle %d: AEC=%v", n, vic.AEC)
+		if vic.AEC() != (n < 3) {
+			t.Fatalf("restarted warning cycle %d: AEC=%v", n, vic.AEC())
 		}
 	}
 	vic.Reset()
-	if vic.baLowCycles != 0 || !vic.BA || !vic.AEC {
+	if vic.baLowCycles != 0 || !vic.BA || !vic.AEC() {
 		t.Fatal("reset retained bus takeover state")
 	}
 }
@@ -208,7 +208,7 @@ func TestCPUIsOffTheBusBeforeAECDrops(t *testing.T) {
 	warning := 0
 	for i := 0; i < 16; i++ {
 		v.phi0high()
-		if !v.AEC {
+		if !v.AEC() {
 			break
 		}
 		warning++

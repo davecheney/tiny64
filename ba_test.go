@@ -28,7 +28,6 @@ func deriveWriteMask(opcode, op1, op2, x, y uint8) (mask uint16, ok bool) {
 	cpu = CPU{}
 	cpu.PortDDR = 0xFF
 	vic.BA = true
-	vic.AEC = true
 
 	cpu.PC = 0x1000
 	cpu.SP = 0xFF
@@ -191,7 +190,7 @@ func TestCPUStallsOnReadCyclesOnlyWhileBALow(t *testing.T) {
 		cpu.SP = 0xFF
 		cpu.A = 0x42
 		ram[0x1000], ram[0x1001], ram[0x1002] = opcode, 0x00, 0x04
-		vic.BA, vic.AEC = true, true
+		vic.BA = true
 	}
 
 	// Assert BA at the write cycle, while AEC still allows CPU accesses.

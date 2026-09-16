@@ -58,7 +58,6 @@ func runInstrTest(t *testing.T, tc instrTest) {
 	}
 
 	vic.BA = true
-	vic.AEC = true
 
 	got := make([]busCycle, len(tc.cycles))
 	for i := range tc.cycles {

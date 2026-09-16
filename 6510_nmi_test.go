@@ -27,7 +27,7 @@ func newNMIFixture(t *testing.T) {
 	cia2 = CIA{}
 	keyboard = Keyboard{}
 	vic = VICII{}
-	vic.BA, vic.AEC = true, true
+	vic.BA = true
 
 	copy(ram[0x0200:], []uint8{0x4C, 0x00, 0x02}) // JMP $0200
 	copy(ram[0x0300:], []uint8{
@@ -159,7 +159,7 @@ func nmiEligibleAfter(t *testing.T, trigger func()) int {
 	t.Helper()
 	for cycles := 1; cycles <= 8; cycles++ {
 		newNMIFixture(t)
-		vic.BA, vic.AEC = true, true
+		vic.BA = true
 		trigger()
 		for range cycles - 1 {
 			vic.BA = false
