@@ -1134,7 +1134,10 @@ func (v *VICII) dotclock7(reload uint16) {
 // directly here (each had exactly one call site, unconditional or nearly
 // so) to remove function-call overhead from the frame fast path.
 func (v *VICII) phi0low() {
-	v.AEC = false
+	// AEC is not driven here. The CPU's clock is low for all of Phi1, so
+	// the one thing that senses AEC cannot see a value set during it, and
+	// phi0high drives the pin afresh before the CPU is clocked.
+	//
 	// slot indexes the 8-dot bus cycles across a line. The article's cycle
 	// numbering starts 10 slots later (its cycle N is our slot N-11, mod
 	// 63), so the constants below are the article's rebased onto slot.
@@ -1387,6 +1390,10 @@ func (v *VICII) phi0high() {
 	// nothing in here reads them back, because what the VIC knows about
 	// its own DMA is baLowCycles, the warning it is part way through
 	// giving. Even a late badline must give the CPU its three cycles.
+	//
+	// This is the only place AEC is driven during a cycle, and it runs
+	// immediately before the CPU is clocked, which is the only moment the
+	// pin is sensed.
 	v.AEC = v.baLowCycles < baWarningCycles || v.BA
 
 	// slot as in phi0low, but 4 dots later, so its offset from the
