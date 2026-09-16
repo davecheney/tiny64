@@ -3354,9 +3354,12 @@ func TestInstructions(t *testing.T) {
 	}
 }
 
-// TestCPUStallsWhenAECLow verifies the CPU is fully disconnected from the
-// bus (no state change at all) whenever the VIC-II owns Phi2.
-func TestCPUStallsWhenAECLow(t *testing.T) {
+// TestCPUStallsWhenBALow verifies the CPU is left bit for bit unchanged by
+// a cycle it spends held. BA is what does the holding: AEC lags it by three
+// cycles, so the two are never both low on the cycle a hold begins, and a
+// fixture that drops them together describes a machine state that cannot
+// occur.
+func TestCPUStallsWhenBALow(t *testing.T) {
 	ram = [65536]byte{}
 	bus = Bus{}
 	cpu = CPU{}
@@ -3366,7 +3369,6 @@ func TestCPUStallsWhenAECLow(t *testing.T) {
 	ram[0x0200] = 0xEA
 
 	vic.BA = false
-	vic.AEC = false
 
 	before := cpu
 
@@ -3375,7 +3377,7 @@ func TestCPUStallsWhenAECLow(t *testing.T) {
 	// Compared whole, with nothing exempted: the CPU keeps no count of
 	// Phi2 cycles, so a stalled one leaves it bit for bit unchanged.
 	if cpu != before {
-		t.Errorf("CPU state changed while AEC was low: got %+v, want %+v", cpu, before)
+		t.Errorf("CPU state changed while BA was low: got %+v, want %+v", cpu, before)
 	}
 }
 
