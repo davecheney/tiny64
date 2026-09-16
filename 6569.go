@@ -87,11 +87,30 @@ type VICII struct {
 	verticalBorder  bool
 	rightBorderAt   uint16
 	rightBorderOpen bool
-	rightBorder     [VisibleDotsPerLine - rightEdge38]uint8
-	gdSequencer     uint8
-	graphicsMode    uint8
-	multicolor      bool
-	multicolorHalf  bool
+
+	// borderColorVaried says which of two representations of the replayed
+	// right border's colours is in force for the current line:
+	//
+	//   clear - every dot of the span is v.borderColor, and rightBorder
+	//           holds stale bytes nobody may read.
+	//   set   - rightBorder[dot-rightEdge38] holds the colour dot was
+	//           painted with, for every dot of the span.
+	//
+	// It is set by sampleBorderColorAtWrite when a $D020 write arrives at
+	// a point on the line where it can leave the span non-uniform, and
+	// cleared by finishSideBorder once the line has been replayed.
+	//
+	// Almost every line leaves $D020 alone and so never leaves the first
+	// representation, and that is what lets the per-dot pixel path carry
+	// no shadow-buffer store at all: rightBorder is filled by the write
+	// path, on the lines that have a write to record.
+	borderColorVaried bool
+	rightBorder       [VisibleDotsPerLine - rightEdge38]uint8
+
+	gdSequencer    uint8
+	graphicsMode   uint8
+	multicolor     bool
+	multicolorHalf bool
 
 	// gdColor holds the colours the sequencer can emit for each value it
 	// shifts out - two of them in the standard modes, four in the
@@ -205,6 +224,7 @@ func (v *VICII) Reset() {
 	v.verticalBorder = true
 	v.rightBorderAt = 0
 	v.rightBorderOpen = false
+	v.borderColorVaried = false
 	v.gdSequencer = 0
 	v.graphicsMode = modeStandardText
 	v.multicolor = false
@@ -300,8 +320,11 @@ func (v *VICII) WriteRegister(addr uint16, value uint8) {
 	case reg < regBorderColor:
 		v.registers19To1F[reg-0x19] = value
 	case reg == regBorderColor:
+		previous := v.borderColor
 		v.borderColor = value
-		v.sampleBorderColorAtWrite()
+		if (value^previous)&0x0F != 0 {
+			v.sampleBorderColorAtWrite(previous)
+		}
 	case reg == regBackground0:
 		v.background0 = value
 		v.refreshGraphicsPalette()
@@ -331,16 +354,61 @@ func (v *VICII) backgroundColor(index uint8) uint8 {
 	}
 }
 
-func (v *VICII) sampleBorderColorAtWrite() {
-	if v.dot < rightEdge40 || v.dot >= VisibleDotsPerLine {
+// sampleBorderColorAtWrite brings the right-border shadow buffer into
+// force, and up to date, for a $D020 write that changes the border colour.
+//
+// The buffer is read in one place only: finishSideBorder's replay of dots
+// rightBorderAt..VisibleDotsPerLine-1 at the line wrap. Nothing else fills
+// it - the per-dot pixel path deliberately does not - so on a line where
+// the border colour never changes the buffer is never consulted and the
+// replay takes its single colour from v.borderColor (see
+// borderColorVaried). This function is therefore responsible for the whole
+// of the buffer's contents, not just for the dots the write itself
+// recolours, and the first change on a line has to materialise the span
+// the uniform representation was standing in for before recording the
+// change on top of it. Filling in only from the write's own dot would
+// leave the earlier dots holding whatever line last used the buffer.
+//
+// previous is the border colour in force before the write: by the
+// definition of borderColorVaried being clear, the colour every dot of the
+// span painted so far was painted with.
+func (v *VICII) sampleBorderColorAtWrite(previous uint8) {
+	if v.dot < rightEdge38 {
+		// The whole span is still ahead of the beam, so every dot of it
+		// will be painted with the new colour and it stays uniform.
 		return
 	}
-	first := v.dot - DotsPerCycle
-	if first < rightEdge38 {
-		first = rightEdge38
+	if !v.borderColorVaried {
+		for dot := range v.rightBorder {
+			v.rightBorder[dot] = previous & 0x0F
+		}
+		v.borderColorVaried = true
 	}
-	for dot := first; dot <= v.dot; dot++ {
-		v.rightBorder[dot-rightEdge38] = v.borderColor & 0x0F
+	if v.dot >= VisibleDotsPerLine {
+		// Written during hblank, past the last dot the replay covers: the
+		// span keeps the colour it was painted with and the new colour
+		// takes effect on the next line.
+		return
+	}
+	// A write lands at Phi2, once the cycle's eight dots have already been
+	// painted, and is taken to have been in force for the whole of that
+	// cycle - so from the 40-column edge on it reaches back over the dots
+	// the cycle just painted. Before that edge it does not reach back at
+	// all, and applies only from the next dot painted; that asymmetry is
+	// the behaviour of the previous, paint-driven buffer, and
+	// TestVICBorderColorChangeMidLine pins both halves of it.
+	//
+	// Filling forwards to the end of the span, rather than just to the
+	// current dot, is what replaces the per-dot store: the dots still to
+	// be painted would have recorded this colour anyway, and a later write
+	// on the same line simply overwrites the tail again.
+	first := v.dot + 1
+	if v.dot >= rightEdge40 {
+		first = v.dot - DotsPerCycle // >= 360, so always within the span
+	}
+	color := v.borderColor & 0x0F
+	for dot := first; dot < VisibleDotsPerLine; dot++ {
+		v.rightBorder[dot-rightEdge38] = color
 	}
 }
 
@@ -395,23 +463,53 @@ func (v *VICII) sampleSideBorderAtWrite(control2 uint8) {
 	}
 }
 
+// finishSideBorder paints the right border at the line wrap, and is the
+// only reader of the right-border shadow buffer.
+//
+// The right border cannot be painted live. Its visible edge is dot
+// rightEdge38/rightEdge40, but the comparison that closes the main border
+// flip-flop does not run until rightComp38/rightComp40 - after the last
+// visible dot - so paintGraphicsPixel puts graphics in the span and this
+// runs afterwards to paint over it once the comparison has had its say.
+// (rightBorderAt holds the edge the line's CSEL selected, and is left set
+// by the comparison precisely so the span gets replayed.)
+//
+// Which colour to replay is the question borderColorVaried answers: the
+// span is one colour unless $D020 changed inside it, and only then does
+// the per-dot record in rightBorder have anything the border colour does
+// not already say.
 func (v *VICII) finishSideBorder() {
 	if !v.lineDrawable {
 		v.rightBorderAt = 0
 		v.rightBorderOpen = false
+		v.borderColorVaried = false
 		return
 	}
 	if v.rightBorderAt != 0 {
-		for dot := v.rightBorderAt; dot < VisibleDotsPerLine; dot++ {
-			writePixelToBuffer(dot, v.rasterLine, v.rightBorder[dot-rightEdge38])
+		if v.borderColorVaried {
+			for dot := v.rightBorderAt; dot < VisibleDotsPerLine; dot++ {
+				writePixelToBuffer(dot, v.rasterLine, v.rightBorder[dot-rightEdge38])
+			}
+		} else {
+			// No $D020 write reached the span, so it is one colour and the
+			// shadow buffer holds nothing worth reading.
+			color := v.borderColor & 0x0F
+			for dot := v.rightBorderAt; dot < VisibleDotsPerLine; dot++ {
+				writePixelToBuffer(dot, v.rasterLine, color)
+			}
 		}
 	} else if !v.rightBorderOpen {
 		// Preserve the VIC's boundary pixel when a visible CSEL trick opens
 		// the rest of the right border. A later hblank write can open it too.
-		writePixelToBuffer(rightEdge40, v.rasterLine, v.rightBorder[rightEdge40-rightEdge38])
+		color := v.borderColor & 0x0F
+		if v.borderColorVaried {
+			color = v.rightBorder[rightEdge40-rightEdge38]
+		}
+		writePixelToBuffer(rightEdge40, v.rasterLine, color)
 	}
 	v.rightBorderAt = 0
 	v.rightBorderOpen = false
+	v.borderColorVaried = false
 }
 
 func (v *VICII) sampleGraphicsAtWrite(control2 uint8) {
@@ -577,9 +675,6 @@ func (v *VICII) nextGraphicsColor() (byte, bool) {
 func (v *VICII) paintGraphicsPixel() {
 	graphicsColor, isForeground := v.nextGraphicsColor()
 	display := v.spriteDisplay
-	if v.dot >= rightEdge38 {
-		v.rightBorder[v.dot-rightEdge38] = v.borderColor & 0x0F
-	}
 
 	if display == 0 {
 		if v.mainBorder {
@@ -907,11 +1002,6 @@ func StepFrame() {
 // in flash precisely because it failed to inline, so code size is not
 // evidence that it is faster.
 func (v *VICII) dotclock0(reload uint16) {
-	if v.dot == rightEdge40 {
-		// CPU writes at the boundary occur after its pixel was first
-		// generated. Capture the resulting border color on the next dot.
-		v.rightBorder[rightEdge40-rightEdge38] = v.borderColor & 0x0F
-	}
 	v.dot++
 	if v.dot == reload {
 		v.loadGraphicsData()

@@ -61,28 +61,55 @@ func TestVICBorderPlacement(t *testing.T) {
 	}
 }
 
+// TestVICBorderColorWriteSamplesCurrentPhi2Span pins where a mid-line
+// $D020 write takes effect in the right-border shadow buffer: from the
+// first dot of the bus cycle the write was made in, leaving the dots
+// painted before that cycle on the previous colour.
+//
+// The dots after the write are filled in here too. They have not been
+// painted yet, but the colour they will be painted with is already known,
+// and filling forwards is what lets the per-dot pixel path carry no
+// shadow-buffer store at all; see sampleBorderColorAtWrite. The write is
+// also what brings the buffer into force in the first place - before it,
+// the span is described by v.borderColor alone.
 func TestVICBorderColorWriteSamplesCurrentPhi2Span(t *testing.T) {
 	v := &VICII{}
 	v.Reset()
-	for dot := range v.rightBorder {
-		v.rightBorder[dot] = 0x02
-	}
+	v.borderColor = 0x02
 	v.dot = rightEdge40 + DotsPerCycle
 
 	v.WriteRegister(0xD020, 0x05)
 
-	for dot := uint16(rightEdge38); dot < rightEdge40; dot++ {
+	if !v.borderColorVaried {
+		t.Fatal("borderColorVaried=false after a mid-line $D020 write, want the shadow buffer in force")
+	}
+	spanStart := v.dot - DotsPerCycle
+	for dot := uint16(rightEdge38); dot < spanStart; dot++ {
 		if got := v.rightBorder[dot-rightEdge38]; got != 0x02 {
 			t.Fatalf("right-border color at dot %d = %d, want previous color 2", dot, got)
 		}
 	}
-	for dot := uint16(rightEdge40); dot <= v.dot; dot++ {
+	for dot := spanStart; dot < VisibleDotsPerLine; dot++ {
 		if got := v.rightBorder[dot-rightEdge38]; got != 0x05 {
 			t.Fatalf("right-border color at dot %d = %d, want newly written color 5", dot, got)
 		}
 	}
-	if got := v.rightBorder[v.dot+1-rightEdge38]; got != 0x02 {
-		t.Fatalf("right-border color after current Phi2 span = %d, want previous color 2", got)
+}
+
+// TestVICBorderColorWriteBeforeRightEdgeStaysUniform checks that a $D020
+// write made before any dot of the replayed span has been painted leaves
+// the uniform representation in force: every dot the replay covers will be
+// painted with the new colour, so there is nothing per-dot to record.
+func TestVICBorderColorWriteBeforeRightEdgeStaysUniform(t *testing.T) {
+	v := &VICII{}
+	v.Reset()
+	v.borderColor = 0x02
+	v.dot = rightEdge38 - DotsPerCycle
+
+	v.WriteRegister(0xD020, 0x05)
+
+	if v.borderColorVaried {
+		t.Fatal("borderColorVaried=true after a $D020 write ahead of the right edge, want the uniform span")
 	}
 }
 
@@ -137,4 +164,113 @@ func TestVICGAccessPixelAlignment(t *testing.T) {
 		t.Errorf("pixel at last column's rightmost displayX=%d is %v, want foreground %v (gap before right border)",
 			wantLast, frameBufferPixelRGBA(wantLast, targetRow), C64Palette[foreground])
 	}
+}
+
+// borderScheduledWrite is a register write performed at a chosen dot on a
+// chosen raster line, from the same place in the cycle a CPU write lands:
+// stepCycle ticks Phi2 last, so writing immediately after StepCycle returns
+// puts the write at the same dot the CPU would have.
+type borderScheduledWrite struct {
+	line  uint16
+	dot   uint16
+	reg   uint16
+	value uint8
+}
+
+// borderTestVIC sets up a VIC-II showing a full screen of characters in
+// 40-column mode, the arrangement the right-border replay path runs on.
+func borderTestVIC() *VICII {
+	v := &VICII{}
+	ClearFrameBuffer()
+	v.Reset()
+	v.WriteRegister(0xD020, 0x0E) // border: light blue (14)
+	v.WriteRegister(0xD021, 0x06) // background: blue (6)
+	v.WriteRegister(0xD011, 0x1B) // DEN=1, RSEL=1 (25 rows), YSCROLL=3
+	v.WriteRegister(0xD016, 0x08) // CSEL=1 (40 cols)
+	v.WriteRegister(0xD018, 0x14) // VM=1 (screen @ $0400), CB=2 (chars @ $1000)
+	for col := range 40 {
+		ram[0x0400+col] = byte(1 + col)
+		colorRAM[col] = 0x01
+	}
+	return v
+}
+
+func runFrameWithWrites(v *VICII, writes []borderScheduledWrite) {
+	for range CyclesPerFrame {
+		v.StepCycle()
+		for _, w := range writes {
+			if v.rasterLine == w.line && v.dot == w.dot {
+				v.WriteRegister(w.reg, w.value)
+			}
+		}
+	}
+}
+
+// checkBorderRun asserts that every dot in [first, last] of the given
+// raster line carries colorIndex.
+func checkBorderRun(t *testing.T, line, first, last uint16, colorIndex byte) {
+	t.Helper()
+	for dot := first; dot <= last; dot++ {
+		if !frameBufferPixelIs(dot, line, colorIndex) {
+			t.Fatalf("line %d dot %d = %v, want color %d (%v)",
+				line, dot, frameBufferPixelRGBA(dot, line), colorIndex, C64Palette[colorIndex&0x0f])
+		}
+	}
+}
+
+// TestVICBorderColorChangeMidLine pins the pixels the right-border replay
+// produces when $D020 changes part way through the span it replays.
+//
+// Nothing from the right edge onwards is painted live with its final
+// colour: the comparison that closes the main border flip-flop does not
+// run until after the last visible dot, so paintGraphicsPixel puts
+// graphics in the span and finishSideBorder paints over it at the line
+// wrap. The replay is therefore the only thing that decides these pixels,
+// and a $D020 write inside the span is the one case where they are not all
+// the same colour - which is the whole reason the rightBorder shadow
+// buffer exists. These cases assert screen contents, not how the buffer
+// came to be filled, so they hold for any implementation of it.
+func TestVICBorderColorChangeMidLine(t *testing.T) {
+	t.Run("MidSpan", func(t *testing.T) {
+		v := borderTestVIC()
+		// Written on the bus cycle ending at dot 384, inside the replayed
+		// span. The write is in force for the whole of that cycle, so it
+		// reaches back to dot 376 and the dots before that keep the old
+		// colour.
+		runFrameWithWrites(v, []borderScheduledWrite{{line: 100, dot: 384, reg: 0xD020, value: 0x02}})
+
+		checkBorderRun(t, 100, rightEdge40, 375, 0x0E)
+		checkBorderRun(t, 100, 376, VisibleDotsPerLine-1, 0x02)
+		// The colour stays changed, so the next line is uniform again,
+		// and the line before it is untouched.
+		checkBorderRun(t, 101, rightEdge40, VisibleDotsPerLine-1, 0x02)
+		checkBorderRun(t, 99, rightEdge40, VisibleDotsPerLine-1, 0x0E)
+	})
+
+	t.Run("DuringHblank", func(t *testing.T) {
+		v := borderTestVIC()
+		// Dot 440 is past the last visible dot but before the line wrap:
+		// too late for the line about to be replayed, so it applies from
+		// the next one.
+		runFrameWithWrites(v, []borderScheduledWrite{{line: 120, dot: 440, reg: 0xD020, value: 0x08}})
+
+		checkBorderRun(t, 120, rightEdge40, VisibleDotsPerLine-1, 0x0E)
+		checkBorderRun(t, 121, rightEdge40, VisibleDotsPerLine-1, 0x08)
+	})
+
+	t.Run("BeforeRightEdge40In38Columns", func(t *testing.T) {
+		v := borderTestVIC()
+		// CSEL=0 moves the replayed span's start to dot 359, so a write on
+		// the cycle ending at dot 360 lands inside it. Before the
+		// 40-column edge a write does not reach back over the dots its
+		// cycle has already painted, so only dot 361 onwards changes.
+		runFrameWithWrites(v, []borderScheduledWrite{
+			{line: 139, dot: 440, reg: 0xD016, value: 0x00}, // CSEL=0 from line 140
+			{line: 140, dot: 360, reg: 0xD020, value: 0x0A},
+			{line: 140, dot: 440, reg: 0xD016, value: 0x08}, // back to CSEL=1
+		})
+
+		checkBorderRun(t, 140, rightEdge38, 360, 0x0E)
+		checkBorderRun(t, 140, 361, VisibleDotsPerLine-1, 0x0A)
+	})
 }
