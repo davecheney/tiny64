@@ -375,16 +375,19 @@ func TestVICSpriteXMSBForSprites1To7(t *testing.T) {
 func TestVICWrappedSpritesFillLeftBorderBlock(t *testing.T) {
 	ClearFrameBuffer()
 
+	// Line 56 is picked by hand, so the cached line state has to be derived
+	// from it rather than asserted alongside it - see the comment in
+	// TestVICSideBorderWriteAtRightCompareDot.
 	v := &VICII{
 		dot:           0,
 		rasterLine:    56,
-		lineDrawable:  true,
 		spriteDisplay: 3,
 		spriteShape: [8][3]uint8{
 			{0xFF, 0xFF, 0xFF},
 			{0xFF, 0xFF, 0xFF},
 		},
 	}
+	v.syncLineVisibility()
 	v.registers00To10[0] = 0xE0 // Sprite 0: X=480, wraps to dots 0-23.
 	v.registers00To10[2] = 0x00 // Sprite 1: X=0, starts at dot 24.
 	v.registers00To10[0x10] = 0x01
