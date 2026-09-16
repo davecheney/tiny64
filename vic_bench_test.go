@@ -127,6 +127,11 @@ func loadDisplayProgram() {
 		colorRAM[i] = byte(1 + i%15)
 	}
 	vic.syncLineVisibility()
+	// control1/control2 are poked straight into the VIC above rather than
+	// written through WriteRegister, so the caches those registers feed
+	// have to be resynced by hand, exactly as syncLineVisibility does for
+	// the line visibility flags.
+	vic.refreshGraphicsReloadPhase()
 }
 
 // loadSpriteProgram adds eight enabled sprites, all solid and all in the

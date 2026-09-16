@@ -87,11 +87,18 @@ type VICII struct {
 	verticalBorder  bool
 	rightBorderAt   uint16
 	rightBorderOpen bool
-	rightBorder     [VisibleDotsPerLine - rightEdge38]uint8
-	gdSequencer     uint8
-	graphicsMode    uint8
-	multicolor      bool
-	multicolorHalf  bool
+
+	// gdReloadPhase is the dot phase within a character cell on which the
+	// graphics sequencer takes up its pending g-access result, cached from
+	// $D016 by refreshGraphicsReloadPhase. It lives here, among the scalars
+	// ahead of the buffers, because reloadDot loads it once per bus cycle.
+	gdReloadPhase uint16
+
+	rightBorder    [VisibleDotsPerLine - rightEdge38]uint8
+	gdSequencer    uint8
+	graphicsMode   uint8
+	multicolor     bool
+	multicolorHalf bool
 
 	// gdColor holds the colours the sequencer can emit for each value it
 	// shifts out - two of them in the standard modes, four in the
@@ -228,6 +235,10 @@ func (v *VICII) Reset() {
 	v.interruptEnable = 0
 	v.setIRQ(false)
 	v.refreshGraphicsPalette()
+	// Both caches are derived from registers Reset deliberately leaves
+	// alone, so they are established from whatever $D016 and the colour
+	// registers happen to hold rather than from a known-zero state.
+	v.refreshGraphicsReloadPhase()
 	v.spriteSpriteCollision = 0
 	v.spriteDataCollision = 0
 	v.spriteDisplay = 0
@@ -283,8 +294,14 @@ func (v *VICII) WriteRegister(addr uint16, value uint8) {
 		v.registers12To15[reg-0x12] = value
 	case reg == regControl2:
 		v.control2 = value
+		// $D016 is the only input the sequencer's reload phase has, so
+		// this is the one point in the machine where the cached phase can
+		// go stale. Refresh it before sampleGraphicsAtWrite, which asks
+		// where the sequencer reloads and has to see the value just
+		// written rather than the one it replaced.
+		v.refreshGraphicsReloadPhase()
 		v.sampleSideBorderAtWrite(value)
-		v.sampleGraphicsAtWrite(value)
+		v.sampleGraphicsAtWrite()
 	case reg == 0x17:
 		v.register17 = value
 	case reg == regMemPointers:
@@ -414,11 +431,43 @@ func (v *VICII) finishSideBorder() {
 	v.rightBorderOpen = false
 }
 
-func (v *VICII) sampleGraphicsAtWrite(control2 uint8) {
+// sampleGraphicsAtWrite handles the case reloadDot cannot: a $D016 write
+// that lands on the very dot the sequencer reloads on. The CPU's store
+// completes in TickPhi2, after the cycle's eight dots have already been
+// stepped with the old phase, so a write that moves the reload onto the
+// dot the beam is standing on would otherwise be missed entirely.
+//
+// It reads the phase from the cache, which WriteRegister has already
+// refreshed from the value being written - see the regControl2 case.
+func (v *VICII) sampleGraphicsAtWrite() {
 	slot := v.dot / 8
-	if slot >= 6 && slot <= 45 && v.dot&0x07 == graphicsReloadPhase(control2) {
+	if slot >= 6 && slot <= 45 && v.dot&0x07 == v.gdReloadPhase {
 		v.loadGraphicsData()
 	}
+}
+
+// refreshGraphicsReloadPhase caches which of the eight dot phases of a
+// character cell the graphics sequencer takes up its g-access result on.
+// XSCROLL ($D016 bits 0-2) shifts the take-up point that many dots into
+// the cell (section 3.7.3 of docs/VIC-Article.txt), and in multicolor the
+// last odd position has to finish its two-dot pixel pair first, so the
+// phase is a small function of $D016 - and of nothing else.
+//
+// reloadDot asks for that phase once per bus cycle, 19,656 times a PAL
+// frame, and used to derive it every time: a load of control2, a mask, a
+// compare and a branch, all to answer a question whose only input had not
+// moved since the last CPU write to $D016. A CPU profile of a display
+// frame put reloadDot at 4.6% cumulative, 3.1% flat; caching the phase
+// leaves it an add, a mask and the display-window compare.
+//
+// $D016 reaches the VIC only through WriteRegister, so that write - plus
+// Reset, which has to establish the cache against a register it leaves
+// untouched - is the entire invalidation rule.
+// TestGraphicsReloadPhaseStaysConsistentAcrossAFrame is what keeps it
+// honest, exactly as TestGraphicsPaletteStaysConsistentAcrossAFrame does
+// for the graphics palette.
+func (v *VICII) refreshGraphicsReloadPhase() {
+	v.gdReloadPhase = graphicsReloadPhase(v.control2)
 }
 
 func graphicsReloadPhase(control2 uint8) uint16 {
@@ -459,11 +508,16 @@ const noReloadDot = 0xFFFF
 // The eight dotclocks used to ask this individually, once per dot,
 // through a function call that seven of them could never act on. Asking
 // once per cycle instead takes 157,248 calls out of a PAL frame.
+//
+// The phase itself is not derived here either: it only changes on a CPU
+// write to $D016, so it is cached in gdReloadPhase and this is left with
+// an add, a mask and the display-window compare. See
+// refreshGraphicsReloadPhase.
 func (v *VICII) reloadDot() uint16 {
 	// The beam is advanced before the reload is tested, so the phase is
 	// matched against dots v.dot+1 through v.dot+DotsPerCycle. Exactly
 	// one of those is congruent to the reload phase; this is it.
-	dot := v.dot + 1 + ((graphicsReloadPhase(v.control2) - v.dot - 1) & 7)
+	dot := v.dot + 1 + ((v.gdReloadPhase - v.dot - 1) & 7)
 	if slot := dot / DotsPerCycle; slot < 6 || slot > 45 {
 		return noReloadDot
 	}
@@ -809,6 +863,14 @@ func (v *VICII) StepFrame() {
 // and g-access-commit logic only ever trigger on specific dots within a
 // cycle (see each function's comment), so the six interior dots' bodies are
 // smaller besides.
+//
+// The one-call-site rule constrains this function's shape too, not just the
+// dotclocks': phase 6 is reached from two of the three branches below, so
+// it has two functions - dotclock6 and the identical dotclock6Cropped -
+// one per branch. Calling a single dotclock6 from both sites was enough to
+// lose it every inlining decision: it was the only dotclock left as a real
+// function in the Gopher Badge binary, entered by a BL twice per bus cycle
+// while the other seven inlined into this one.
 func (v *VICII) stepCycle() {
 	// Two answers the whole cycle shares, established before any dot
 	// moves. Vertical blanking is a property of the raster line, not of
@@ -833,7 +895,7 @@ func (v *VICII) stepCycle() {
 		v.dotclock6(reload)
 	} else if v.lineVisible {
 		v.dot += 2
-		v.dotclock6(reload)
+		v.dotclock6Cropped(reload)
 	} else {
 		v.dot += 3
 	}
@@ -906,6 +968,10 @@ func StepFrame() {
 // in stepCycle's comment. Note the trap: the shared version is *smaller*
 // in flash precisely because it failed to inline, so code size is not
 // evidence that it is faster.
+//
+// The rule is not confined to these six. Phase 6 is reached from two of
+// stepCycle's branches, and so has two identical functions of its own for
+// exactly the same reason - see dotclock6Cropped.
 func (v *VICII) dotclock0(reload uint16) {
 	if v.dot == rightEdge40 {
 		// CPU writes at the boundary occur after its pixel was first
@@ -1015,7 +1081,63 @@ func (v *VICII) dotclock5(reload uint16) {
 
 // dotclock6 handles cycle phase 6. Its beam advance reaches phase 6
 // (8N+7), where the 38-column left border comparison occurs.
+//
+// This is stepCycle's drawable-line call site; dotclock6Cropped below is
+// the byte-for-byte identical copy for its visible-but-not-drawable one.
+// Two copies rather than one function called from both places, for the
+// reason dotclock0 spells out at length: while both branches called the
+// same dotclock6, it was the only one of the eight dotclocks that
+// survived as a real function in the Gopher Badge binary - two call sites
+// meant inlining it would have meant two copies, LLVM's cost threshold
+// refused both, and stepCycle paid a BL into it on every bus cycle of a
+// visible line. Giving each branch its own copy costs the same two copies
+// of the body, but as inlined code with the call, the prologue and the
+// spills around it gone.
 func (v *VICII) dotclock6(reload uint16) {
+	v.dot++
+	if v.dot == reload {
+		v.loadGraphicsData()
+	}
+
+	if v.dot == rightEdge38 && v.control2&csel == 0 {
+		v.rightBorderAt = rightEdge38
+	}
+	if v.dot == leftComp38 && v.control2&csel == 0 {
+		rsel := (v.control1 >> 3) & 1
+		if v.rasterLine == bottomComp[rsel] {
+			v.verticalBorder = true
+		}
+		if v.rasterLine == topComp[rsel] && v.control1&0x10 != 0 {
+			v.verticalBorder = false
+		}
+		if !v.verticalBorder {
+			v.mainBorder = false
+		}
+	}
+
+	if v.dot >= VisibleDotsPerLine {
+		return
+	}
+	if !v.lineDrawable || v.dot < renderFirstDot || v.dot >= renderDotAfter {
+		return
+	}
+
+	v.paintGraphicsPixel()
+}
+
+// dotclock6Cropped is dotclock6 for stepCycle's other call site: a raster
+// line inside the visible picture that the active pixel sink does not
+// store, which on the Gopher Badge is every visible line outside the
+// 320x240 crop. Phase 6 still has to run on those lines - it owns the
+// 38-column left border comparison, and the border flip-flops it moves
+// are carried into the lines that are drawn - so the branch cannot simply
+// skip the dot the way it skips phases 4 and 5.
+//
+// It is byte-for-byte identical to dotclock6, and deliberately so. Do not
+// deduplicate them: one function called from both branches is exactly the
+// shape that kept dotclock6 out of stepCycle's inlining, and dotclock0's
+// comment explains why in full.
+func (v *VICII) dotclock6Cropped(reload uint16) {
 	v.dot++
 	if v.dot == reload {
 		v.loadGraphicsData()
