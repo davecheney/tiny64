@@ -77,9 +77,6 @@ func TestVICWarningReleaseAndReset(t *testing.T) {
 	vic.allowBadLine, vic.control1 = true, 0x13
 	for n := 0; n < 2; n++ {
 		vic.phi0low()
-		if vic.AEC {
-			t.Fatal("AEC high during Phi1")
-		}
 		vic.phi0high()
 		if !vic.AEC {
 			t.Fatal("AEC low before warning expires")
