@@ -7,6 +7,7 @@ import (
 // TestVICSpriteSingleColorRendering verifies that a single-color sprite
 // draws at the configured X/Y position with the individual sprite color.
 func TestVICSpriteSingleColorRendering(t *testing.T) {
+	quietMachine(t)
 	ClearFrameBuffer()
 
 	v := &VICII{}
@@ -67,6 +68,7 @@ func TestVICSpriteSingleColorRendering(t *testing.T) {
 // TestVICSpriteMulticolorRendering verifies multicolor sprite bit pairs:
 // 01 -> Extra Color 0 ($D025), 10 -> Sprite Color ($D027), 11 -> Extra Color 1 ($D026).
 func TestVICSpriteMulticolorRendering(t *testing.T) {
+	quietMachine(t)
 	ClearFrameBuffer()
 
 	v := &VICII{}
@@ -133,6 +135,7 @@ func TestVICSpriteMulticolorRendering(t *testing.T) {
 
 // TestVICSpriteExpansionXY tests 2x horizontal and vertical expansion.
 func TestVICSpriteExpansionXY(t *testing.T) {
+	quietMachine(t)
 	v := &VICII{}
 	v.Reset()
 	cia2.PRA, cia2.DDRA = 3, 3
@@ -198,6 +201,7 @@ func TestVICSpriteExpansionXY(t *testing.T) {
 
 // TestVICSpritePriority verifies $D01B priority (front vs behind foreground graphics).
 func TestVICSpritePriority(t *testing.T) {
+	quietMachine(t)
 	v := &VICII{}
 	v.Reset()
 	cia2.PRA, cia2.DDRA = 3, 3
@@ -223,6 +227,7 @@ func TestVICSpritePriority(t *testing.T) {
 	v.WriteRegister(0xD01B, 0x00)
 	v.gdSequencer = 0x80   // foreground graphics pixel
 	v.videoBuffer = 0x0100 // color 1 (White)
+	v.refreshGraphicsPalette()
 	v.dot = 48
 	v.paintGraphicsPixel()
 	if got := [4]byte(frameBufferPixelRGBA(48, 56)); got != red {
@@ -233,6 +238,7 @@ func TestVICSpritePriority(t *testing.T) {
 	v.WriteRegister(0xD01B, 0x01)
 	v.gdSequencer = 0x80   // foreground graphics pixel
 	v.videoBuffer = 0x0100 // color 1 (White)
+	v.refreshGraphicsPalette()
 	v.dot = 48
 	v.paintGraphicsPixel()
 	if got := [4]byte(frameBufferPixelRGBA(48, 56)); got != white {
@@ -251,6 +257,7 @@ func TestVICSpritePriority(t *testing.T) {
 
 // TestVICSpriteSpriteCollision verifies $D01E and sprite-sprite collision IRQ.
 func TestVICSpriteSpriteCollision(t *testing.T) {
+	quietMachine(t)
 	v := &VICII{}
 	v.Reset()
 	cia2.PRA, cia2.DDRA = 3, 3
@@ -292,6 +299,7 @@ func TestVICSpriteSpriteCollision(t *testing.T) {
 
 // TestVICSpriteDataCollision verifies $D01F and sprite-data collision IRQ.
 func TestVICSpriteDataCollision(t *testing.T) {
+	quietMachine(t)
 	v := &VICII{}
 	v.Reset()
 	cia2.PRA, cia2.DDRA = 3, 3
@@ -331,6 +339,7 @@ func TestVICSpriteDataCollision(t *testing.T) {
 // TestVICSpriteXMSBForSprites1To7 verifies that setting bit i in $D010 places
 // sprite i (1..7) at X = x + 256 rather than scaling by 2^i.
 func TestVICSpriteXMSBForSprites1To7(t *testing.T) {
+	quietMachine(t)
 	ClearFrameBuffer()
 
 	v := &VICII{}
@@ -494,6 +503,7 @@ func TestVICSpriteDMATriggerIsOneShot(t *testing.T) {
 // is still being drawn, so a VIC that re-read the pointer per pixel would
 // switch shape mid-line and truncate the sprite.
 func TestVICSpriteShapeIsLatchedPerLine(t *testing.T) {
+	quietMachine(t)
 	ClearFrameBuffer()
 
 	v := &VICII{}
@@ -581,6 +591,7 @@ func TestVICSpriteYCompareWrapsAtEightBits(t *testing.T) {
 // are spent. A multiplexer that disables a sprite after handing it off relies
 // on the rows already in flight still being drawn.
 func TestVICSpriteDisableDoesNotRetractBand(t *testing.T) {
+	quietMachine(t)
 	v := &VICII{}
 	v.Reset()
 	v.WriteRegister(0xD015, 0x01)
@@ -594,40 +605,5 @@ func TestVICSpriteDisableDoesNotRetractBand(t *testing.T) {
 	}
 	if got[0] != 56 || got[20] != 76 {
 		t.Errorf("displayed lines %d..%d, want 56..76", got[0], got[20])
-	}
-}
-
-// TestSpriteDMAPullsBALow verifies that a sprite under DMA actually drives BA
-// low over its window, rather than the window merely being described by
-// spriteBASlotMask. Sprite 0 fetches in slots 47 and 48 and BA leads the grab
-// by three cycles, so BA is low across slots 44 to 48 and high either side.
-func TestSpriteDMAPullsBALow(t *testing.T) {
-	v := &VICII{}
-	v.Reset()
-	cia2.PRA, cia2.DDRA = 3, 3
-	v.memPointers = 0x14
-	v.WriteRegister(0xD001, 55)
-	v.WriteRegister(0xD015, 0x01)
-	v.control1 = 0x1B
-	v.control2 = 0x08
-
-	// Line 56 is inside the band, so sprite 0 is under DMA for the whole
-	// of that line's fetch block. Bad Line BA is confined to slots 1-43,
-	// which leaves slots 44 and up to the sprites alone.
-	for v.rasterLine != 56 || v.dot != 0 {
-		v.StepCycle()
-	}
-	for slot := uint16(43); slot <= 50; slot++ {
-		// BA is driven by the slot's phi0low, four dots into the cycle,
-		// and nothing touches it again until the next cycle's phi0low -
-		// phi0high only copies it into AEC. Sampling at the end of the
-		// slot's cycle therefore reads the value phi0low just set.
-		for v.dot != (slot+1)*DotsPerCycle {
-			v.StepCycle()
-		}
-		want := slot < 44 || slot > 48 // BA high outside sprite 0's window
-		if v.BA != want {
-			t.Errorf("slot %d: BA = %v, want %v", slot, v.BA, want)
-		}
 	}
 }

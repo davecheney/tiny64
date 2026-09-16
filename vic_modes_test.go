@@ -217,6 +217,7 @@ func TestVICXScrollWriteReloadsAtCurrentDot(t *testing.T) {
 }
 
 func TestVICSideBorderOpen40To38Trick(t *testing.T) {
+	quietMachine(t)
 	v := &VICII{}
 	v.Reset()
 	v.rasterLine = 100
@@ -275,6 +276,7 @@ func TestVICSideBorderOpen40To38Trick(t *testing.T) {
 }
 
 func TestVICSideBorderOpen38To40Trick(t *testing.T) {
+	quietMachine(t)
 	v := &VICII{}
 	v.Reset()
 	v.rasterLine = 100

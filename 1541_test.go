@@ -221,6 +221,13 @@ func TestDiskInsertedBeforeReset(t *testing.T) {
 	for i := range ram {
 		ram[i] = 0xAA // stand-in for the power-on noise the front ends write
 	}
+	// Power-on banking, so the reset vector below comes from the KERNAL.
+	// The CPU's port decides whether $FFFC is ROM or the 0xAA above, and
+	// this test does not otherwise say what that port holds: inheriting it
+	// from whichever test ran first is how it came to reset into $AAAA and
+	// run the noise as code under -shuffle. Everything else is left alone,
+	// since RAM full of noise is the thing being set up.
+	cpu = CPU{}
 
 	InsertDisk(testDisk("TEST DISK", "42", "HELLO"))
 	t.Cleanup(func() { InsertDisk(nil) })

@@ -2,7 +2,7 @@ package tiny64
 
 import "testing"
 
-func TestVICStepCycleStalledReadClocksCIAs(t *testing.T) {
+func TestVICStepCycleBadLineSuppressesCPUAndClocksCIAs(t *testing.T) {
 	savedBus := bus
 	t.Cleanup(func() { bus = savedBus })
 	newMachine(t)
@@ -27,15 +27,40 @@ func TestVICStepCycleStalledReadClocksCIAs(t *testing.T) {
 	// progress on any of them.
 	for n := uint16(1); n <= 3; n++ {
 		vic.StepCycle()
-		if vic.BA || !vic.AEC() {
-			t.Fatalf("cycle %d: expected BA warning with AEC still high", n)
-		}
 		if cpu.PC != 0x0200 || cpu.TState != 0 {
-			t.Fatalf("cycle %d: stalled CPU advanced to PC=%04X T=%d", n, cpu.PC, cpu.TState)
+			t.Fatalf("cycle %d: bad line advanced CPU to PC=%04X T=%d", n, cpu.PC, cpu.TState)
 		}
 		if cia1.timerA != 10-n || cia2.timerA != 10-n {
 			t.Fatalf("cycle %d: CIA timers=%d/%d, want %d/%d", n, cia1.timerA, cia2.timerA, 10-n, 10-n)
 		}
+	}
+	if cia1.timerA == 10 || cia2.timerA == 10 {
+		t.Fatalf("CIAs did not advance during bad line: timers=%d/%d", cia1.timerA, cia2.timerA)
+	}
+}
+
+func TestVICCPUWindowIncludesSpriteDMAReadLead(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		display uint8
+		first   uint16
+		last    uint16
+	}{
+		{"sprite 0", 0x01, 44, 48},
+		{"sprite 7", 0x80, 58, 62},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			v := VICII{spriteDisplay: tc.display}
+			for slot := uint16(0); slot < CyclesPerLine; slot++ {
+				v.dot = (slot + 1) * DotsPerCycle
+				if slot == CyclesPerLine-1 {
+					v.dot = 0
+				}
+				if got, want := v.vicCPUWindow(), slot >= tc.first && slot <= tc.last; got != want {
+					t.Errorf("slot %d: VIC CPU window=%v, want %v", slot, got, want)
+				}
+			}
+		})
 	}
 }
 

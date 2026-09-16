@@ -135,19 +135,12 @@ func main() {
 	vic := tiny64.VIC()
 
 	var n int64
-	var stalled int64
 	var lastPC uint16
 	for {
 		// StepCycle completes the VIC phases, CPU Phi2, and IEC tick before
 		// returning, so report the cycle just executed.
-		tstate := cpu.TState
 		vic.StepCycle()
 		n++
-		held := !vic.BA && cpu.TState == tstate
-		if held {
-			stalled++
-		}
-		access := !held && vic.AEC()
 
 		// Print a checkpoint whenever the CPU starts executing a known
 		// KERNAL routine, regardless of -trace, to track boot progress.
@@ -158,23 +151,23 @@ func main() {
 			lastPC = cpu.PC
 		}
 
-		if access && !bus.RW && bus.Address >= 0xD000 && bus.Address <= 0xD3FF {
+		if !bus.RW && bus.Address >= 0xD000 && bus.Address <= 0xD3FF {
 			fmt.Fprintf(os.Stderr, "%8d VIC write $%04X = %#02x at PC=%04X\n", n, bus.Address, bus.Data, cpu.PC)
 		}
 
-		if access && !bus.RW && bus.Address >= 0x0400 && bus.Address <= 0x07E7 {
+		if !bus.RW && bus.Address >= 0x0400 && bus.Address <= 0x07E7 {
 			fmt.Fprintf(os.Stderr, "%8d SCREEN write $%04X = %#02x (%q) at PC=%04X\n", n, bus.Address, bus.Data, bus.Data, cpu.PC)
 		}
 
-		if access && !bus.RW && bus.Address >= 0x3800 && bus.Address <= 0x3FFF {
+		if !bus.RW && bus.Address >= 0x3800 && bus.Address <= 0x3FFF {
 			fmt.Fprintf(os.Stderr, "%8d RAMCHAR write $%04X = %#02x (%q) at PC=%04X\n", n, bus.Address, bus.Data, bus.Data, cpu.PC)
 		}
 
-		if access && !bus.RW && bus.Address >= 0xDD00 && bus.Address <= 0xDD0F {
+		if !bus.RW && bus.Address >= 0xDD00 && bus.Address <= 0xDD0F {
 			fmt.Fprintf(os.Stderr, "%8d CIA2 write $%04X = %#02x at PC=%04X\n", n, bus.Address, bus.Data, cpu.PC)
 		}
 
-		if access && !bus.RW {
+		if !bus.RW {
 			fmt.Fprintf(os.Stderr, "%8d WRITE $%04X = %#02x at PC=%04X\n", n, bus.Address, bus.Data, cpu.PC)
 		}
 
@@ -182,7 +175,7 @@ func main() {
 		// character ROM to the CPU instead of I/O - the classic "copy the
 		// character ROM into RAM" step of redefining characters.
 		if effective := (cpu.Port & cpu.PortDDR) | ^cpu.PortDDR; effective&0x04 == 0 && (effective&0x01 != 0 || effective&0x02 != 0) {
-			if access && bus.RW && bus.Address >= 0xD000 && bus.Address <= 0xDFFF {
+			if bus.RW && bus.Address >= 0xD000 && bus.Address <= 0xDFFF {
 				fmt.Fprintf(os.Stderr, "%8d CHARROM read $%04X = %#02x at PC=%04X\n", n, bus.Address, bus.Data, cpu.PC)
 			}
 		}
@@ -198,8 +191,8 @@ func main() {
 		}
 
 		if *cycles > 0 && n >= *cycles {
-			fmt.Fprintf(os.Stderr, "stopped after %d cycles (%d stalled, %.1f%%): PC=%04X OP=%02X T=%d A=%02X X=%02X Y=%02X SP=%02X P=%02X\n",
-				n, stalled, 100*float64(stalled)/float64(n), cpu.PC, cpu.Opcode, cpu.TState, cpu.A, cpu.X, cpu.Y, cpu.SP, cpu.Status())
+			fmt.Fprintf(os.Stderr, "stopped after %d cycles: PC=%04X OP=%02X T=%d A=%02X X=%02X Y=%02X SP=%02X P=%02X\n",
+				n, cpu.PC, cpu.Opcode, cpu.TState, cpu.A, cpu.X, cpu.Y, cpu.SP, cpu.Status())
 			return
 		}
 	}
