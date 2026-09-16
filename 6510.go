@@ -223,7 +223,7 @@ func (c *CPU) TickPhi2() {
 	// halts the CPU up to three cycles early, and how early depends on
 	// whatever instruction happens to be executing, which shows up as
 	// timing jitter in raster code that reprograms sprites mid-screen.
-	if !vic.BA && !cpuWritesThisCycle(c.Opcode, c.TState) {
+	if !vic.BA && cpuWriteCycles[c.Opcode]>>c.TState&1 == 0 {
 		if c.irqActive {
 			c.clockIRQ(i, false, true)
 		}

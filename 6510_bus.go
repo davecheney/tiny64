@@ -33,3 +33,19 @@ func cpuWritesThisCycle(opcode, tstate uint8) bool {
 	}
 	return (opcode == 0x81 || opcode == 0x91) && tstate == 5
 }
+
+// cpuWriteCycles is cpuWritesThisCycle rolled out over every opcode and
+// T-state, one bit per cycle. The decoder above stays the source of truth -
+// nothing in this table is written or maintained by hand - but the CPU asks
+// the question on every held cycle, and a load beats walking the decode.
+var cpuWriteCycles = func() [256]uint8 {
+	var t [256]uint8
+	for opcode := range t {
+		for tstate := uint8(0); tstate < 8; tstate++ {
+			if cpuWritesThisCycle(uint8(opcode), tstate) {
+				t[opcode] |= 1 << tstate
+			}
+		}
+	}
+	return t
+}()
