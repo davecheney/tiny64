@@ -46,11 +46,13 @@ func TestCIATicksEveryBusCycle(t *testing.T) {
 	const cycles = CyclesPerFrame
 	var held, badLineHeld int
 	for range cycles {
+		// A hold freezes the instruction sequencer and nothing else, so
+		// watch the T-state rather than re-deriving the hold condition
+		// here: BA low stalls the CPU on a read but lets an in-flight
+		// write finish, and only TickPhi2 knows which of the two it ran.
+		tstate := cpu.TState
 		vic.StepCycle()
-		// Sampled after the cycle: phi0high sets AEC for the cycle the CPU
-		// has just run. The write-cycle test is TickPhi2's own: BA low
-		// stalls the CPU on a read but lets an in-flight write finish.
-		if !vic.AEC && cpuWriteCycles[cpu.Opcode]>>cpu.TState&1 == 0 {
+		if cpu.TState == tstate {
 			held++
 			if vic.badLine {
 				badLineHeld++
