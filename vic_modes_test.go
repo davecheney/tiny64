@@ -311,15 +311,24 @@ func TestVICSideBorderOpen38To40Trick(t *testing.T) {
 }
 
 func TestVICSideBorderWriteAtRightCompareDot(t *testing.T) {
+	// lineVisible and lineDrawable are caches of properties derived from
+	// rasterLine, and 6569.go's contract is that anything which moves
+	// rasterLine by other means than dotclock7's line wrap must resync
+	// them. Seeding rasterLine in the literal is exactly that: the zero
+	// value of the cached flags describes line 0, not line 100. Derive
+	// them with syncLineVisibility rather than restating by hand what the
+	// chosen raster line already implies - a hand-set flag is a second,
+	// unchecked copy of the derivation, free to disagree with it the next
+	// time the render window moves.
 	v := &VICII{
 		dot:            rightComp38,
 		rasterLine:     100,
 		control2:       0,
 		mainBorder:     true,
 		rightBorderAt:  rightEdge38,
-		lineDrawable:   true,
 		verticalBorder: false,
 	}
+	v.syncLineVisibility()
 
 	v.WriteRegister(0xD016, csel)
 
@@ -338,9 +347,9 @@ func TestVICSideBorderRMWWritesSkipRightComparisons(t *testing.T) {
 		control2:       0,
 		mainBorder:     true,
 		rightBorderAt:  rightEdge38,
-		lineDrawable:   true,
 		verticalBorder: false,
 	}
+	v.syncLineVisibility()
 
 	v.WriteRegister(0xD016, csel)
 	if v.mainBorder {
