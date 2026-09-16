@@ -107,8 +107,9 @@ type VICII struct {
 	memPointers  uint8
 
 	// Signals driven by the VIC-II and sensed by the CPU
-	BA  bool // Bus Available (true = high/free, false = low/stalled)
-	AEC bool // Address Enable Control (true = CPU owns Phi2, false = VIC owns Phi2)
+	BA          bool  // Bus Available, wired to CPU RDY (low holds reads, not writes)
+	AEC         bool  // Address Enable Control (true = CPU owns Phi2, false = VIC owns Phi2)
+	baLowCycles uint8 // Completed consecutive BA-low cycles, saturated at three.
 
 	// badLine/allowBadLine/denLatch implement the Bad Line Condition
 	// (section 3.5): allowBadLine is latched from DEN once per frame during
@@ -221,6 +222,7 @@ func (v *VICII) Reset() {
 	v.badLine = false
 	v.allowBadLine = false
 	v.denLatch = false
+	v.baLowCycles = 0
 	v.idle = true
 	v.rasterCompare = 0
 	v.rasterIRQTriggered = false
@@ -1124,7 +1126,7 @@ func (v *VICII) dotclock7(reload uint16) {
 	v.paintGraphicsPixel()
 }
 
-// phi0low runs on the first dot of every 8-dot cycle: while the VIC-II is
+// phi0low runs after the first four dots of every 8-dot cycle: while the VIC-II is
 // in charge of the bus, it performs its own memory reads here (section
 // 3.7.2 of the VIC Article). Sprites are not implemented yet.
 //
@@ -1132,6 +1134,7 @@ func (v *VICII) dotclock7(reload uint16) {
 // directly here (each had exactly one call site, unconditional or nearly
 // so) to remove function-call overhead from the frame fast path.
 func (v *VICII) phi0low() {
+	v.AEC = false
 	// slot indexes the 8-dot bus cycles across a line. The article's cycle
 	// numbering starts 10 slots later (its cycle N is our slot N-11, mod
 	// 63), so the constants below are the article's rebased onto slot.
@@ -1376,24 +1379,34 @@ func (v *VICII) cycleBorderComp() {
 	}
 }
 
-// phi0high runs on the 4th dot of every 8-dot cycle: it performs a Bad
+// phi0high runs after the eighth dot of every 8-dot cycle: it performs a Bad
 // Line's c-access (article cycles 15-54) and hands the bus to the CPU for
 // Phi2.
 func (v *VICII) phi0high() {
+	// Even a late badline must give the CPU three cycles' warning.
+	v.AEC = v.baLowCycles < 3 || v.BA
+	if v.BA {
+		v.baLowCycles = 0
+	} else if v.baLowCycles < 3 {
+		v.baLowCycles++
+	}
 	// slot as in phi0low, but 4 dots later, so its offset from the
 	// article's cycle numbering differs by one.
 	slot := (v.dot - 1) / 8
 	if slot >= 4 && slot <= 43 && v.badLine {
 		v.cycleCAccess()
 	}
-
-	// AEC mirrors BA with a delay, or is directly controlled here
-	v.AEC = v.BA
 }
 
 // cycleCAccess reads one character pointer + color entry from the video
 // matrix into the current row's buffer, during a Bad Line (section 3.7.2).
 func (v *VICII) cycleCAccess() {
+	if v.AEC {
+		// Late DMA: VIC D0-D7 are disconnected during the BA warning.
+		// CPU-bus-derived colour data is not modeled by this renderer.
+		v.videoMatrixColor[v.VMLI] = 0xFF
+		return
+	}
 	vm := (uint16(v.memPointers) >> 4) & 0x0F
 	char := plaVICLoad((vm << 10) + v.VC)
 	// Colour RAM is a dedicated 2114 chip wired directly to the VIC-II's
