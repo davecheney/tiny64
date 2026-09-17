@@ -576,14 +576,18 @@ func (v *VICII) refreshGraphicsPalette() {
 }
 
 // nextGraphicsColor shifts one pixel out of the graphics sequencer and
-// reports its colour and whether it is foreground. The shift is the only
+// reports its colour and the index it came from. The shift is the only
 // part of this that is genuinely per dot: the colour it lands on was
 // decided for the whole cycle by refreshGraphicsPalette, and the pixel
 // width by expandGraphicsData when the sequencer last reloaded.
-func (v *VICII) nextGraphicsColor() (byte, bool) {
+//
+// The index is returned rather than the foreground bit because only the
+// sprite compositor reads it, and most dots have no sprite over them;
+// paintGraphicsPixel tests gdForeground after the early-out instead.
+func (v *VICII) nextGraphicsColor() (byte, uint8) {
 	index := uint8(v.gdSequencer >> 14)
 	v.gdSequencer <<= 2
-	return v.gdColor[index], v.gdForeground&(1<<index) != 0
+	return v.gdColor[index], index
 }
 
 // paintGraphicsPixel emits one pixel through the border unit and sprite compositor.
@@ -600,7 +604,7 @@ func (v *VICII) nextGraphicsColor() (byte, bool) {
 // keeps shifting behind a closed border exactly as the hardware does, and
 // only the colour that is written is replaced.
 func (v *VICII) paintGraphicsPixel() {
-	graphicsColor, isForeground := v.nextGraphicsColor()
+	graphicsColor, gdIndex := v.nextGraphicsColor()
 	display := v.spriteDisplay
 	if v.dot >= rightEdge38 {
 		v.rightBorder[v.dot-rightEdge38] = v.borderColor & 0x0F
@@ -613,6 +617,8 @@ func (v *VICII) paintGraphicsPixel() {
 		writePixelToBuffer(v.dot, v.rasterLine, graphicsColor&0x0F)
 		return
 	}
+
+	isForeground := v.gdForeground&(1<<gdIndex) != 0
 
 	d := v.dot
 	r := v.rasterLine
