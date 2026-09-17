@@ -817,10 +817,16 @@ func (v *VICII) ReadRegister(addr uint16) uint8 {
 		}
 		return v.spriteY[reg>>1]
 	case reg <= regBackground3:
-		// $D021-$D024. Everything from $D010 to $D020 is named above.
-		return v.background[reg-regBackground0]
+		// $D021-$D024. Everything from $D010 to $D020 returned from the
+		// switch above, so reg cannot be below $D021 here - but that
+		// switch matches by equality, and an equality test that falls
+		// through leaves no range behind for the compiler to carry. The
+		// mask says what it cannot infer, and costs nothing: the
+		// subtraction is already here and the result is already 0-3.
+		return v.background[(reg-regBackground0)&3]
 	case reg < 0x2F:
-		return v.spriteColor[reg-0x27]
+		// $D027-$D02E, in range for the same unprovable reason.
+		return v.spriteColor[(reg-0x27)&7]
 	}
 	return 0xFF
 }
