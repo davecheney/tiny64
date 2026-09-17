@@ -156,7 +156,7 @@ No code is injected by the host, and `$8000-$9FFF` and `$C000-$CFFF` remain
 available to programs.
 
 Programs do not need a manual cartridge-disable step. For example, with
-Uncle Agnus McFungus mounted as the first PRG, type `/*`, wait for a successful
+Uncle Angus McFungus mounted as the first PRG, type `/*`, wait for a successful
 load and `READY.`, then type `RUN`. The up-arrow shortcut `↑*` also works.
 That shortcut retains its historical queued-`RUN` behavior: it can run the
 previous program after a failed LOAD, so use `/NAME` and a separate `RUN`
@@ -193,8 +193,8 @@ An optional local regression uses the original Uncle PRG without distributing
 it. Run each mode in a fresh process:
 
     for mode in stock load-run up-arrow; do
-        TINY64_UNCLE_AGNUS_PRG=/path/to/uncle-angus_mcfungus.prg \
-            go test . -run "^TestDOSWedgeUncleAgnus/$mode$" -count=1 -v
+        TINY64_UNCLE_ANGUS_PRG=/path/to/uncle-angus_mcfungus.prg \
+            go test . -run "^TestDOSWedgeUncleAngus/$mode$" -count=1 -v
     done
 
 It checks the fixture hash, actual KERNAL-loaded bytes, the formerly failing
