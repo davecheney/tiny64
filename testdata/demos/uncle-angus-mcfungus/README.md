@@ -1,6 +1,6 @@
-# Uncle-Agnus McFungus
+# Uncle-Angus McFungus
 
-This fixture caches the PRG for **Uncle-Agnus McFungus** by Extend, a C64
+This fixture caches the PRG for **Uncle-Angus McFungus** by Extend, a C64
 graphics release (hires plus sprites) shown at KozMOS 2026, where it placed
 ninth in the mixed competition.
 
@@ -8,7 +8,7 @@ ninth in the mixed competition.
 - Released: 22 March 2026
 - Source: <https://csdb.dk/release/?id=260473>
 - Upstream file: <https://csdb.dk/getinternalfile.php/278595/uncle-angus_mcfungus.prg>
-- Cached program: `uncle-agnus-mcfungus.prg`
+- Cached program: `uncle-angus-mcfungus.prg`
 - SHA-256: `470e39185204de92bbfce533a883c45053cd22ec74877ff913e5ab8ec3998216`
 - Transformations: none. The cached PRG is byte-identical to the upstream file.
 
@@ -24,9 +24,9 @@ the repository root:
 
 ```sh
 go run ./cmd/snapshot \
-  -prg testdata/demos/uncle-agnus-mcfungus/uncle-agnus-mcfungus.prg \
+  -prg testdata/demos/uncle-angus-mcfungus/uncle-angus-mcfungus.prg \
   -frames 150 -border \
-  -o testdata/demos/uncle-agnus-mcfungus/frame-000150.png
+  -o testdata/demos/uncle-angus-mcfungus/frame-000150.png
 ```
 
 The reference PNG was reviewed before committing. Tests use these committed

@@ -11,13 +11,13 @@ import (
 )
 
 // This fixture is deliberately not distributed with the emulator. Run each
-// subtest in a fresh process with TINY64_UNCLE_AGNUS_PRG pointing at the PRG.
-func TestDOSWedgeUncleAgnus(t *testing.T) {
+// subtest in a fresh process with TINY64_UNCLE_ANGUS_PRG pointing at the PRG.
+func TestDOSWedgeUncleAngus(t *testing.T) {
 	skipShort(t)
 
-	path := os.Getenv("TINY64_UNCLE_AGNUS_PRG")
+	path := os.Getenv("TINY64_UNCLE_ANGUS_PRG")
 	if path == "" {
-		t.Skip("set TINY64_UNCLE_AGNUS_PRG to run the local compatibility check")
+		t.Skip("set TINY64_UNCLE_ANGUS_PRG to run the local compatibility check")
 	}
 	prg, err := os.ReadFile(path)
 	if err != nil {
@@ -25,7 +25,7 @@ func TestDOSWedgeUncleAgnus(t *testing.T) {
 	}
 	const hash = "470e39185204de92bbfce533a883c45053cd22ec74877ff913e5ab8ec3998216"
 	if len(prg) != 9965 || fmt.Sprintf("%x", sha256.Sum256(prg)) != hash {
-		t.Fatal("fixture is not the expected Uncle Agnus McFungus PRG")
+		t.Fatal("fixture is not the expected Uncle Angus McFungus PRG")
 	}
 	// $F5A9 is the KERNAL's successful LOAD tail, before BASIC can relink
 	// or execute the program. Observing it does not alter CPU execution.
