@@ -218,6 +218,13 @@ func TestDiskInsertedBeforeReset(t *testing.T) {
 	skipShort(t)
 
 	saveMachine(t)
+	// A cold machine, because Reset() below reads the reset vector through
+	// whatever banking the 6510's port is left in, and a good many tests in
+	// this package leave it driving LORAM/HIRAM low to get plain RAM
+	// everywhere. With the KERNAL banked out the vector comes from the 0xAA
+	// fill below and the CPU runs off into open memory, so this test would
+	// pass or fail on which test happened to run before it.
+	coldStart()
 	for i := range ram {
 		ram[i] = 0xAA // stand-in for the power-on noise the front ends write
 	}
