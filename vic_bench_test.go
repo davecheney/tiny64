@@ -266,7 +266,7 @@ func TestBenchmarkProgramRunsALiveMachine(t *testing.T) {
 				vic.StepCycle()
 			}
 
-			background := vic.background0
+			background := vic.background[0]
 			timerBefore := cia1.timerA
 			var handlerCycles, backgroundWrites int
 			for range CyclesPerFrame {
@@ -274,8 +274,8 @@ func TestBenchmarkProgramRunsALiveMachine(t *testing.T) {
 				if cpu.PC >= benchHandler && cpu.PC < benchHandler+16 {
 					handlerCycles++
 				}
-				if vic.background0 != background {
-					background = vic.background0
+				if vic.background[0] != background {
+					background = vic.background[0]
 					backgroundWrites++
 				}
 			}

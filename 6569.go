@@ -32,6 +32,7 @@ const (
 	regMemPointers = 0x18 // $D018: VM13-10/CB13-11
 	regBorderColor = 0x20 // $D020
 	regBackground0 = 0x21 // $D021
+	regBackground3 = 0x24 // $D024, the last of the four background colours
 
 	csel = 0x08 // $D016 bit 3: Column Select (CSEL)
 
@@ -103,10 +104,15 @@ type VICII struct {
 	gdColor      [4]uint8
 	gdForeground uint8
 	borderColor  uint8
-	background0  uint8
-	control1     uint8
-	control2     uint8
-	memPointers  uint8
+
+	// background holds $D021-$D024. They are one contiguous, index
+	// addressed group in the chip, and ECM reaches indices 1-3 through
+	// the top two bits of a character pointer; index 0 is the one every
+	// other mode uses.
+	background  [4]uint8
+	control1    uint8
+	control2    uint8
+	memPointers uint8
 
 	// Signals driven by the VIC-II and sensed by the CPU
 	BA          bool  // Bus Available, wired to CPU RDY (low holds reads, not writes)
@@ -303,33 +309,23 @@ func (v *VICII) WriteRegister(addr uint16, value uint8) {
 	case reg == regBorderColor:
 		v.borderColor = value
 		v.sampleBorderColorAtWrite()
-	case reg == regBackground0:
-		v.background0 = value
+	case reg <= regBackground3:
+		v.background[reg-regBackground0] = value
 		v.refreshGraphicsPalette()
 	case reg < 0x2F:
+		// Sprite colours, which the graphics sequencer does not read, so
+		// unlike the background colours above they do not invalidate the
+		// palette.
 		v.registers22To2E[reg-0x22] = value
-		if reg <= 0x24 {
-			// $D022-$D024 are the other three background colours; the
-			// rest of this range is sprite colours, which the graphics
-			// sequencer does not read.
-			v.refreshGraphicsPalette()
-		}
 	}
 }
 
+// backgroundColor is one of the four background colour registers,
+// $D021-$D024. Only ECM reaches indices 1-3, through the top two bits of a
+// character pointer, so the index is already in range; masking it makes
+// that true for any caller and costs nothing.
 func (v *VICII) backgroundColor(index uint8) uint8 {
-	switch index {
-	case 0:
-		return v.background0
-	case 1:
-		return v.registers22To2E[0]
-	case 2:
-		return v.registers22To2E[1]
-	case 3:
-		return v.registers22To2E[2]
-	default:
-		return 0
-	}
+	return v.background[index&3]
 }
 
 func (v *VICII) sampleBorderColorAtWrite() {
@@ -537,7 +533,7 @@ func (v *VICII) refreshGraphicsPalette() {
 		case v.graphicsMode > modeECMText:
 			v.gdColor[0] = 0 // invalid mode: the display goes black
 		default:
-			v.gdColor[0] = v.background0
+			v.gdColor[0] = v.background[0]
 		}
 		switch v.graphicsMode {
 		case modeStandardText, modeMulticolorText, modeECMText:
@@ -555,7 +551,7 @@ func (v *VICII) refreshGraphicsPalette() {
 
 	switch v.graphicsMode {
 	case modeMulticolorText:
-		v.gdColor[0] = v.background0
+		v.gdColor[0] = v.background[0]
 		v.gdColor[1] = v.backgroundColor(1)
 		v.gdColor[2] = v.backgroundColor(2)
 		// Multicolor text takes its foreground from the low three bits
@@ -563,7 +559,7 @@ func (v *VICII) refreshGraphicsPalette() {
 		v.gdColor[3] = byte(v.videoBuffer>>8) & 0x07
 		v.gdForeground = 1 << 3
 	case modeMulticolorBitmap:
-		v.gdColor[0] = v.background0
+		v.gdColor[0] = v.background[0]
 		v.gdColor[1] = byte(v.videoBuffer>>4) & 0x0F
 		v.gdColor[2] = byte(v.videoBuffer) & 0x0F
 		v.gdColor[3] = byte(v.videoBuffer>>8) & 0x0F
@@ -752,7 +748,7 @@ func (v *VICII) ReadRegister(addr uint16) uint8 {
 	case regBorderColor:
 		return v.borderColor
 	case regBackground0:
-		return v.background0
+		return v.background[0]
 	case 0x1E:
 		val := v.spriteSpriteCollision
 		v.spriteSpriteCollision = 0
@@ -771,6 +767,8 @@ func (v *VICII) ReadRegister(addr uint16) uint8 {
 		return v.register17
 	case reg < regBorderColor:
 		return v.registers19To1F[reg-0x19]
+	case reg <= regBackground3:
+		return v.background[reg-regBackground0]
 	case reg < 0x2F:
 		return v.registers22To2E[reg-0x22]
 	}

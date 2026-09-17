@@ -4,8 +4,7 @@ import "testing"
 
 func TestVICGraphicsModeColors(t *testing.T) {
 	v := &VICII{
-		background0:        1,
-		registers22To2E:    [0x0D]uint8{2, 3, 4},
+		background:         [4]uint8{1, 2, 3, 4},
 		gdPending:          0x1B, // 00, 01, 10, 11
 		videoBufferPending: 0x0D00 | 0xC1,
 	}
@@ -457,7 +456,7 @@ func TestGraphicsPaletteMatchesPerDotDecode(t *testing.T) {
 				if v.graphicsMode > modeECMText {
 					return 0, false
 				}
-				return v.background0, false
+				return v.background[0], false
 			}
 			switch v.graphicsMode {
 			case modeStandardText, modeMulticolorText, modeECMText:
@@ -472,7 +471,7 @@ func TestGraphicsPaletteMatchesPerDotDecode(t *testing.T) {
 		case modeMulticolorText:
 			switch index {
 			case 0:
-				return v.background0, false
+				return v.background[0], false
 			case 1:
 				return v.backgroundColor(1), false
 			case 2:
@@ -483,7 +482,7 @@ func TestGraphicsPaletteMatchesPerDotDecode(t *testing.T) {
 		case modeMulticolorBitmap:
 			switch index {
 			case 0:
-				return v.background0, false
+				return v.background[0], false
 			case 1:
 				return byte(v.videoBuffer>>4) & 0x0F, true
 			case 2:
@@ -499,10 +498,7 @@ func TestGraphicsPaletteMatchesPerDotDecode(t *testing.T) {
 	v := &VICII{}
 	// Distinct background colours, so swapping two of the four registers
 	// cannot pass unnoticed.
-	v.background0 = 0x01
-	v.registers22To2E[0] = 0x02 // $D022
-	v.registers22To2E[1] = 0x03 // $D023
-	v.registers22To2E[2] = 0x04 // $D024
+	v.background = [4]uint8{0x01, 0x02, 0x03, 0x04} // $D021-$D024
 
 	for mode := uint8(0); mode < 8; mode++ {
 		for _, multicolor := range []bool{false, true} {
@@ -596,7 +592,7 @@ func TestBackgroundWriteReachesTheNextDot(t *testing.T) {
 	// Reset seeds the border flip-flops set, because raster 0 is in the
 	// upper border; raster 100 is inside the display window.
 	vic.mainBorder, vic.verticalBorder = false, false
-	vic.background0 = 6
+	vic.background[0] = 6
 	vic.gdPending, vic.videoBufferPending = 0x00, 0x0100
 	vic.loadGraphicsData() // sequencer all background
 
