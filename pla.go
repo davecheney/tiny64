@@ -15,80 +15,73 @@ import "github.com/davecheney/tiny64/rom"
 // that separation is modeled here as separate functions rather than a
 // single AEC-gated access path.
 
-// What the PLA selects for a CPU access never varies within a 256-byte
-// page: every boundary in the map ($8000, $A000, $C000, $D000, $E000) is
-// page aligned. The decode is therefore a table lookup rather than a chain
-// of range tests re-evaluated on every bus cycle, and Cartridge.pages holds
-// the answer for all 256 pages in each of the eight states the CPU's three
-// bank-switching lines can take.
+// What the PLA selects for a CPU access never varies within a 4K block:
+// every boundary in the map ($8000, $A000, $C000, $D000, $E000) is 4K
+// aligned. So the decode is a sixteen-entry lookup rather than a chain of
+// range tests re-evaluated on every bus cycle - and, since only five bits
+// feed it (the CPU port's three bank-switching lines, plus the cartridge's
+// two chip-selects as the /GAME and /EXROM wiring qualifies them), it is
+// re-derived when those move rather than precomputed for every state they
+// could take. Cartridge.blocks holds the map for the state the machine is
+// in; Cartridge.blockSel says which state that is.
 const (
-	// pageInvalid is the zero value, so a Cartridge that has never been
-	// decoded - or has just been replaced wholesale - reads as "not built
-	// yet" and gets rebuilt on the next access, rather than answering from
-	// a table left over from different wiring. See Cartridge.pages.
-	pageInvalid uint8 = iota
-
 	// The only two kinds a write does not land in RAM under come first, so
 	// that plaStore can separate them from the rest with one comparison.
-	pageCharROM
-	pageIO
+	blockCharROM uint8 = iota
+	blockIO
 
-	pageBasic
-	pageKernal
-	pageCartROML
-	pageCartROMH
+	blockBasic
+	blockKernal
+	blockCartROML
+	blockCartROMH
 
-	// pageRAM comes last, and plaLoad answers it from the default arm of
+	// blockRAM comes last, and plaLoad answers it from the default arm of
 	// its switch rather than a case of its own: the bounds check the
 	// compiler emits ahead of the jump table for the banked kinds then
 	// doubles as the test for the commonest kind of all, which is worth
 	// having on a core with no branch predictor.
-	pageRAM
+	blockRAM
 )
 
-// plaDecodePage rebuilds the page-decode table and answers from it. It is
-// reached once after the cartridge wiring changes, and never otherwise, so
-// it is kept out of line: plaLoad and plaStore do the lookup themselves,
-// and TinyGo will not inline a caller that carries this with it.
+// plaDecode re-derives the block decode for the bank-switching lines sel
+// describes. It runs when those lines or the cartridge's wiring move, and
+// never otherwise, so it is kept out of line: plaLoad and plaStore check
+// the selector themselves, and TinyGo will not inline a caller that
+// carries this with it.
 //
 //go:noinline
-func plaDecodePage(addr uint16) uint8 {
-	cartridge.decodePages()
-	return cartridge.pages[cpu.bankSelect()][addr>>8]
+func plaDecode(sel uint8) {
+	cartridge.decodeBlocks(sel)
 }
 
 // plaLoad reads addr through the memory map currently selected by the
 // CPU's bank-switching lines.
 //
-// The table says what kind of memory a page holds, never where it is, so
+// The map says what kind of memory a block holds, never where it is, so
 // the ROM images stay where they are addressed rather than being reached
-// through stored pointers.
+// through stored pointers - which would move 20K of embedded ROM out of
+// flash and into RAM on the microcontroller targets.
 func plaLoad(addr uint16) uint8 {
-	kind := cartridge.pages[cpu.bankSelect()][addr>>8]
-	if kind == pageInvalid {
-		kind = plaDecodePage(addr)
+	sel := cpu.bankSelect()
+	if cartridge.blockSel != sel+1 { // biased by one; see Cartridge.blocks
+		plaDecode(sel)
 	}
-	switch kind {
-	case pageKernal:
+	switch cartridge.blocks[addr>>12] {
+	case blockKernal:
 		return rom.Kernal[addr-0xE000]
-	case pageBasic:
+	case blockBasic:
 		return rom.Basic[addr-0xA000]
-	case pageIO:
+	case blockIO:
 		return ioLoad(addr)
-	case pageCharROM:
+	case blockCharROM:
 		return rom.Character[addr-0xD000]
-	case pageCartROML:
-		// An 8K cartridge's /ROML image. The PLA only asserts /ROML when
-		// both LORAM and HIRAM are high and the cartridge asserts /EXROM.
+	case blockCartROML:
 		return cartridge.ROM[addr-0x8000]
-	case pageCartROMH:
-		// A cartridge wired for MAX mode overrides the KERNAL entirely,
-		// regardless of hiram.
+	case blockCartROMH:
 		return cartridge.ROM[addr-0xE000]
 	default:
-		// pageRAM. pageInvalid was resolved above, so nothing else reaches
-		// here - and if a new kind ever did, reading RAM is the answer
-		// that fails safe.
+		// blockRAM - and if a new kind ever reached here, reading RAM is
+		// the answer that fails safe.
 		return ram[addr]
 	}
 }
@@ -102,19 +95,20 @@ func plaLoad(addr uint16) uint8 {
 // KERNAL's RAMTAS find a cartridge - it writes $55, reads the ROM byte
 // back instead, and stops its memory walk there.
 func plaStore(addr uint16, val uint8) {
-	kind := cartridge.pages[cpu.bankSelect()][addr>>8]
-	if kind == pageInvalid {
-		kind = plaDecodePage(addr)
+	sel := cpu.bankSelect()
+	if cartridge.blockSel != sel+1 { // biased by one; see Cartridge.blocks
+		plaDecode(sel)
 	}
-	if kind > pageIO {
+	kind := cartridge.blocks[addr>>12]
+	if kind > blockIO {
 		// RAM, or the RAM underneath BASIC, the KERNAL or cartridge ROM.
 		ram[addr] = val
 		return
 	}
-	if kind == pageIO {
+	if kind == blockIO {
 		ioStore(addr, val)
 	}
-	// pageCharROM: read-only, and RAM is disabled behind it.
+	// blockCharROM: read-only, and RAM is disabled behind it.
 }
 
 // plaVICLoad reads addr through the VIC-II's own view of memory (used for

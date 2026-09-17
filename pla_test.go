@@ -295,8 +295,8 @@ func TestPLAWedgeLatchIsCartridgeSpecific(t *testing.T) {
 
 // TestPLABankSwitchingThroughPort moves the banking the way real code
 // does - by storing to the CPU's I/O port at $0001 - and reads back
-// through the bus after each move. The PLA answers from a page-decode
-// table now, and a table that is not rebuilt when the banking moves does
+// through the bus after each move. The PLA answers from a cached decode
+// now, and a decode that is not re-derived when the banking moves does
 // not fail loudly: it quietly keeps answering from the previous map. So
 // this banks each window out and back in again, reading through it every
 // time, rather than only checking the state it ends in.
@@ -347,7 +347,7 @@ func TestPLABankSwitchingThroughPort(t *testing.T) {
 }
 
 // TestPLACartridgeEventsRebuildDecode covers the other half of the
-// invalidation obligation. The page decode is cached per Cartridge, so
+// invalidation obligation. The decode is cached per Cartridge, so
 // replacing the Cartridge discards it for free - but the paths that rewire
 // /EXROM in place, the wedge latch and a hardware reset, have to discard it
 // by hand. Every step reads through the map before the next one changes it,
@@ -397,5 +397,79 @@ func TestPLACartridgeEventsRebuildDecode(t *testing.T) {
 	Reset() // asserts /EXROM again, also in place
 	if got := bus.Load(0x8000); got != image[0] {
 		t.Fatalf("after reset: load($8000) = $%02X, want $%02X", got, image[0])
+	}
+}
+
+// TestPLABlockDecodeMatchesLines checks the cached decode against the
+// chain of range tests it replaced, for every address in the CPU's space
+// and every state of the five bits that feed it: the three bank-switching
+// lines, and /GAME and /EXROM as the populated chip-selects qualify them.
+//
+// Every address, not a sample of block boundaries, because the claim the
+// cache rests on is exactly that the decode does not change within a 4K
+// block - so an address that disagrees with the old logic is the failure
+// this is looking for, wherever in its block it sits.
+func TestPLABlockDecodeMatchesLines(t *testing.T) {
+	saveMachine(t)
+
+	for _, wiring := range []struct {
+		name                    string
+		game, exrom, romh, roml bool
+	}{
+		{name: "empty port"},
+		{name: "8K on /ROML", exrom: true, roml: true},
+		{name: "8K, /ROML unpopulated", exrom: true},
+		{name: "MAX mode on /ROMH", game: true, romh: true},
+		{name: "MAX mode, /ROMH unpopulated", game: true},
+		{name: "both lines asserted", game: true, exrom: true, romh: true, roml: true},
+	} {
+		cartridge = Cartridge{
+			ROM:   make([]byte, 0x2000),
+			Game:  wiring.game,
+			Exrom: wiring.exrom,
+			ROMH:  wiring.romh,
+			ROML:  wiring.roml,
+		}
+		for sel := uint8(0); sel < 8; sel++ {
+			cartridge.decodeBlocks(sel)
+			loram, hiram, charen := sel&0x01 != 0, sel&0x02 != 0, sel&0x04 != 0
+			for addr := 0; addr <= 0xFFFF; addr++ {
+				// The decode plaLoad and plaStore used to perform inline,
+				// spelled out here as the oracle it has to keep matching.
+				want := blockRAM
+				switch {
+				case addr >= 0x8000 && addr <= 0x9FFF && cartridge.eightK() && cartridge.ROML && loram && hiram:
+					want = blockCartROML
+				case addr >= 0xA000 && addr <= 0xBFFF && loram && hiram:
+					want = blockBasic
+				case addr >= 0xD000 && addr <= 0xDFFF && (loram || hiram):
+					want = blockCharROM
+					if charen {
+						want = blockIO
+					}
+				case addr >= 0xE000 && cartridge.ultimax() && cartridge.ROMH:
+					want = blockCartROMH
+				case addr >= 0xE000 && hiram:
+					want = blockKernal
+				}
+				if got := cartridge.blocks[addr>>12]; got != want {
+					t.Fatalf("%s, port lines $%X: $%04X decodes as %d, want %d",
+						wiring.name, sel, addr, got, want)
+				}
+			}
+		}
+	}
+}
+
+// TestPLAZeroCartridgeMatchesNoSelector pins the freshness check from the
+// other side: the zero value of Cartridge must never be mistaken for a
+// decoded state, since Insert, Remove and a test assigning the struct all
+// rely on that to discard the map along with the wiring it described.
+func TestPLAZeroCartridgeMatchesNoSelector(t *testing.T) {
+	var fresh Cartridge
+	for sel := uint8(0); sel < 8; sel++ {
+		if fresh.blockSel == sel+1 {
+			t.Errorf("zero Cartridge matches selector $%X; a replaced cartridge would answer from the old map", sel)
+		}
 	}
 }

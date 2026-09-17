@@ -113,10 +113,11 @@ func (c *CPU) Reset() {
 // CHAREN lines driven by the CPU's I/O port at $0001, as bits 0-2 of a
 // byte: pins configured as inputs float high, pins configured as outputs
 // reflect the written value. These select the ROM/RAM/I-O banking
-// performed by the PLA, and index its page-decode table. It is recomputed
-// on every access rather than cached, so that writing Port or PortDDR -
-// whether through store or directly, as tests do - cannot leave a stale
-// banking decision behind.
+// performed by the PLA, which compares this against the state its cached
+// decode was derived for (see plaLoad). It is read afresh on every access
+// rather than cached, so that writing Port or PortDDR - whether through
+// store or directly, as tests do - cannot leave a stale banking decision
+// behind.
 func (c *CPU) bankSelect() uint8 {
 	return ((c.Port & c.PortDDR) | ^c.PortDDR) & 0x07
 }
