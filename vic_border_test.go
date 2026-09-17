@@ -9,6 +9,7 @@ import "testing"
 // Article: for CSEL=1 (40 columns) the border/display transition happens
 // at real X coordinate $18 (24) on the left and $158 (344) on the right.
 func TestVICBorderPlacement(t *testing.T) {
+	parkMachine(t)
 	v := &VICII{}
 	ClearFrameBuffer()
 	v.Reset()
@@ -98,6 +99,7 @@ func TestVICBorderColorWriteSamplesCurrentPhi2Span(t *testing.T) {
 // background-colored pixels within what should be a fully solid
 // 8-pixel-wide character cell.
 func TestVICGAccessPixelAlignment(t *testing.T) {
+	parkMachine(t)
 	v := &VICII{}
 	const targetRow = 52 // within the first Bad Line's row (raster $33-$3A)
 	ClearFrameBuffer()

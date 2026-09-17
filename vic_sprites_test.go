@@ -7,6 +7,7 @@ import (
 // TestVICSpriteSingleColorRendering verifies that a single-color sprite
 // draws at the configured X/Y position with the individual sprite color.
 func TestVICSpriteSingleColorRendering(t *testing.T) {
+	parkMachine(t)
 	ClearFrameBuffer()
 
 	v := &VICII{}
@@ -67,6 +68,7 @@ func TestVICSpriteSingleColorRendering(t *testing.T) {
 // TestVICSpriteMulticolorRendering verifies multicolor sprite bit pairs:
 // 01 -> Extra Color 0 ($D025), 10 -> Sprite Color ($D027), 11 -> Extra Color 1 ($D026).
 func TestVICSpriteMulticolorRendering(t *testing.T) {
+	parkMachine(t)
 	ClearFrameBuffer()
 
 	v := &VICII{}
@@ -133,6 +135,7 @@ func TestVICSpriteMulticolorRendering(t *testing.T) {
 
 // TestVICSpriteExpansionXY tests 2x horizontal and vertical expansion.
 func TestVICSpriteExpansionXY(t *testing.T) {
+	parkMachine(t)
 	v := &VICII{}
 	v.Reset()
 	cia2.PRA, cia2.DDRA = 3, 3
@@ -198,6 +201,7 @@ func TestVICSpriteExpansionXY(t *testing.T) {
 
 // TestVICSpritePriority verifies $D01B priority (front vs behind foreground graphics).
 func TestVICSpritePriority(t *testing.T) {
+	parkMachine(t)
 	v := &VICII{}
 	v.Reset()
 	cia2.PRA, cia2.DDRA = 3, 3
@@ -223,6 +227,11 @@ func TestVICSpritePriority(t *testing.T) {
 	v.WriteRegister(0xD01B, 0x00)
 	v.gdSequencer = 0x4000 // foreground graphics pixel, two bits a dot
 	v.videoBuffer = 0x0100 // color 1 (White)
+	// The colours the sequencer emits are derived from videoBuffer when it
+	// is latched, so setting it by hand has to derive them again. Without
+	// this the test reads whatever palette the previous test left behind,
+	// and passes or fails on the order the suite happens to run in.
+	v.refreshGraphicsPalette()
 	v.dot = 48
 	v.paintGraphicsPixel()
 	if got := [4]byte(frameBufferPixelRGBA(48, 56)); got != red {
@@ -233,6 +242,11 @@ func TestVICSpritePriority(t *testing.T) {
 	v.WriteRegister(0xD01B, 0x01)
 	v.gdSequencer = 0x4000 // foreground graphics pixel, two bits a dot
 	v.videoBuffer = 0x0100 // color 1 (White)
+	// The colours the sequencer emits are derived from videoBuffer when it
+	// is latched, so setting it by hand has to derive them again. Without
+	// this the test reads whatever palette the previous test left behind,
+	// and passes or fails on the order the suite happens to run in.
+	v.refreshGraphicsPalette()
 	v.dot = 48
 	v.paintGraphicsPixel()
 	if got := [4]byte(frameBufferPixelRGBA(48, 56)); got != white {
@@ -251,6 +265,7 @@ func TestVICSpritePriority(t *testing.T) {
 
 // TestVICSpriteSpriteCollision verifies $D01E and sprite-sprite collision IRQ.
 func TestVICSpriteSpriteCollision(t *testing.T) {
+	parkMachine(t)
 	v := &VICII{}
 	v.Reset()
 	cia2.PRA, cia2.DDRA = 3, 3
@@ -292,6 +307,7 @@ func TestVICSpriteSpriteCollision(t *testing.T) {
 
 // TestVICSpriteDataCollision verifies $D01F and sprite-data collision IRQ.
 func TestVICSpriteDataCollision(t *testing.T) {
+	parkMachine(t)
 	v := &VICII{}
 	v.Reset()
 	cia2.PRA, cia2.DDRA = 3, 3
@@ -304,9 +320,14 @@ func TestVICSpriteDataCollision(t *testing.T) {
 	v.WriteRegister(0xD015, 0x01) // Enable Sprite 0
 	v.WriteRegister(0xD01A, 0x08) // Enable Sprite-Data Collision IRQ (bit 3)
 
-	// Set up text mode so nextGraphicsColor returns isForeground = true
-	v.gdSequencer = 0x4000 // top pixel set, two bits a dot
-	v.videoBuffer = 0x0100
+	// The foreground pixel the sprite has to collide with comes from the
+	// g-access, not from here: $1000 holds $80 for the sprite's own shape,
+	// and CB=2 in memPointers points the character generator at the same
+	// address, so the character fetched for this dot has its top bit set
+	// and the sequencer shifts out a foreground pixel. Setting gdSequencer
+	// and videoBuffer by hand at this point would be no help either way,
+	// since the loop below reloads both from memory before the dot that
+	// matters.
 
 	v.control1 = 0x1B
 	v.control2 = 0x08
@@ -331,6 +352,7 @@ func TestVICSpriteDataCollision(t *testing.T) {
 // TestVICSpriteXMSBForSprites1To7 verifies that setting bit i in $D010 places
 // sprite i (1..7) at X = x + 256 rather than scaling by 2^i.
 func TestVICSpriteXMSBForSprites1To7(t *testing.T) {
+	parkMachine(t)
 	ClearFrameBuffer()
 
 	v := &VICII{}
@@ -500,6 +522,7 @@ func TestVICSpriteDMATriggerIsOneShot(t *testing.T) {
 // is still being drawn, so a VIC that re-read the pointer per pixel would
 // switch shape mid-line and truncate the sprite.
 func TestVICSpriteShapeIsLatchedPerLine(t *testing.T) {
+	parkMachine(t)
 	ClearFrameBuffer()
 
 	v := &VICII{}
@@ -608,6 +631,7 @@ func TestVICSpriteDisableDoesNotRetractBand(t *testing.T) {
 // spriteBASlotMask. Sprite 0 fetches in slots 47 and 48 and BA leads the grab
 // by three cycles, so BA is low across slots 44 to 48 and high either side.
 func TestSpriteDMAPullsBALow(t *testing.T) {
+	parkMachine(t)
 	v := &VICII{}
 	v.Reset()
 	cia2.PRA, cia2.DDRA = 3, 3
