@@ -392,6 +392,10 @@ func TestVICWrappedSpritesFillLeftBorderBlock(t *testing.T) {
 		},
 	}
 	v.syncLineVisibility()
+	// Which dots a sprite covers is cached the same way the line state
+	// above is, and for the same reason: the registers were set by hand
+	// rather than reached through WriteRegister or a line's latch.
+	v.rebuildSpriteCoverage()
 
 	for range 32 {
 		v.paintGraphicsPixel()
@@ -630,6 +634,59 @@ func TestSpriteDMAPullsBALow(t *testing.T) {
 		want := slot < 44 || slot > 48 // BA high outside sprite 0's window
 		if v.BA != want {
 			t.Errorf("slot %d: BA = %v, want %v", slot, v.BA, want)
+		}
+	}
+}
+
+// TestSpriteCoverageStaysConsistentAcrossAFrame is the guard on the
+// coverage table's invalidation rule. The table is derived ahead of the
+// dots that read it and rebuilt only where its inputs change, so a new
+// writer of a sprite X, of $D010, of $D01D, or of spriteDisplay that does
+// not rebuild would leave the compositor painting sprites in the wrong
+// place - or, worse, painting none at all, which no assertion about
+// colours would notice on a fixture that expects background there.
+//
+// So drive a frame with a program moving sprites under the beam, and after
+// every bus cycle check the cached table still equals one built from the
+// registers as they stand. Anything that changes an input without
+// rebuilding fails on the cycle it happens.
+func TestSpriteCoverageStaysConsistentAcrossAFrame(t *testing.T) {
+	saveMachine(t)
+	Reset()
+	loadSpriteProgram()
+
+	// Walk every sprite's X, the ninth bits and the expansion register, so
+	// the sweep below sees windows move under it rather than sit still.
+	copy(Ram()[0x0800:], []byte{
+		0xE6, 0x20, // INC $20
+		0xA5, 0x20, // LDA $20
+		0x8D, 0x00, 0xD0, // STA $D000
+		0x8D, 0x02, 0xD0, // STA $D002
+		0x8D, 0x0E, 0xD0, // STA $D00E
+		0x8D, 0x10, 0xD0, // STA $D010
+		0x8D, 0x1D, 0xD0, // STA $D01D
+		0x4C, 0x00, 0x08, // JMP $0800
+	})
+	cpu.PC = 0x0800
+
+	for cycle := range CyclesPerFrame {
+		vic.StepCycle()
+
+		cachedCoverage, cachedStart := vic.spriteCoverage, vic.spriteStart
+		vic.rebuildSpriteCoverage()
+		if vic.spriteCoverage != cachedCoverage {
+			// Report the first dot that differs rather than two 512 byte
+			// arrays.
+			for dot := range vic.spriteCoverage {
+				if got, want := cachedCoverage[dot], vic.spriteCoverage[dot]; got != want {
+					t.Fatalf("cycle %d (raster %d dot %d): coverage of dot %d held %#02x, rebuilding from the same registers gives %#02x - something moved a sprite without rebuilding",
+						cycle, vic.rasterLine, vic.dot, dot, got, want)
+				}
+			}
+		}
+		if vic.spriteStart != cachedStart {
+			t.Fatalf("cycle %d (raster %d): sprite start dots held %v, rebuilding gives %v",
+				cycle, vic.rasterLine, cachedStart, vic.spriteStart)
 		}
 	}
 }
