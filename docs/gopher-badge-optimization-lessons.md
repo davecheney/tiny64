@@ -100,3 +100,56 @@ target speculatively "because it removes branches" - profile the current
 flashed, running measurement before adopting the change. If a change
 adds instructions to remove branches, on this target that is very
 unlikely to pay off.
+
+## Desktop A/B needs a noise floor, not just a baseline
+
+The desktop benchmarks are described above as a "quick, no-hardware-required
+smoke test". That still holds, but the way they are *run* matters more than
+that description suggests, because this repo is often worked on from a
+laptop that several agent sessions share.
+
+Measuring the VIC-II sprite register rework (`spriteX` as a nine bit
+`uint16`, the anonymous register arrays replaced by named fields) produced,
+in one sitting, all three of these:
+
+| method | `StepFrameSprites` result |
+|---|---|
+| baseline run, then the change run some minutes later | **+69%** |
+| six alternating A/B rounds, fixed A-then-B order | **+18%** |
+| ten shuffled rounds, with a second arm running the *same base binary* | **-2.8%**, noise floor 0.08% |
+
+Only the last is true. The first two were the machine, not the code: a 15W
+Ice Lake laptop throttles hard after a couple of minutes of `go test`, and
+another session's `tiny64.test` batch had 11 of them running concurrently.
+A fixed A-then-B order does not save you - if the CPU heats up *within*
+each round, the second arm pays for it every time, which is exactly how a
+change that is 2.8% faster measured 18% slower.
+
+**Run a third arm that is the same binary as the first.** Whatever spread
+it shows against itself is what the machine could not resolve that day, and
+any delta smaller than that means nothing:
+
+```
+baseA  base.test          # the reference
+baseB  base.test          # the SAME binary - this is the noise floor
+change change.test
+```
+
+Shuffle the order of the three every round, take medians, and report the
+self-against-self spread next to the result. In the run above that floor
+was 0.08% on `StepFrameSprites` and 1.80% on `StepFrameBlank`, which is
+what made a 2.8% result worth believing and a 1.1% one not.
+
+Two smaller points from the same exercise:
+
+- **Check what else is running.** `uptime` before and after, and be careful
+  writing the check: `pgrep -f "tiny64.test -test.count=1"` also matches
+  any *other* shell whose command line contains that string, including the
+  watcher loops that poll for it, so it reports contention that is not
+  there. Match the running binary, not the pattern text.
+- **Scope static instruction counts to the right symbol.**
+  `paintGraphicsPixel` has eight call sites (`dotclock0`..`dotclock7`), so
+  unlike the dotclocks it stays a real out-of-line symbol and `main.main`'s
+  count barely moves when it changes. `llvm-nm` on the ELF says which
+  helpers survived; `arm-none-eabi-*` is not always installed, and
+  `llvm-objdump`/`llvm-size`/`llvm-nm` read thumbv6m fine.
