@@ -151,14 +151,8 @@ type VICII struct {
 	// not push fixed-offset fields out of cheap reach.
 	videoMatrixColor [40]uint16
 
-	// Registers not used by the current hot video path remain grouped by
-	// address range. ReadRegister and WriteRegister map around the named
-	// registers above.
-	registers00To10 [0x11]uint8
-	registers12To15 [0x04]uint8
-	register17      uint8
-	registers19To1F [0x07]uint8
-	registers22To2E [0x0D]uint8
+	lightpenX uint8 // $D013
+	lightpenY uint8 // $D014
 
 	rasterCompare      uint16
 	rasterIRQTriggered bool
@@ -166,8 +160,23 @@ type VICII struct {
 	interruptEnable    uint8
 	IRQ                bool
 
-	spriteSpriteCollision uint8
-	spriteDataCollision   uint8
+	// The sprite registers that are a bit per sprite, kept as the whole
+	// bytes the chip presents at these addresses: the CPU reads and writes
+	// them that way - LDA $D015 / ORA #1 / STA $D015 is the multiplexer
+	// idiom - and the dot path wants one load and a mask test per sprite.
+	// spriteBit is the one place that says which bit is whose.
+	//
+	// spriteDisplay and spriteExpFF are internal sets in the same encoding,
+	// kept adjacent so one base register reaches the whole group.
+	spriteEnable          uint8 // $D015 MxE
+	spriteExpandY         uint8 // $D017 MxYE
+	spritePriority        uint8 // $D01B MxDP, set = sprite behind foreground
+	spriteMulticolor      uint8 // $D01C MxMC
+	spriteExpandX         uint8 // $D01D MxXE
+	spriteMC0             uint8 // $D025, multicolor bit pair 01
+	spriteMC1             uint8 // $D026, multicolor bit pair 11
+	spriteSpriteCollision uint8 // $D01E, read-cleared
+	spriteDataCollision   uint8 // $D01F, read-cleared
 
 	// spriteDisplay is the set of sprites that will be drawn on the next
 	// raster line, and spriteShape their already-fetched pattern bytes.
@@ -175,8 +184,17 @@ type VICII struct {
 	// see latchSpriteDisplay and latchSpriteShape.
 	spriteDisplay uint8
 	spriteExpFF   uint8
-	spriteRow     [8]uint8
-	spriteShape   [8][3]uint8
+
+	// The per-sprite values, one array each. spriteX holds the whole nine
+	// bit X: $D010 has no storage of its own - it is bit 8 of each sprite's
+	// X, gathered on read and scattered on write - so the dot path never
+	// has to reassemble it. These are indexed dynamically, so they sit at
+	// the cold end for the reason videoMatrixColor does.
+	spriteX     [8]uint16 // $D000+2i, with $D010's bit folded in
+	spriteY     [8]uint8  // $D001+2i
+	spriteColor [8]uint8  // $D027+i, stored whole and masked at use
+	spriteRow   [8]uint8
+	spriteShape [8][3]uint8
 }
 
 var vic VICII
@@ -277,8 +295,16 @@ func (v *VICII) syncLineVisibility() {
 func (v *VICII) WriteRegister(addr uint16, value uint8) {
 	reg := addr & 0x3F
 	switch {
-	case reg <= 0x10:
-		v.registers00To10[reg] = value
+	case reg < 0x10:
+		// $D000-$D00F, X and Y interleaved. A low byte write leaves the
+		// ninth bit, which lives in $D010, alone.
+		if reg&1 == 0 {
+			v.spriteX[reg>>1] = v.spriteX[reg>>1]&0x100 | uint16(value)
+		} else {
+			v.spriteY[reg>>1] = value
+		}
+	case reg == 0x10:
+		v.setSpriteXMSB(value)
 	case reg == regControl1:
 		v.control1 = value
 		v.rasterCompare = (v.rasterCompare & 0xFF) | (uint16(value&0x80) << 1)
@@ -286,14 +312,18 @@ func (v *VICII) WriteRegister(addr uint16, value uint8) {
 	case reg == 0x12:
 		v.rasterCompare = (v.rasterCompare & 0x100) | uint16(value)
 		v.checkRasterIRQ()
-	case reg < regControl2:
-		v.registers12To15[reg-0x12] = value
+	case reg == 0x13:
+		v.lightpenX = value
+	case reg == 0x14:
+		v.lightpenY = value
+	case reg == 0x15:
+		v.spriteEnable = value
 	case reg == regControl2:
 		v.control2 = value
 		v.sampleSideBorderAtWrite(value)
 		v.sampleGraphicsAtWrite(value)
 	case reg == 0x17:
-		v.register17 = value
+		v.spriteExpandY = value
 	case reg == regMemPointers:
 		v.memPointers = value
 	case reg == 0x19:
@@ -302,21 +332,29 @@ func (v *VICII) WriteRegister(addr uint16, value uint8) {
 	case reg == 0x1A:
 		v.interruptEnable = value & 0x0F
 		v.updateIRQ()
+	case reg == 0x1B:
+		v.spritePriority = value
+	case reg == 0x1C:
+		v.spriteMulticolor = value
+	case reg == 0x1D:
+		v.spriteExpandX = value
 	case reg == 0x1E, reg == 0x1F:
 		// Collision registers are read-cleared and ignore writes.
-	case reg < regBorderColor:
-		v.registers19To1F[reg-0x19] = value
 	case reg == regBorderColor:
 		v.borderColor = value
 		v.sampleBorderColorAtWrite()
 	case reg <= regBackground3:
 		v.background[reg-regBackground0] = value
 		v.refreshGraphicsPalette()
+	case reg == 0x25:
+		v.spriteMC0 = value
+	case reg == 0x26:
+		v.spriteMC1 = value
 	case reg < 0x2F:
-		// Sprite colours, which the graphics sequencer does not read, so
-		// unlike the background colours above they do not invalidate the
-		// palette.
-		v.registers22To2E[reg-0x22] = value
+		// $D027-$D02E. The graphics sequencer does not read the sprite
+		// colours, so unlike the background colours above they do not
+		// invalidate the palette.
+		v.spriteColor[reg-0x27] = value
 	}
 }
 
@@ -612,10 +650,9 @@ func (v *VICII) paintGraphicsPixel() {
 
 	d := v.dot
 	r := v.rasterLine
-	expandXReg := v.registers19To1F[4]    // $D01D
-	multicolorReg := v.registers19To1F[3] // $D01C
-	priorityReg := v.registers19To1F[2]   // $D01B
-	msbReg := v.registers00To10[0x10]     // $D010
+	expandXReg := v.spriteExpandX
+	multicolorReg := v.spriteMulticolor
+	priorityReg := v.spritePriority
 
 	var (
 		hitCount             int
@@ -630,13 +667,9 @@ func (v *VICII) paintGraphicsPixel() {
 			continue
 		}
 
-		// Horizontal range check
-		x := uint16(v.registers00To10[i*2])
-		if msbReg&mask != 0 {
-			x |= 0x100
-		}
+		// Horizontal range check.
+		startDot := v.spriteStartDot(i)
 		expandX := (expandXReg & mask) != 0
-		startDot := (24 + x) % DotsPerLine
 		var px uint8
 		if !expandX {
 			if d < startDot || d >= startDot+24 {
@@ -659,7 +692,7 @@ func (v *VICII) paintGraphicsPixel() {
 			if (b>>(7-(px%8)))&1 == 0 {
 				continue
 			}
-			color = v.registers22To2E[5+i] & 0x0F
+			color = v.spriteColor[i] & 0x0F
 		} else {
 			pairIdx := px / 2
 			shift := (3 - (pairIdx % 4)) * 2
@@ -668,11 +701,11 @@ func (v *VICII) paintGraphicsPixel() {
 			case 0:
 				continue
 			case 1:
-				color = v.registers22To2E[3] & 0x0F // $D025 extra color 0
+				color = v.spriteMC0 & 0x0F
 			case 2:
-				color = v.registers22To2E[5+i] & 0x0F // $D027+i individual color
+				color = v.spriteColor[i] & 0x0F
 			case 3:
-				color = v.registers22To2E[4] & 0x0F // $D026 extra color 1
+				color = v.spriteMC1 & 0x0F
 			}
 		}
 
@@ -747,8 +780,26 @@ func (v *VICII) ReadRegister(addr uint16) uint8 {
 		return v.memPointers
 	case regBorderColor:
 		return v.borderColor
-	case regBackground0:
-		return v.background[0]
+	case 0x10:
+		return v.spriteXMSBRegister()
+	case 0x13:
+		return v.lightpenX
+	case 0x14:
+		return v.lightpenY
+	case 0x15:
+		return v.spriteEnable
+	case 0x17:
+		return v.spriteExpandY
+	case 0x1B:
+		return v.spritePriority
+	case 0x1C:
+		return v.spriteMulticolor
+	case 0x1D:
+		return v.spriteExpandX
+	case 0x25:
+		return v.spriteMC0
+	case 0x26:
+		return v.spriteMC1
 	case 0x1E:
 		val := v.spriteSpriteCollision
 		v.spriteSpriteCollision = 0
@@ -759,18 +810,17 @@ func (v *VICII) ReadRegister(addr uint16) uint8 {
 		return val
 	}
 	switch {
-	case reg < 0x11:
-		return v.registers00To10[reg]
-	case reg < regControl2:
-		return v.registers12To15[reg-0x12]
-	case reg == 0x17:
-		return v.register17
-	case reg < regBorderColor:
-		return v.registers19To1F[reg-0x19]
+	case reg < 0x10:
+		// $D000-$D00F, X and Y interleaved.
+		if reg&1 == 0 {
+			return uint8(v.spriteX[reg>>1])
+		}
+		return v.spriteY[reg>>1]
 	case reg <= regBackground3:
+		// $D021-$D024. Everything from $D010 to $D020 is named above.
 		return v.background[reg-regBackground0]
 	case reg < 0x2F:
-		return v.registers22To2E[reg-0x22]
+		return v.spriteColor[reg-0x27]
 	}
 	return 0xFF
 }
@@ -1253,7 +1303,9 @@ var spriteBASlotMask = [CyclesPerLine]uint8{
 }
 
 // spriteDMAStall reports whether any sprite whose BA window covers this
-// slot is currently DMA active, and so is holding BA low.
+// slot is currently DMA active, and so is holding BA low. It asks that of
+// all eight sprites at once, so it tests the display set as a whole byte
+// rather than through spriteUnderDMA.
 func (v *VICII) spriteDMAStall(slot uint16) bool {
 	return spriteBASlotMask[slot]&v.spriteDisplay != 0
 }
@@ -1275,8 +1327,8 @@ func (v *VICII) spriteDMAStall(slot uint16) bool {
 // Everything after this point - the pointer and data fetches, and the
 // display window on the following line - runs off the state latched here.
 func (v *VICII) latchSpriteDisplay() {
-	enable := v.registers12To15[3] // $D015
-	expandY := v.register17        // $D017
+	enable := v.spriteEnable
+	expandY := v.spriteExpandY
 	line := uint8(v.rasterLine)
 
 	for i := uint8(0); i < 8; i++ {
@@ -1305,7 +1357,7 @@ func (v *VICII) latchSpriteDisplay() {
 		// RASTER, so on PAL a sprite positioned above line 56 is triggered
 		// a second time when the raster passes 256 + Y.
 		if v.spriteDisplay&mask == 0 && enable&mask != 0 &&
-			v.registers00To10[i*2+1] == line {
+			v.spriteYPos(i) == line {
 			v.spriteDisplay |= mask
 			v.spriteRow[i] = 0
 			v.spriteExpFF |= mask
@@ -1313,12 +1365,99 @@ func (v *VICII) latchSpriteDisplay() {
 	}
 }
 
+// spriteBit is the bit sprite i occupies in every per-sprite mask
+// register - $D010, $D015, $D017, $D01B, $D01C, $D01D, $D01E, $D01F - and
+// in the internal spriteDisplay and spriteExpFF sets. This is the only
+// place that mapping is written down.
+func spriteBit(i uint8) uint8 { return 1 << i }
+
+// spriteXMSBRegister reassembles $D010 from the ninth bit of each sprite's
+// X. The register has no storage of its own; this and setSpriteXMSB are the
+// only places the two representations meet, and both run only when the CPU
+// touches $D010.
+func (v *VICII) spriteXMSBRegister() uint8 {
+	var m uint8
+	for i := range v.spriteX {
+		if v.spriteX[i]&0x100 != 0 {
+			m |= spriteBit(uint8(i))
+		}
+	}
+	return m
+}
+
+// setSpriteXMSB distributes a write to $D010 over the ninth bit of each
+// sprite's X, leaving the low eight bits alone.
+func (v *VICII) setSpriteXMSB(value uint8) {
+	for i := range v.spriteX {
+		if value&spriteBit(uint8(i)) != 0 {
+			v.spriteX[i] |= 0x100
+		} else {
+			v.spriteX[i] &^= 0x100
+		}
+	}
+}
+
+// The sprite properties, each naming one register's meaning for one sprite
+// so that no caller has to know which bit or which address it came from.
+
+func (v *VICII) spriteXPos(i uint8) uint16 { return v.spriteX[i] }
+func (v *VICII) spriteYPos(i uint8) uint8  { return v.spriteY[i] }
+
+// spriteColorOf is sprite i's $D027+i colour. The register stores the whole
+// written byte - $D027 reads back exactly what was written - and only the
+// low nibble reaches the screen.
+func (v *VICII) spriteColorOf(i uint8) uint8 { return v.spriteColor[i] & 0x0F }
+
+func (v *VICII) spriteEnabled(i uint8) bool        { return v.spriteEnable&spriteBit(i) != 0 }
+func (v *VICII) spriteExpandedX(i uint8) bool      { return v.spriteExpandX&spriteBit(i) != 0 }
+func (v *VICII) spriteExpandedY(i uint8) bool      { return v.spriteExpandY&spriteBit(i) != 0 }
+func (v *VICII) spriteIsMulticolor(i uint8) bool   { return v.spriteMulticolor&spriteBit(i) != 0 }
+func (v *VICII) spriteBehindGraphics(i uint8) bool { return v.spritePriority&spriteBit(i) != 0 }
+
+// spriteUnderDMA reports whether sprite i is in the set latched for the
+// next raster line, which is what decides both whether it is drawn and
+// whether it steals bus cycles.
+func (v *VICII) spriteUnderDMA(i uint8) bool { return v.spriteDisplay&spriteBit(i) != 0 }
+
+// spriteWidth and spriteHeight are sprite i's size on screen, doubled in
+// each direction by its $D01D and $D017 expansion bits.
+func (v *VICII) spriteWidth(i uint8) uint16 {
+	if v.spriteExpandedX(i) {
+		return 48
+	}
+	return 24
+}
+
+func (v *VICII) spriteHeight(i uint8) uint8 {
+	if v.spriteExpandedY(i) {
+		return 42
+	}
+	return 21
+}
+
+// spriteStartDot is the first dot of a line that sprite i covers. The X
+// registers place a sprite by its leftmost dot, 24 dots left of the display
+// window's first column.
+//
+// The wrap is written out rather than left to "% DotsPerLine". DotsPerLine
+// is 504, not a power of two, and ARMv6-M has no divide instruction; the
+// modulo only lowers to this single compare for as long as the compiler can
+// still prove X is at most 0x1FF, which is not a property to hang the dot
+// path's cost on.
+func (v *VICII) spriteStartDot(i uint8) uint16 {
+	start := 24 + v.spriteX[i]
+	if start >= DotsPerLine {
+		start -= DotsPerLine
+	}
+	return start
+}
+
 // latchSpriteShape performs sprite i's pointer and data fetches, the
 // p-access and three s-accesses the VIC-II makes in article cycles 58+2i
 // and 59+2i. The three bytes are one row of the sprite, chosen by the row
 // counter the chip derives from how far into its Y band the sprite is.
 func (v *VICII) latchSpriteShape(i uint8) {
-	if v.spriteDisplay&(1<<i) == 0 {
+	if !v.spriteUnderDMA(i) {
 		return
 	}
 	screenBase := (uint16(v.memPointers) >> 4) & 0x0F << 10

@@ -382,17 +382,16 @@ func TestVICWrappedSpritesFillLeftBorderBlock(t *testing.T) {
 		dot:           0,
 		rasterLine:    56,
 		spriteDisplay: 3,
+		// Sprite 0: X=480, which wraps to dots 0-23. Sprite 1: X=0,
+		// which starts at dot 24.
+		spriteX:     [8]uint16{0x1E0, 0x000},
+		spriteColor: [8]uint8{2, 4},
 		spriteShape: [8][3]uint8{
 			{0xFF, 0xFF, 0xFF},
 			{0xFF, 0xFF, 0xFF},
 		},
 	}
 	v.syncLineVisibility()
-	v.registers00To10[0] = 0xE0 // Sprite 0: X=480, wraps to dots 0-23.
-	v.registers00To10[2] = 0x00 // Sprite 1: X=0, starts at dot 24.
-	v.registers00To10[0x10] = 0x01
-	v.registers22To2E[5] = 2
-	v.registers22To2E[6] = 4
 
 	for range 32 {
 		v.paintGraphicsPixel()
