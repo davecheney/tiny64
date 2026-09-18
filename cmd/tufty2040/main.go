@@ -159,8 +159,8 @@ func main() {
 			if acc > 0 {
 				hitPct = 100 * float64(hit) / float64(acc)
 			}
-			fmt.Printf("frame %d: emulate=%v wait=%v start=%v (avg over 50 frames) xip=%.2f%% (%d/%d accesses)\n",
-				frame, emulateTime/50, waitTime/50, startDrawTime/50, hitPct, hit, acc)
+			fmt.Printf("frame %d: emulate=%v wait=%v start=%v (avg over 50 frames) xip=%.2f%% hits=%d accesses=%d misses=%d\n",
+				frame, emulateTime/50, waitTime/50, startDrawTime/50, hitPct, hit, acc, acc-hit)
 			emulateTime, waitTime, startDrawTime = 0, 0, 0
 		}
 
