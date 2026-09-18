@@ -431,7 +431,6 @@ func (v *VICII) sampleSideBorderAtWrite(control2 uint8) {
 	}
 }
 
-
 func (v *VICII) finishSideBorder() {
 	if !v.lineDrawable {
 		v.rightBorderAt = 0
