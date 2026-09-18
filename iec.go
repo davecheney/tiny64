@@ -52,6 +52,7 @@ var iecBus []iecPeripheral
 // as ?FILE NOT FOUND - looks nothing like its cause. So the last device
 // plugged in at an address wins, and the previous occupant comes off.
 func attachIEC(p iecPeripheral) {
+	iecActive = true
 	// Both paths below build a new slice rather than writing into the
 	// existing one. Callers snapshot iecBus to restore it later, and any
 	// write into the shared backing array reaches those snapshots: the
@@ -80,6 +81,7 @@ func attachIEC(p iecPeripheral) {
 // shows up as a leak - the length stays right, only the contents are wrong -
 // and it is what made a drive appear to survive a test that detached it.
 func detachIEC(p iecPeripheral) {
+	iecActive = true
 	kept := make([]iecPeripheral, 0, len(iecBus))
 	for _, existing := range iecBus {
 		if existing.iecAddress() != p.iecAddress() {
@@ -104,35 +106,27 @@ func addressOccupied(address uint8) bool {
 	return false
 }
 
-// iecTick advances every attached peripheral by one Phi2 cycle, unless
-// the bus is idle, in which case there is nothing to advance it to.
+// iecActive reports whether the bus is worth clocking. Nothing attached
+// to it can start a transaction on its own - a generic drive has no clock
+// of its own and does nothing but answer - so the only thing that can is
+// the C64, and it does so by driving ATN, CLOCK or DATA from CIA2's port
+// A. Arming this there, and disarming it when the drive next finds itself
+// with nothing to do, is what lets the common case cost one test.
+//
+// It errs towards armed: attaching or detaching arms it, and so does any
+// write to the port, whether or not the bus lines actually moved. An
+// unnecessary tick is a wasted cycle, where a missed one is a drive that
+// never sees ATN released and a C64 that waits forever for a reply.
+var iecActive = true
+
+// iecTick advances every attached peripheral by one Phi2 cycle.
 func iecTick() {
-	if iecBusIdle() {
+	if !iecActive {
 		return
 	}
 	for _, p := range iecBus {
 		p.iecTick()
 	}
-}
-
-// iecBusIdle reports whether this cycle can be skipped: one generic drive,
-// between jobs, on a bus that has not moved since it last looked.
-//
-// The three clauses are what make that safe. ATN is compared against the
-// device's own record rather than a copy kept here, because the device
-// acts on the edge - skip the cycle ATN moves and it never sees the
-// release, so the next assertion raises no edge and the C64 waits forever
-// for an acknowledgement. Nothing is cached, so nothing can fall out of
-// step with iecBus, which the tests reassign directly. And anything that
-// is not a lone generic drive falls through to be clocked as before: a
-// 1541 times the serial protocol with its own VIAs and cannot be stopped
-// while the C64 runs, and a device the bus has never heard of gets no say.
-func iecBusIdle() bool {
-	if len(iecBus) != 1 {
-		return false
-	}
-	d, ok := iecBus[0].(*iecDevice)
-	return ok && d.state == iecIdle && d.atn == ATNAsserted()
 }
 
 // ATNAsserted, CLKAsserted and DATAAsserted report the actual IEC bus line
