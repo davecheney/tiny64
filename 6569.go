@@ -54,13 +54,18 @@ const (
 	badLineRasterStart = 0x30
 	badLineRasterEnd   = 0xF7
 
-	leftComp38  = 55  // CSEL=0: 38 columns (article $1F)
-	leftComp40  = 48  // CSEL=1: 40 columns (article $18)
-	rightComp38 = 408 // CSEL=0: 38 columns (article $14F, after X counter wrap)
-	rightComp40 = 416 // CSEL=1: 40 columns (article $158, after X counter wrap)
+	leftComp38 = 55 // CSEL=0: 38 columns (article $1F)
+	leftComp40 = 48 // CSEL=1: 40 columns (article $18)
+	// rightEdge38/40 are the article's right comparison values, $14F and
+	// $158, rebased onto dot by the same mapping that carries the two left
+	// ones above. rightComp38/40 are where this emulator actually decides,
+	// 48 dots later, and are 51*8 and 52*8 - cycle boundaries, with no
+	// basis in the article. See the note on rightBorderOpen for why.
+	rightEdge38 = 359 // CSEL=0: 38 columns (article $14F)
+	rightEdge40 = 368 // CSEL=1: 40 columns (article $158)
 
-	rightEdge38 = 359
-	rightEdge40 = 368
+	rightComp38 = 408 // where the CSEL=0 decision is actually taken
+	rightComp40 = 416 // where the CSEL=1 decision is actually taken
 )
 
 // Border unit comparison values, indexed by the RSEL/CSEL control bits.
@@ -90,10 +95,79 @@ type VICII struct {
 	// compares - which LLVM cannot hoist for us, since the pixel sink call
 	// may alias this struct and forces a reload after every paint. Kept in
 	// sync by syncLineVisibility.
-	lineVisible     bool
-	lineDrawable    bool
-	mainBorder      bool
-	verticalBorder  bool
+	lineVisible    bool
+	lineDrawable   bool
+	mainBorder     bool
+	verticalBorder bool
+	// rightBorderAt, rightBorderOpen and rightBorder are not hardware. A
+	// 6569 has exactly two border flip-flops and neither of them is "the
+	// right border is open". They are bookkeeping left behind by a modelling
+	// choice, and this is the record of why, because the shape is not
+	// something anyone would arrive at from the article.
+	//
+	// How it got here.
+	//
+	// dd17bf7 implemented section 3.9 as written. rightComp38 and
+	// rightComp40 were 359 and 368 - the article's $14F and $158 rebased
+	// onto dot by the same mapping that carries both left comparisons - and
+	// reaching one set mainBorder. No shadow buffer, no deferral, no flag.
+	//
+	// 31e8125, "Improve VIC-II border trick timing", moved those two
+	// constants to 408 and 416 and added all three fields below. 408 and 416
+	// are 51*8 and 52*8: cycle boundaries, not article values. Their comment
+	// claimed "article $14F/$158, after X counter wrap" until this note was
+	// written, which was simply false - $14F and $158 rebase to 359 and 368,
+	// which is exactly what rightEdge38 and rightEdge40 are. Nothing in the
+	// article puts a comparison at 408 or 416.
+	//
+	// What the deferral costs.
+	//
+	// Deciding the border 48 dots after the beam passed the edge means the
+	// answer arrives after those dots have already been painted. So they are
+	// not painted from the border state at all. paintGraphicsPixel stores a
+	// copy of borderColor for every dot from rightEdge38 on into
+	// rightBorder, and finishSideBorder writes those into the framebuffer at
+	// end of line, on top of the pixels already sitting there.
+	//
+	// That is the part to be uncomfortable about. finishSideBorder addresses
+	// v.rasterLine at dots emitted up to 49 dots earlier on that same line.
+	// A real VIC cannot do this - the beam is gone. It works here only
+	// because the framebuffer is memory and nothing reads a line back until
+	// the frame ends.
+	//
+	// rightBorderOpen is the last patch in that chain. A span replay can say
+	// "all of this is border" or "none of it is". It cannot say "border for
+	// exactly one dot at the boundary, then open", and that single dot is
+	// real and visible. The flag is what says "except that one".
+	//
+	// Why it is still here.
+	//
+	// Because the behaviour is right even though the concept is not. The
+	// article-literal model was rebuilt and measured against a VICE capture
+	// of the-passengers. On the 152 raster lines where the two models
+	// disagree, comparing edge positions per line, this model matches VICE
+	// on 128 and the article-literal one on none. Over the whole frame, 262
+	// of 293 lines match exactly against 134.
+	//
+	// The reason is that the demos which open the side border hold CSEL=1
+	// through dot 368 and drop it during hblank. A model that latches at 368
+	// paints a border the hardware leaves open, so the deferral compensates
+	// for something real: either the effective comparison happens later than
+	// the article's rebased coordinate, or a $D016 write lands earlier
+	// relative to the VIC than it should. Which of those it is has not been
+	// established, and that is the open question here.
+	//
+	// It survived three removal attempts before that, because until #93 and
+	// #94 gave VICE and this emulator the same raster size and the same
+	// palette there was no external judge. The only reference was a set of
+	// fixture PNGs this emulator generated itself, and every change to the
+	// border model moves pixels, so every attempt failed against its own
+	// prior output and read as a regression.
+	//
+	// Known residual. Of the 31 lines where this model still differs from
+	// VICE on the-passengers, 28 have the same edge count with every edge
+	// shifted by 0 or +1 dot, clustered at dots 48-55, the left comparison
+	// window. Three differ structurally. See #62.
 	rightBorderAt   uint16
 	rightBorderOpen bool
 	rightBorder     [VisibleDotsPerLine - rightEdge38]uint8
