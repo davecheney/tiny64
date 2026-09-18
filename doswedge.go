@@ -69,9 +69,9 @@ const (
 // BASIC and loaded programs retain all their normal RAM.
 func EnableDOSWedge() {
 	// /GAME floating, /EXROM asserted, a ROM chip on /ROML: an ordinary 8K
-	// cartridge at $8000-$9FFF. The image never varies, so it is mapped
-	// straight out of flash rather than assembled into RAM at run time;
-	// the assembler that produced it is test-only code, kept honest by
+	// cartridge at $8000-$9FFF. The image never varies, so it is a fixed
+	// asset rather than something assembled at run time; the assembler
+	// that produced it is test-only code, kept honest by
 	// TestDOSWedgeEmbeddedImageIsTheBuiltImage.
 	bus.Insert(rom.DOSWedge, false, true, false, true)
 	cartridge.dosWedge = true
