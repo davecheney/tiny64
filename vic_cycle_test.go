@@ -40,9 +40,9 @@ func TestVICStepCycleStalledReadClocksCIAs(t *testing.T) {
 }
 
 // TestVICStepCycleCPUWriteLandsMidSlot pins where the CPU's bus cycle sits
-// inside the VIC's eight dots. Section 3.5 puts article cycle 1 at X $194,
-// which rebases to dot 428, and 428 mod 8 is 4 - so Phi2 falls halfway
-// through the slot. The first four dots of the slot are painted before the
+// inside the VIC's eight dots. VINC falls at dot 428, four dots into its
+// own slot rather than on the boundary - so Phi2 falls halfway through the
+// slot. The first four dots of the slot are painted before the
 // CPU runs and the last four after it, which is what lets a $D016 write
 // made in one slot be read by a border comparison in the next.
 func TestVICStepCycleCPUWriteLandsMidSlot(t *testing.T) {

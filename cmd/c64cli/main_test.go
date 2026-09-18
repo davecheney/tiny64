@@ -15,10 +15,10 @@ import (
 )
 
 // rasterAfter is the raster line a trace should report after n completed
-// cycles. The raster counter does not move when the beam wraps: it moves in
-// article cycle 1, the RasterIncrementCycle'th cycle of the line, which is
-// nine cycles earlier. So the first line of the trace is short by that much
-// and every line after it is a full CyclesPerLine long.
+// cycles. The raster counter does not move when the beam wraps: it moves on
+// VINC, the RasterIncrementCycle'th cycle of the line, which is nine cycles
+// earlier. So the first line of the trace is short by that much and every
+// line after it is a full CyclesPerLine long.
 func rasterAfter(n int) int {
 	return (n + tiny64.CyclesPerLine - tiny64.RasterIncrementCycle) / tiny64.CyclesPerLine
 }

@@ -148,13 +148,14 @@ func TestVICXScrollDelaysGraphicsReload(t *testing.T) {
 		t.Fatalf("reload dot = %d with XSCROLL=3, want 51", got)
 	}
 
-	// And the data is actually taken up there. dot 51 is 8N+3, so
-	// dotclock3 is the phase that sees it.
+	// And the data is actually taken up there.
 	v.dot = 51
-	v.dotclock3(51)
+	v.dotclock(51, false)
 	// The sequencer holds two bits per dot, so the pending $FF is 0x5555
-	// once widened - see expandGraphicsData.
-	if v.gdSequencer != 0x5555 || v.videoBuffer != 0x0100 {
+	// once widened - see expandGraphicsData. dotclock reloads and then
+	// paints the same dot, which shifts the first pixel out of it, so what
+	// is left is 0x5555 shifted up two bits, which is 0x5554.
+	if v.gdSequencer != 0x5554 || v.videoBuffer != 0x0100 {
 		t.Fatalf("sequencer=%#04x buffer=%#04x at dot %d, want pending graphics data",
 			v.gdSequencer, v.videoBuffer, v.dot)
 	}
@@ -178,13 +179,13 @@ func TestVICMulticolorXScrollSevenReloadsAtPairBoundary(t *testing.T) {
 		t.Fatalf("multicolor XSCROLL=7 reload dot = %d, want 56", got)
 	}
 
-	// dot 56 is 8N+0, so dotclock0 is the phase that sees it.
 	v.dot = 56
-	v.dotclock0(56)
+	v.dotclock(56, false)
 	// $FF widened two bits to the dot. This character is not multicolor
 	// itself - bit 11 of the video buffer is clear - so it widens as a
-	// standard one even though MCM is set.
-	if v.gdSequencer != 0x5555 || v.videoBuffer != 0x0100 {
+	// standard one even though MCM is set. As above, the dot that reloads
+	// is also painted, so one pixel has already shifted out: 0x5554.
+	if v.gdSequencer != 0x5554 || v.videoBuffer != 0x0100 {
 		t.Fatalf("sequencer=%#04x buffer=%#04x at dot %d, want pending graphics data",
 			v.gdSequencer, v.videoBuffer, v.dot)
 	}
@@ -197,8 +198,10 @@ func TestVICMulticolorXScrollSevenReloadsAtPairBoundary(t *testing.T) {
 		t.Fatalf("standard-resolution XSCROLL=7 reload dot = %d, want 55", got)
 	}
 	v.dot = 55
-	v.dotclock7(55)
-	if v.gdSequencer != 0x4411 { // $A5 widened two bits to the dot
+	v.dotclock(55, false)
+	// $A5 widened two bits to the dot is 0x4411, less the one pixel the
+	// same dotclock call paints.
+	if v.gdSequencer != 0x1044 {
 		t.Fatal("standard-resolution XSCROLL=7 did not reload at dot 55")
 	}
 }
@@ -331,8 +334,8 @@ func TestVICSideBorderComparisonIsNotRevisited(t *testing.T) {
 
 // TestVICSideBorderWriteReachesTheNextComparison is the phase this all
 // rests on. The 6510's Phi2 falls in the middle of the VIC's eight-dot
-// slot, not at its end: section 3.5 puts article cycle 1 at X $194, which
-// rebases to dot 428, and 428 mod 8 is 4. So a write made in the slot that
+// slot, not at its end: VINC falls at dot 428, four dots into its own
+// slot rather than on the boundary. So a write made in the slot that
 // ends at dot 368 lands at dot 364 and is in place when rule 1 reads CSEL
 // four dots later.
 //
@@ -375,10 +378,10 @@ func TestVICSideBorderWriteAtCompareDot(t *testing.T) {
 
 	v.WriteRegister(0xD016, csel)
 
-	// dotclock0 owns the 40-column left comparison, so run just that one
-	// rather than a whole cycle around it.
+	// borderCompare owns the left comparison, so run just that rather than
+	// a whole cycle around it.
 	v.dot = leftComp40
-	v.dotclock0(v.reloadDot())
+	v.borderCompare()
 	if v.mainBorder {
 		t.Fatal("mainBorder=true: the left comparison missed a CSEL write made one dot earlier")
 	}
