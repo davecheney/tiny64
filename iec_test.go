@@ -149,64 +149,40 @@ func TestAttachIECDoesNotWriteThroughSnapshots(t *testing.T) {
 }
 
 // countingPeripheral records how many times the bus clocked it, and
-// checks where the beam stood each time.
+// checks that each clock arrived one bus cycle after the last, behind the
+// CPU.
 //
 // The count alone only says the bus was clocked often enough; it does not
 // say it was clocked at the right moments. A path that clocked every
 // device twice on half the cycles would have the same total as one that
-// clocked it once on each. So each tick is also held to its beam
-// position: it must land on the CPU's Phi2 phase within the VIC's slot,
-// and it must be exactly one bus cycle on from the tick before it.
+// clocked it once on each.
 //
-// Beam position cannot say whether the CPU ran before the tick or after
-// it, though, and that is the other half of the contract. CIA2's timer A
-// can: armPhi2Counter starts it counting Phi2 pulses, and CIA.Tick is
-// reached only from CPU.TickPhi2, above its stall return. So a timer that
-// has counted down exactly ticks+1 times at the head of iecTick says the
-// CPU's Phi2 for this cycle has already happened, and that no cycle got
-// an extra one.
+// CIA2's timer A tells those apart. armPhi2Counter leaves it free-running
+// on Phi2, and stepCycle calls ciaTick once per bus cycle, after the CPU
+// and ahead of the IEC devices - which is the clock tree this test exists
+// to pin. So at the head of the nth iecTick the timer must have counted
+// down exactly n+1 times: one more and some cycle clocked this device
+// twice, one fewer and some cycle skipped it.
+//
+// Nothing here reads the beam. A device on the serial bus cannot observe
+// the VIC, and where Phi2 falls inside the VIC's eight dots is the VIC's
+// own business - TestVICStepCycleCPUWriteLandsMidSlot pins that, through
+// the pixels it moves, which is where it is actually observable.
 type countingPeripheral struct {
 	addr      uint8
 	ticks     int
 	startPhi2 uint16
 	wrongPhi2 int
-
-	// last is the previous tick's dot. It is a dot within the line rather
-	// than a position in the frame because the raster counter no longer
-	// changes where the beam wraps - it increments 76 dots earlier, in
-	// article cycle 1 - so rasterLine*DotsPerLine+dot is not monotonic.
-	// offPhase and badGaps count the ticks that broke each of the two
-	// rules above, with firstBadGap keeping the first offending distance
-	// for the failure message.
-	last        int
-	offPhase    int
-	badGaps     int
-	firstBadGap int
 }
 
 func (*countingPeripheral) iecCLKOut() bool  { return false }
 func (*countingPeripheral) iecDATAOut() bool { return false }
 
 func (c *countingPeripheral) iecTick() {
-	pos := int(vic.dot)
 	if cia2.timerA != c.startPhi2-uint16(c.ticks)-1 {
 		c.wrongPhi2++
 	}
-	// The 6510's Phi2 falls in the middle of the VIC's eight-dot slot, not
-	// at its end: section 3.5 puts article cycle 1 at X $194, which rebases
-	// to dot 428, and 428 mod 8 is 4.
-	if vic.dot%DotsPerCycle != DotsPerCycle/2 {
-		c.offPhase++
-	}
-	// last starts at the entry position, so the first tick is checked too.
-	if gap := (pos - c.last + DotsPerLine) % DotsPerLine; gap != DotsPerCycle {
-		if c.badGaps == 0 {
-			c.firstBadGap = gap
-		}
-		c.badGaps++
-	}
 	c.ticks++
-	c.last = pos
 }
 
 func (c *countingPeripheral) iecAddress() uint8 { return c.addr }
@@ -225,10 +201,9 @@ func armPhi2Counter() uint16 {
 }
 
 // Both public stepping APIs must clock IEC once per cycle, after the CPU,
-// including on blanked lines and across frame wraps. Beam position alone
-// cannot distinguish an IEC tick just before TickPhi2 from one just after it.
-// These assertions cover clock cadence, not TinyGo-specific rendering or
-// inlining: those require validation with that build's window and compiler.
+// including on blanked lines and across frame wraps. These assertions cover
+// clock cadence, not TinyGo-specific rendering or inlining: those require
+// validation with that build's window and compiler.
 func TestBusIsClockedOnEveryFramePath(t *testing.T) {
 	for _, tc := range []struct {
 		name        string
@@ -248,21 +223,15 @@ func TestBusIsClockedOnEveryFramePath(t *testing.T) {
 			// One frame of warm-up first. IOINIT, in the first hundred
 			// cycles after reset, is the only code in the boot path that
 			// writes CIA2's timer registers, and timer A has to be left
-			// alone to stand in for the cycle counter below. A whole
-			// frame also leaves the beam exactly where Reset left it, so
-			// the offsets below still mean what they say.
+			// alone to stand in for the cycle counter below.
 			m.run(CyclesPerFrame)
 			m.run(tc.startCycles)
+			// Not an IEC property, but a whole frame has to have gone by
+			// for the tick count below to mean what it says.
 			startDot, startLine := vic.dot, vic.rasterLine
 			dev := &countingPeripheral{
 				addr:      9,
 				startPhi2: armPhi2Counter(),
-				// The beam rests on a slot boundary between cycles, but
-				// Phi2 falls at the slot's midpoint, so the tick before
-				// this run notionally happened half a slot back. Seeding
-				// last there puts the first real tick one whole cycle on,
-				// so it is checked like every other.
-				last: (int(startDot) - DotsPerCycle/2 + DotsPerLine) % DotsPerLine,
 			}
 			attachIEC(dev)
 			tc.run()
@@ -282,14 +251,8 @@ func TestBusIsClockedOnEveryFramePath(t *testing.T) {
 			if dev.wrongPhi2 != 0 {
 				t.Errorf("%d IEC ticks did not follow the corresponding CPU Phi2", dev.wrongPhi2)
 			}
-			if dev.offPhase != 0 {
-				t.Errorf("%d IEC ticks were not on a bus-cycle boundary", dev.offPhase)
-			}
-			if dev.badGaps != 0 {
-				t.Errorf("%d IEC ticks were not one cycle apart (first gap = %d dots, want %d)", dev.badGaps, dev.firstBadGap, DotsPerCycle)
-			}
 			vic.StepCycle()
-			if dev.ticks != CyclesPerFrame+1 || dev.wrongPhi2 != 0 || dev.offPhase != 0 || dev.badGaps != 0 {
+			if dev.ticks != CyclesPerFrame+1 || dev.wrongPhi2 != 0 {
 				t.Fatal("StepCycle after the frame did not preserve CPU/IEC cadence")
 			}
 		})
