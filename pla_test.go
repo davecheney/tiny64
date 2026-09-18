@@ -277,7 +277,7 @@ func TestPLAWedgeLatchIsCartridgeSpecific(t *testing.T) {
 			case "ultimax":
 				bus.Insert(make([]byte, 8192), true, false, true, false)
 			case "same-image":
-				bus.Insert(dosWedgeROM(), false, true, false, true)
+				bus.Insert(rom.DOSWedge, false, true, false, true)
 			}
 			cpu = CPU{}
 			game, exrom := cartridge.Game, cartridge.Exrom
