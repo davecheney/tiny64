@@ -220,181 +220,173 @@ func TestVICXScrollWriteReloadsAtCurrentDot(t *testing.T) {
 	}
 }
 
-func TestVICSideBorderOpen40To38Trick(t *testing.T) {
-	parkMachine(t)
+// openDisplayVIC returns a VIC-II parked mid-screen with the display
+// window open: raster 100 is below the top comparison, so the vertical
+// border flip-flop is clear and rule 6 can reset the main one at the left
+// comparison. Reset seeds verticalBorder set because raster 0 is in the
+// upper border.
+func openDisplayVIC(control2 uint8) *VICII {
 	v := &VICII{}
 	v.Reset()
 	v.rasterLine = 100
 	v.control1 = 0x1B // DEN=1, RSEL=1, YSCROLL=3
-	v.control2 = 0x08 // CSEL=1 (40 columns)
-	// Raster 100 is inside the display window, so the vertical border
-	// flip-flop has already been cleared by the top comparison. Reset()
-	// seeds it set because raster 0 is in the upper border.
+	v.control2 = control2
 	v.verticalBorder = false
 	v.syncLineVisibility()
+	return v
+}
 
-	// Advance beam to the 38-column right comparison in horizontal blanking.
-	// The left comparison at dot 48
-	// clears the main border flip-flop on the way.
-	// In 40-column mode, this comparison does not latch mainBorder.
-	for v.dot != rightComp38 {
+// TestVICSideBorderOpen40To38Trick drives the side-border trick the way a
+// demo does. Section 3.9's rule 1 sets the main border flip-flop when the X
+// coordinate *reaches* a right comparison value, and the two values belong
+// to different CSEL settings: $14F to 38 columns, $158 to 40. Hold CSEL=1
+// while the beam passes $14F and drop it to 0 before it reaches $158 and
+// neither comparison ever sees its own value, so rule 1 never fires and the
+// border stays open for the rest of the line.
+//
+// Nothing here goes back over a dot that has already been drawn: the write
+// simply arrives before the comparison that reads it.
+func TestVICSideBorderOpen40To38Trick(t *testing.T) {
+	parkMachine(t)
+	v := openDisplayVIC(csel) // 40 columns
+
+	// Past $14F with CSEL=1, so it does not match. Rule 6 cleared the main
+	// border flip-flop back at the left comparison.
+	for v.dot < rightEdge38 {
 		v.StepCycle()
 	}
 	if v.mainBorder {
-		t.Fatalf("mainBorder=true at dot %d in 40-column mode, want false", rightComp38)
+		t.Fatalf("mainBorder=true at dot %d in 40-column mode, want false", v.dot)
 	}
 
-	// Switch CSEL to 0 after the 38-column comparison and before the
-	// 40-column comparison. The two comparisons are one bus cycle apart
-	// and a CPU write completes at the end of a cycle, so dot 408 is
-	// where the write lands - after dotclock7 has run that dot's
-	// comparison. sampleSideBorderAtWrite sees the coincidence but takes
-	// no action on it: the 38-column path there needs rightBorderAt to be
-	// rightEdge38, and 40-column mode set it to rightEdge40 back at dot
-	// 368.
-	v.WriteRegister(0xD016, 0x00) // CSEL=0
+	// Drop to 38 columns in the window between the two comparisons.
+	v.WriteRegister(0xD016, 0)
 
-	// Since CSEL is now 0, the 40-column comparison is bypassed.
-	for v.dot != rightComp40 {
+	// $158 now finds CSEL=0, so it does not match either.
+	for v.dot < rightEdge40 {
 		v.StepCycle()
 	}
 	if v.mainBorder {
-		t.Fatalf("mainBorder=true at dot %d with CSEL=0 trick, want false (side border opened)", rightComp40)
+		t.Fatalf("mainBorder=true at dot %d after the CSEL trick, want false (side border open)", v.dot)
 	}
 
-	// In 40-column mode without the trick, its comparison latches mainBorder.
-	vNormal := &VICII{}
-	vNormal.Reset()
-	vNormal.rasterLine = 100
-	vNormal.control1 = 0x1B
-	vNormal.control2 = 0x08 // CSEL=1
-	vNormal.verticalBorder = false
-	vNormal.syncLineVisibility()
-
-	for vNormal.dot != rightComp40 {
+	// Without the trick the same beam position latches the border.
+	vNormal := openDisplayVIC(csel)
+	for vNormal.dot < rightEdge40 {
 		vNormal.StepCycle()
 	}
 	if !vNormal.mainBorder {
-		t.Fatalf("mainBorder=false at dot %d in normal 40-column mode, want true", rightComp40)
+		t.Fatalf("mainBorder=false at dot %d in normal 40-column mode, want true", vNormal.dot)
 	}
 }
 
+// TestVICSideBorderOpen38To40Trick is the same trick entered from the other
+// CSEL setting. Only the value standing at each comparison dot matters, not
+// which mode the line started in.
 func TestVICSideBorderOpen38To40Trick(t *testing.T) {
 	parkMachine(t)
-	v := &VICII{}
-	v.Reset()
-	v.rasterLine = 100
-	v.control1 = 0x1B // DEN=1, RSEL=1, YSCROLL=3
-	v.control2 = 0x00 // CSEL=0 (38 columns)
-	// Inside the display window the vertical border flip-flop is clear.
-	v.verticalBorder = false
-	v.syncLineVisibility()
+	v := openDisplayVIC(0) // 38 columns
 
-	// In 38-column mode, switch to 40-column before its right comparison.
-	v.WriteRegister(0xD016, 0x08) // CSEL=1 (40 cols)
-
-	// Since CSEL=1, the 38-column comparison will not trigger mainBorder.
-	for v.dot != rightComp38 {
+	// Widen to 40 columns before $14F, so its comparison finds CSEL=1.
+	v.WriteRegister(0xD016, csel)
+	for v.dot < rightEdge38 {
 		v.StepCycle()
 	}
 	if v.mainBorder {
-		t.Fatalf("mainBorder=true at dot %d with CSEL=1, want false", rightComp38)
+		t.Fatalf("mainBorder=true at dot %d with CSEL=1, want false", v.dot)
 	}
 
-	// Switch back to CSEL=0 before the 40-column comparison - the write
-	// lands on dot 408, the last dot of its cycle, which is after that
-	// dot's comparison has run and is inert for the same reason as in
-	// TestVICSideBorderOpen40To38Trick.
-	v.WriteRegister(0xD016, 0x00) // CSEL=0 (38 cols)
-
-	// Since CSEL=0, the 40-column comparison will not trigger it either.
-	for v.dot != rightComp40 {
-		v.StepCycle()
-	}
-	if v.mainBorder {
-		t.Fatalf("mainBorder=true at dot %d with CSEL=0, want false (side border opened)", rightComp40)
-	}
-}
-
-func TestVICSideBorderWriteAtRightCompareDot(t *testing.T) {
-	// lineVisible and lineDrawable are caches of properties derived from
-	// rasterLine, and 6569.go's contract is that anything which moves
-	// rasterLine by other means than dotclock7's line wrap must resync
-	// them. Seeding rasterLine in the literal is exactly that: the zero
-	// value of the cached flags describes line 0, not line 100. Derive
-	// them with syncLineVisibility rather than restating by hand what the
-	// chosen raster line already implies - a hand-set flag is a second,
-	// unchecked copy of the derivation, free to disagree with it the next
-	// time the render window moves.
-	v := &VICII{
-		dot:            rightComp38,
-		rasterLine:     100,
-		control2:       0,
-		mainBorder:     true,
-		rightBorderAt:  rightEdge38,
-		verticalBorder: false,
-	}
-	v.syncLineVisibility()
-
-	v.WriteRegister(0xD016, csel)
-
-	if v.mainBorder {
-		t.Fatal("mainBorder=true after same-dot CSEL write bypassed right comparison")
-	}
-	if v.rightBorderAt != 0 {
-		t.Fatalf("rightBorderAt=%d after bypassed comparison, want 0", v.rightBorderAt)
-	}
-}
-
-func TestVICSideBorderRMWWritesSkipRightComparisons(t *testing.T) {
-	v := &VICII{
-		dot:            rightComp38,
-		rasterLine:     100,
-		control2:       0,
-		mainBorder:     true,
-		rightBorderAt:  rightEdge38,
-		verticalBorder: false,
-	}
-	v.syncLineVisibility()
-
-	v.WriteRegister(0xD016, csel)
-	if v.mainBorder {
-		t.Fatalf("mainBorder=true after write at dot %d bypassed 38-column comparison", rightComp38)
-	}
-
-	v.dot = rightComp40
+	// Narrow back to 38 before $158, so its comparison finds CSEL=0.
 	v.WriteRegister(0xD016, 0)
+	for v.dot < rightEdge40 {
+		v.StepCycle()
+	}
 	if v.mainBorder {
-		t.Fatalf("mainBorder=true after write at dot %d bypassed 40-column comparison", rightComp40)
-	}
-	if v.rightBorderAt != 0 {
-		t.Fatalf("rightBorderAt=%d after both comparisons were bypassed, want 0", v.rightBorderAt)
-	}
-	if !v.rightBorderOpen {
-		t.Fatal("right border was not marked open after both comparisons were bypassed")
+		t.Fatalf("mainBorder=true at dot %d with CSEL=0, want false (side border open)", v.dot)
 	}
 }
 
+// TestVICSideBorderComparisonIsNotRevisited pins the half of rule 1 that is
+// easy to lose. The comparison happens once, as the beam reaches the value;
+// a $D016 write that arrives afterwards cannot unmake it, however few dots
+// late it is. A model that let it would be reaching back over pixels the
+// VIC has already put on the screen, which is not something the hardware
+// can do - and the deferred-comparison model this replaced did exactly that.
+func TestVICSideBorderComparisonIsNotRevisited(t *testing.T) {
+	parkMachine(t)
+	v := openDisplayVIC(csel) // 40 columns
+
+	for v.dot < rightEdge40 {
+		v.StepCycle()
+	}
+	if !v.mainBorder {
+		t.Fatalf("mainBorder=false at dot %d, want true: $158 should have matched", v.dot)
+	}
+
+	v.WriteRegister(0xD016, 0)
+	if !v.mainBorder {
+		t.Fatalf("a $D016 write at dot %d reopened a border already closed at dot %d",
+			v.dot, rightEdge40)
+	}
+}
+
+// TestVICSideBorderWriteReachesTheNextComparison is the phase this all
+// rests on. The 6510's Phi2 falls in the middle of the VIC's eight-dot
+// slot, not at its end: section 3.5 puts article cycle 1 at X $194, which
+// rebases to dot 428, and 428 mod 8 is 4. So a write made in the slot that
+// ends at dot 368 lands at dot 364 and is in place when rule 1 reads CSEL
+// four dots later.
+//
+// When the CPU ran at the end of the slot instead, that same write landed
+// at 369 - one dot past $158 - and every demo that opens the side border
+// closed it instead.
+func TestVICSideBorderWriteReachesTheNextComparison(t *testing.T) {
+	parkMachine(t)
+	v := openDisplayVIC(csel)
+
+	for v.dot < rightEdge40-DotsPerCycle {
+		v.StepCycle()
+	}
+	// One slot short of $158: the write below is the last one that can
+	// still be seen by it.
+	if v.dot != rightEdge40-DotsPerCycle {
+		t.Fatalf("beam at dot %d, want %d", v.dot, rightEdge40-DotsPerCycle)
+	}
+	v.WriteRegister(0xD016, 0)
+
+	v.StepCycle()
+	if v.dot != rightEdge40 {
+		t.Fatalf("beam at dot %d after one cycle, want %d", v.dot, rightEdge40)
+	}
+	if v.mainBorder {
+		t.Fatal("$158 did not see a CSEL write made in the preceding bus cycle")
+	}
+}
+
+// TestVICSideBorderWriteAtCompareDot is the same question at the left
+// comparison, where rule 6 resets the main border flip-flop. A write in the
+// dot before it is seen; one in the dot after is not, because the beam has
+// already gone past.
 func TestVICSideBorderWriteAtCompareDot(t *testing.T) {
-	v := &VICII{}
-	v.Reset()
-	v.rasterLine = 100
-	v.control1 = 0x1B
-	v.control2 = 0x00 // CSEL=0
-	v.verticalBorder = false
-	v.syncLineVisibility()
+	v := openDisplayVIC(0) // 38 columns, so leftComp40 does not match yet
 	v.dot = leftComp40 - 1
+
+	v.WriteRegister(0xD016, csel)
 
 	// dotclock7 is the phase that owns the 40-column left comparison, so
 	// run just that one rather than a whole cycle around it.
-	v.dotclock7(v.reloadDot()) // reaches the 40-column left compare with CSEL still clear
-	if !v.mainBorder {
-		t.Fatal("mainBorder=false before same-dot register write")
+	v.dotclock7(v.reloadDot())
+	if v.mainBorder {
+		t.Fatal("mainBorder=true: the left comparison missed a CSEL write made one dot earlier")
 	}
 
-	v.WriteRegister(0xD016, 0x08)
-	if v.mainBorder {
-		t.Fatal("mainBorder=true after same-dot CSEL write")
+	// The other side of it: past the comparison, the same write is inert.
+	vLate := openDisplayVIC(0)
+	vLate.dot = leftComp40
+	vLate.WriteRegister(0xD016, csel)
+	if !vLate.mainBorder {
+		t.Fatalf("a $D016 write at dot %d opened a border whose comparison had already run",
+			leftComp40)
 	}
 }
 

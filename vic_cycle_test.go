@@ -39,7 +39,13 @@ func TestVICStepCycleStalledReadClocksCIAs(t *testing.T) {
 	}
 }
 
-func TestVICStepCycleCPUWriteFollowsPixels(t *testing.T) {
+// TestVICStepCycleCPUWriteLandsMidSlot pins where the CPU's bus cycle sits
+// inside the VIC's eight dots. Section 3.5 puts article cycle 1 at X $194,
+// which rebases to dot 428, and 428 mod 8 is 4 - so Phi2 falls halfway
+// through the slot. The first four dots of the slot are painted before the
+// CPU runs and the last four after it, which is what lets a $D016 write
+// made in one slot be read by a border comparison in the next.
+func TestVICStepCycleCPUWriteLandsMidSlot(t *testing.T) {
 	savedBus := bus
 	t.Cleanup(func() { bus = savedBus })
 	newMachine(t)
@@ -63,11 +69,16 @@ func TestVICStepCycleCPUWriteFollowsPixels(t *testing.T) {
 		}
 	}
 	if vic.dot != 48 || bus.RW || bus.Address != 0xD020 || bus.Data != 5 {
-		t.Fatalf("store did not complete at dot 48: dot=%d bus=%+v", vic.dot, bus)
+		t.Fatalf("store did not complete in the slot ending at dot 48: dot=%d bus=%+v", vic.dot, bus)
 	}
-	for dot := uint16(41); dot <= 48; dot++ {
+	for dot := uint16(41); dot <= 44; dot++ {
 		if !frameBufferPixelIs(dot, 100, 2) {
 			t.Fatalf("dot %d was painted with the new color before CPU Phi2", dot)
+		}
+	}
+	for dot := uint16(45); dot <= 48; dot++ {
+		if !frameBufferPixelIs(dot, 100, 5) {
+			t.Fatalf("dot %d was painted with the old color after CPU Phi2", dot)
 		}
 	}
 

@@ -255,6 +255,7 @@ func TestVICRasterIRQ(t *testing.T) {
 
 func TestVICRasterIRQTriggersWhenCompareIsWrittenOnCurrentLine(t *testing.T) {
 	t.Run("$D012 low byte", func(t *testing.T) {
+		parkMachine(t)
 		v := &VICII{}
 		v.Reset()
 		v.rasterLine = 1
@@ -278,8 +279,11 @@ func TestVICRasterIRQTriggersWhenCompareIsWrittenOnCurrentLine(t *testing.T) {
 		}
 
 		v.WriteRegister(0xD012, 2)
-		v.dot = DotsPerLine - 1
-		v.dotclock7(v.reloadDot())
+		// The raster counter increments in article cycle 1, so run the beam
+		// up to that bus cycle rather than to the beam wrap 76 dots later.
+		for v.dot <= rasterIncSlot*DotsPerCycle {
+			v.StepCycle()
+		}
 		if !v.IRQ {
 			t.Fatal("raster IRQ did not trigger after advancing to a new raster line")
 		}
@@ -305,23 +309,20 @@ func TestVICRasterLineZeroIRQTriggersInCycleTwo(t *testing.T) {
 	v := &VICII{}
 	v.Reset()
 	v.rasterLine = RasterLinesPerFrame - 1
-	// The last whole cycle of the last line of the frame, so the cycle
-	// stepped below is the one that wraps the beam to line 0 - cycle 1 of
-	// the new frame.
-	v.dot = DotsPerLine - DotsPerCycle
+	// Parked so that the cycle stepped below is article cycle 1, where the
+	// raster counter wraps to line 0. That is 76 dots before the beam
+	// reaches dot 0, not at the beam wrap.
+	v.dot = rasterIncSlot * DotsPerCycle
 
 	v.StepCycle()
-	if v.rasterLine != 0 || v.dot != 0 {
-		t.Fatalf("dot=%d raster=%d after the wrapping cycle, want the top of the frame", v.dot, v.rasterLine)
+	if v.rasterLine != 0 {
+		t.Fatalf("raster=%d after article cycle 1, want the top of the frame", v.rasterLine)
 	}
 	if v.interruptStatus&0x01 != 0 {
 		t.Fatal("line-zero raster IRQ triggered in cycle 1")
 	}
 
 	v.StepCycle()
-	if v.dot != DotsPerCycle {
-		t.Fatalf("dot=%d after cycle 2, want %d", v.dot, DotsPerCycle)
-	}
 	if v.interruptStatus&0x01 == 0 {
 		t.Fatal("line-zero raster IRQ did not trigger in cycle 2")
 	}
