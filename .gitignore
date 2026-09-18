@@ -11,3 +11,4 @@
 !/testdata/demos/*/manifest.json
 !/testdata/demos/*/*.prg
 !/testdata/demos/*/*.png
+!rom/doswedge.bin
