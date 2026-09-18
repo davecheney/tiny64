@@ -413,65 +413,30 @@ func (v *VICII) selectedGraphicsMode() uint8 {
 
 func (v *VICII) sampleSideBorderAtWrite(control2 uint8) {
 	csel := control2 & csel
-	left := (v.dot == leftComp38 && csel == 0) ||
-		(v.dot == leftComp40 && csel != 0)
-	if left && !v.verticalBorder {
-		v.mainBorder = false
+	// A write that changes CSEL changes which value this dot is being
+	// compared against, so both comparisons are re-evaluated here against
+	// the value the write installs. This is how the side border is opened:
+	// hold CSEL=1 past dot 359 so the 38-column comparison cannot match,
+	// then drop to CSEL=0 before 368 so the 40-column one cannot either.
+	// Neither is reached precisely, the flip-flop is never set, and the
+	// border stays open - through the end of this line and the start of
+	// the next, because only the left comparison resets it.
+	if (v.dot == rightEdge38 && csel == 0) || (v.dot == rightEdge40 && csel != 0) {
+		v.mainBorder = true
 	}
-	switch v.dot {
-	case rightEdge38:
-		if csel == 0 {
-			v.rightBorderAt = rightEdge38
-		} else if v.rightBorderAt == rightEdge38 {
-			v.rightBorderAt = 0
-		}
-	case rightEdge40:
-		if csel != 0 {
-			v.rightBorderAt = rightEdge40
-		} else if v.rightBorderAt == rightEdge40 {
-			v.rightBorderAt = 0
-		}
-	}
-	switch v.dot {
-	case rightComp38:
-		if v.rightBorderAt == rightEdge38 {
-			if csel == 0 {
-				v.mainBorder = true
-			} else {
-				v.mainBorder = false
-				v.rightBorderAt = 0
-				v.rightBorderOpen = true
-			}
-		}
-	case rightComp40:
-		if v.rightBorderAt == rightEdge40 {
-			if csel != 0 {
-				v.mainBorder = true
-			} else {
-				v.mainBorder = false
-				v.rightBorderAt = 0
-				v.rightBorderOpen = true
-			}
-		} else if csel == 0 {
-			v.rightBorderOpen = true
+	if (v.dot == leftComp38 && csel == 0) || (v.dot == leftComp40 && csel != 0) {
+		if !v.verticalBorder {
+			v.mainBorder = false
 		}
 	}
 }
+
 
 func (v *VICII) finishSideBorder() {
 	if !v.lineDrawable {
 		v.rightBorderAt = 0
 		v.rightBorderOpen = false
 		return
-	}
-	if v.rightBorderAt != 0 {
-		for dot := v.rightBorderAt; dot < VisibleDotsPerLine; dot++ {
-			writePixelToBuffer(dot, v.rasterLine, v.rightBorder[dot-rightEdge38])
-		}
-	} else if !v.rightBorderOpen {
-		// Preserve the VIC's boundary pixel when a visible CSEL trick opens
-		// the rest of the right border. A later hblank write can open it too.
-		writePixelToBuffer(rightEdge40, v.rasterLine, v.rightBorder[rightEdge40-rightEdge38])
 	}
 	v.rightBorderAt = 0
 	v.rightBorderOpen = false
@@ -667,9 +632,6 @@ func (v *VICII) paintGraphicsPixel() {
 	// last settled rather than by asking all eight here. The mask keeps
 	// the index provably inside the table; see spriteCoverage.
 	display := v.spriteCoverage[v.dot&511]
-	if v.dot >= rightEdge38 {
-		v.rightBorder[v.dot-rightEdge38] = v.borderColor & 0x0F
-	}
 
 	if display == 0 {
 		if v.mainBorder {
@@ -1012,11 +974,6 @@ func StepFrame() {
 // in flash precisely because it failed to inline, so code size is not
 // evidence that it is faster.
 func (v *VICII) dotclock0(reload uint16) {
-	if v.dot == rightEdge40 {
-		// CPU writes at the boundary occur after its pixel was first
-		// generated. Capture the resulting border color on the next dot.
-		v.rightBorder[rightEdge40-rightEdge38] = v.borderColor & 0x0F
-	}
 	v.dot++
 	if v.dot == reload {
 		v.loadGraphicsData()
@@ -1127,7 +1084,7 @@ func (v *VICII) dotclock6(reload uint16) {
 	}
 
 	if v.dot == rightEdge38 && v.control2&csel == 0 {
-		v.rightBorderAt = rightEdge38
+		v.mainBorder = true
 	}
 	if v.dot == leftComp38 && v.control2&csel == 0 {
 		rsel := (v.control1 >> 3) & 1
@@ -1187,23 +1144,7 @@ func (v *VICII) dotclock7(reload uint16) {
 	}
 
 	if v.dot == rightEdge40 && v.control2&csel != 0 {
-		v.rightBorderAt = rightEdge40
-	}
-	if v.dot == rightComp38 && v.rightBorderAt == rightEdge38 {
-		if v.control2&csel == 0 {
-			v.mainBorder = true
-		} else {
-			v.mainBorder = false
-			v.rightBorderAt = 0
-		}
-	}
-	if v.dot == rightComp40 && v.rightBorderAt == rightEdge40 {
-		if v.control2&csel != 0 {
-			v.mainBorder = true
-		} else {
-			v.mainBorder = false
-			v.rightBorderAt = 0
-		}
+		v.mainBorder = true
 	}
 	if v.dot == leftComp40 && v.control2&csel != 0 {
 		rsel := (v.control1 >> 3) & 1
