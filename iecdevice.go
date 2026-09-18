@@ -225,7 +225,12 @@ func (d *iecDevice) iecTick() {
 	switch d.state {
 	case iecIdle:
 		// Either unaddressed, or addressed to another device and waiting
-		// for ATN to go away. Nothing to do until a line moves.
+		// for ATN to go away. Nothing to do until a line moves, so stop
+		// the bus clocking us until the C64 moves one. Only when this is
+		// the whole bus: a second device may still have work in hand.
+		if len(iecBus) == 1 {
+			iecActive = false
+		}
 
 	case iecAtnWaitCLK:
 		// When the controller asserts ATN it also "pulls CLK and

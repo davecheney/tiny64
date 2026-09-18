@@ -147,6 +147,12 @@ func ioStore(addr uint16, val uint8) {
 		cia1.Store(addr, val)
 	case addr >= 0xDD00 && addr <= 0xDDFF:
 		cia2.Store(addr, val)
+		// Port A carries ATN, CLOCK OUT and DATA OUT, and its direction
+		// register gates them. This is the only place the C64 can reach
+		// the serial bus, so it is where the bus is woken.
+		if r := addr & 0x0F; r == 0x00 || r == 0x02 {
+			iecActive = true
+		}
 	case addr >= dosWedgeIO && cartridge.wedgeIO():
 		if addr == dosWedgeLatch {
 			cartridge.writeWedgeLatch(val)
