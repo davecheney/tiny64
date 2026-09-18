@@ -287,6 +287,12 @@ frame buffer stores each index in one byte; the desktop GPU expands it
 through a palette shader. The `pixelsink_func` build uses the same storage
 but calls the pixel writer indirectly, for benchmarking.
 
+`tiny64.C64Palette` holds Pepto's PAL values, derived from the 6569's
+colour carrier rather than eyeballed, and identical to the `pepto-pal.vpl`
+that VICE ships. Sharing VICE's palette means a capture taken there can be
+compared against our output directly, which is how the demo fixtures get
+validated against something other than this emulator's own judgement.
+
 Four horizontally adjacent pixels are packed into the RGBA channels of one
 texel, including the alpha channel. The 408-pixel rows have a
 `FrameBufferStride` of 408 bytes, with no padding, so `FrameBufferIndexed`
