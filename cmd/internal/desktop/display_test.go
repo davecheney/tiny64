@@ -26,15 +26,16 @@ func TestDisplayDimensions(t *testing.T) {
 	}
 	defer d.shader.Deallocate()
 	defer d.frame.Deallocate()
-	if got := d.frame.Bounds().Size(); got.X != 102 || got.Y != 284 {
-		t.Fatalf("texture size = %v, want 102x284", got)
+	wantX, wantY := tiny64.FrameBufferStride/4, tiny64.VisibleLines
+	if got := d.frame.Bounds().Size(); got.X != wantX || got.Y != wantY {
+		t.Fatalf("texture size = %v, want %dx%d", got, wantX, wantY)
 	}
 	if got, want := len(tiny64.FrameBufferIndexed()), 4*d.frame.Bounds().Dx()*d.frame.Bounds().Dy(); got != want {
 		t.Fatalf("indexed length = %d, want %d upload bytes", got, want)
 	}
 	var e emulator
-	if w, h := e.Layout(810, 568); w != 405 || h != 284 {
-		t.Fatalf("visible size = %dx%d, want 405x284", w, h)
+	if w, h := e.Layout(810, 568); w != tiny64.VisibleDotsPerLine || h != tiny64.VisibleLines {
+		t.Fatalf("visible size = %dx%d, want %dx%d", w, h, tiny64.VisibleDotsPerLine, tiny64.VisibleLines)
 	}
 }
 

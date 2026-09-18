@@ -288,18 +288,18 @@ through a palette shader. The `pixelsink_func` build uses the same storage
 but calls the pixel writer indirectly, for benchmarking.
 
 Four horizontally adjacent pixels are packed into the RGBA channels of one
-texel, including the alpha channel. The 405-pixel rows have a
-`FrameBufferStride` of 408 bytes, with three unused padding bytes, so
-`FrameBufferIndexed` can be uploaded directly without CPU row repacking.
-The visible picture remains 405x284; the texture is 102x284 and the upload
-is 115,872 bytes rather than 460,080 bytes of RGBA. The indexed raster
+texel, including the alpha channel. The 408-pixel rows have a
+`FrameBufferStride` of 408 bytes, with no padding, so `FrameBufferIndexed`
+can be uploaded directly without CPU row repacking.
+The visible picture remains 408x293; the texture is 102x293 and the upload
+is 119,544 bytes rather than 478,176 bytes of RGBA. The indexed raster
 storage, including non-visible lines, occupies 127,296 bytes.
 `cmd/internal/desktop/palette.kage` selects each pixel's channel and looks
 up its colour in the palette uniform.
 
 `FrameBufferRGBA` expands a frame for the callers that do want whole
 pixels on the CPU -- the tests and `cmd/snapshot` -- into a tightly packed
-405x284 RGBA buffer (460,080 bytes), excluding the indexed row padding.
+408x293 RGBA buffer (478,176 bytes).
 It returns shared storage: emulation does not update it, but the next call
 overwrites it. Copy the result to retain a snapshot across calls.
 `FrameBufferIndexed`, in contrast, is a live view of the emulated frame.
@@ -373,7 +373,7 @@ The manifest schema is:
 
 `start` is optional; omit it to preserve BASIC `RUN` or the PRG load address.
 It accepts a string containing decimal, `$hex`, or `0xhex`. `crop` is
-required and explicit: `false` selects the full 405x284 visible PAL raster;
+required and explicit: `false` selects the full 408x293 visible PAL raster;
 `true` selects the 320x200 active display. All other fields shown are
 required. Checkpoints must be nonempty, with positive, unique frame numbers
 and unique PNG filenames. File names must be local basenames with `.prg` or

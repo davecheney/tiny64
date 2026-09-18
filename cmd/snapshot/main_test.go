@@ -74,14 +74,14 @@ func TestCaptureBounds(t *testing.T) {
 	}
 
 	full := capture(fb, borderBounds)
-	if got := full.Bounds(); got != imageRect(405, 284) {
+	if got := full.Bounds(); got != imageRect(tiny64.VisibleDotsPerLine, tiny64.VisibleLines) {
 		t.Fatalf("border bounds = %v", got)
 	}
 	cropped := capture(fb, activeBounds)
 	if got := cropped.Bounds(); got != imageRect(320, 200) {
 		t.Fatalf("crop bounds = %v", got)
 	}
-	if got := cropped.RGBAAt(0, 0); got != (color.RGBA{48, 35, 0xaa, 0xff}) {
+	if got := cropped.RGBAAt(0, 0); got != (color.RGBA{48, byte(51 - tiny64.FirstVisibleLine), 0xaa, 0xff}) {
 		t.Fatalf("first crop pixel = %#v", got)
 	}
 }
@@ -115,7 +115,7 @@ func TestRenderMachineCode(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := img.Bounds(); got != imageRect(405, 284) {
+	if got := img.Bounds(); got != imageRect(tiny64.VisibleDotsPerLine, tiny64.VisibleLines) {
 		t.Fatalf("rendered bounds = %v", got)
 	}
 	if got := color.RGBAModel.Convert(img.At(0, 0)).(color.RGBA); got != (color.RGBA{0x88, 0, 0, 0xff}) {

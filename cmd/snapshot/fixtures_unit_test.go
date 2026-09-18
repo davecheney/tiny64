@@ -30,6 +30,8 @@ func solidSnapshot(bounds image.Rectangle, index int) *image.RGBA {
 
 func TestCompareSnapshots(t *testing.T) {
 	bounds := snapshotBounds(false)
+	lastX, lastY := bounds.Dx()-1, bounds.Dy()-1
+	pixels := bounds.Dx() * bounds.Dy()
 	for _, tc := range []struct {
 		name string
 		edit func(*image.RGBA) image.Image
@@ -37,12 +39,12 @@ func TestCompareSnapshots(t *testing.T) {
 	}{
 		{"identical", func(img *image.RGBA) image.Image { return img }, ""},
 		{"one-pixel", func(img *image.RGBA) image.Image {
-			img.SetRGBA(404, 283, paletteColour(2))
+			img.SetRGBA(lastX, lastY, paletteColour(2))
 			return img
-		}, "1/115020 pixels differ; first mismatch at (404,283); expected colour index 0, actual colour index 2"},
+		}, fmt.Sprintf("1/%d pixels differ; first mismatch at (%d,%d); expected colour index 0, actual colour index 2", pixels, lastX, lastY)},
 		{"full-raster", func(*image.RGBA) image.Image {
 			return solidSnapshot(bounds, 2)
-		}, "115020/115020 pixels differ; first mismatch at (0,0); expected colour index 0, actual colour index 2"},
+		}, fmt.Sprintf("%d/%d pixels differ; first mismatch at (0,0); expected colour index 0, actual colour index 2", pixels, pixels)},
 		{"dimensions", func(*image.RGBA) image.Image {
 			return solidSnapshot(snapshotBounds(true), 0)
 		}, "dimensions"},
@@ -83,7 +85,7 @@ func TestCompareSnapshots(t *testing.T) {
 				t.Fatalf("diff bounds = %v", diff.Bounds())
 			}
 			if tc.name == "one-pixel" {
-				if got := diff.RGBAAt(404, 283); got != (color.RGBA{255, 0, 255, 255}) {
+				if got := diff.RGBAAt(lastX, lastY); got != (color.RGBA{255, 0, 255, 255}) {
 					t.Fatalf("mismatch diff pixel = %v", got)
 				}
 				if got := diff.RGBAAt(0, 0); got != (color.RGBA{0, 0, 0, 255}) {
@@ -128,7 +130,7 @@ func TestReadSnapshot(t *testing.T) {
 			t.Fatalf("wrong dimensions: %v", err)
 		}
 	}
-	if err := writePNG(path, solidSnapshot(image.Rect(0, 0, 406, 284), 0)); err != nil {
+	if err := writePNG(path, solidSnapshot(image.Rect(0, 0, tiny64.VisibleDotsPerLine+1, tiny64.VisibleLines), 0)); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := readSnapshot(path, snapshotBounds(false)); err == nil {
