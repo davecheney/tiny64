@@ -489,10 +489,10 @@ const noReloadDot = 0xFFFF
 // through a function call that seven of them could never act on. Asking
 // once per cycle instead takes 157,248 calls out of a PAL frame.
 func (v *VICII) reloadDot() uint16 {
-	// The beam is advanced before the reload is tested, so the phase is
-	// matched against dots v.dot+1 through v.dot+DotsPerCycle. Exactly
-	// one of those is congruent to the reload phase; this is it.
-	dot := v.dot + 1 + ((graphicsReloadPhase(v.control2) - v.dot - 1) & 7)
+	// The dotclocks act on dots v.dot through v.dot+DotsPerCycle-1, so the
+	// phase is matched against those. Exactly one of them is congruent to
+	// the reload phase; this is it.
+	dot := v.dot + ((graphicsReloadPhase(v.control2) - v.dot) & 7)
 	if slot := dot / DotsPerCycle; slot < 6 || slot > 45 {
 		return noReloadDot
 	}
@@ -839,28 +839,33 @@ func (v *VICII) StepFrame() {
 // it reappear with a real call per dot.
 //
 // Splitting them apart also means each only contains the checks that dot's
-// position can actually reach: the border comparisons and the line/frame-wrap
-// and g-access-commit logic only ever trigger on specific dots within a
-// cycle (see each function's comment), so the six interior dots' bodies are
-// smaller besides.
+// position can actually reach: the border comparisons and the g-access
+// commit only ever trigger on specific dots within a cycle (see each
+// function's comment), so the six interior dots' bodies are smaller
+// besides.
 func (v *VICII) stepCycle() {
-	// Two answers the whole cycle shares, established before any dot
-	// moves. Vertical blanking is a property of the raster line, not of
-	// the dot, so it is the same for all eight; lineVisible caches it,
-	// and dotclock0 through dotclock6 therefore carry no vblank check of
-	// their own. The graphics sequencer's reload dot is fixed for the
-	// cycle for the reason reloadDot gives, so the dotclocks are handed
-	// it rather than each working it out.
+	// Two answers the whole cycle shares, worked out before any dot
+	// moves. slot is which of the line's 63 bus cycles this is, a
+	// property of the cycle rather than of any one of its dots; phi0low
+	// and phi0high are handed it rather than re-deriving it from a beam
+	// that has moved on since. The graphics sequencer's reload dot is
+	// likewise fixed for the cycle, for the reason reloadDot gives.
+	slot := v.dot / DotsPerCycle
 	reload := v.reloadDot()
+	// dotclock0 and dotclock7 run on every line, blanked ones included:
+	// between them they own all four border comparisons, and the border
+	// unit needs those on every visible line whether or not anything is
+	// painted. The six interior phases have nothing to do on a line that
+	// paints nothing, so a blanked line just steps the beam past them.
+	v.dotclock0(reload)
 	if v.lineDrawable {
-		v.dotclock0(reload)
 		v.dotclock1(reload)
 		v.dotclock2(reload)
 		v.dotclock3(reload)
 	} else {
-		v.dot += 4
+		v.dot += 3
 	}
-	v.phi0low()
+	v.phi0low(slot)
 
 	// The CPU runs first, since the VIC has just handed it the bus.
 	cpu.TickPhi2()
@@ -877,19 +882,21 @@ func (v *VICII) stepCycle() {
 		v.dotclock4(reload)
 		v.dotclock5(reload)
 		v.dotclock6(reload)
-	} else if v.lineVisible {
-		v.dot += 2
-		v.dotclock6(reload)
 	} else {
 		v.dot += 3
 	}
-	// dotclock7 always runs, on blanked lines too: it owns the line wrap,
-	// and the dot it paints is the first of the new line, which may have
-	// just become visible, so paint above cannot speak for it. Keeping it
-	// outside the branch also leaves it, phi0low, phi0high and TickPhi2
-	// with exactly one call site each.
 	v.dotclock7(reload)
-	v.phi0high()
+	v.phi0high(slot)
+
+	// The beam has just stepped off the line's last dot. Wrapping it here
+	// rather than inside dotclock7 keeps the dotclocks ignorant of where
+	// they sit in the line, and leaves v.dot a coordinate a caller can
+	// read at every bus-cycle boundary. The raster counter does not move
+	// with it: that happens in article cycle 1, 76 dots earlier, in
+	// phi0low.
+	if v.dot >= DotsPerLine {
+		v.dot = 0
+	}
 }
 
 // StepCycle advances the VIC-II, and therefore the rest of the machine it
@@ -912,21 +919,52 @@ func StepFrame() {
 	vic.StepFrame()
 }
 
-// dotclock0 through dotclock5 execute the interior phases of a bus cycle.
-// Each advances the beam to dots 1 through 6 respectively. Every check
-// beyond the hblank test and the pixel paint itself only ever triggers on
-// one specific dot within a cycle:
-//   - the line/frame wrap only happens advancing off dot 503 (the last
-//     dot of a line, DotsPerLine-1), which only the 8th dot of a cycle
-//     (dotclock7) can reach, since DotsPerLine is a multiple of
-//     DotsPerCycle;
-//   - the border comparisons only match dots 48, 55, 408, and 416 (see
-//     leftComp/rightComp), all of which are ≡ 7 or 0 (mod 8);
+// dotclock0 handles cycle phase 0, dots ≡ 0 (mod 8), where both
+// 40-column border comparisons fall. Otherwise it is dotclock1.
+func (v *VICII) dotclock0(reload uint16) {
+	if v.dot == reload {
+		v.loadGraphicsData()
+	}
+
+	if v.lineVisible {
+		// Section 3.9 rule 1, the 40-column half.
+		if v.dot == rightEdge40 && v.control2&csel != 0 {
+			v.mainBorder = true
+		}
+		if v.dot == leftComp40 && v.control2&csel != 0 {
+			rsel := (v.control1 >> 3) & 1
+			if v.rasterLine == bottomComp[rsel] {
+				v.verticalBorder = true
+			}
+			if v.rasterLine == topComp[rsel] && v.control1&0x10 != 0 {
+				v.verticalBorder = false
+			}
+			if !v.verticalBorder {
+				v.mainBorder = false
+			}
+		}
+	}
+
+	if v.dot < VisibleDotsPerLine && v.lineDrawable &&
+		v.dot >= renderFirstDot && v.dot < renderDotAfter {
+		v.paintGraphicsPixel()
+	}
+	v.dot++
+}
+
+// dotclock1 through dotclock6 execute the interior phases of a bus cycle.
+// stepCycle hands each the dot it acts on, and each advances the beam by
+// one when it is done, so dotclockN always sees dots ≡ N (mod 8). Every
+// check beyond the hblank test and the pixel paint itself only ever
+// triggers on one specific dot within a cycle:
+//   - the border comparisons only match dots 48, 55, 359, and 368 (see
+//     leftComp/rightEdge), all of which are ≡ 0 or 7 (mod 8), so they live
+//     in dotclock0 and dotclock7 and nowhere else;
 //   - the g-access result reloads on the XSCROLL-selected dot of a
 //     character cell, so every phase may need to check that condition.
 //
 // So these six functions are byte-for-byte identical to each other: just
-// the beam advance, the hblank test, and the pixel paint. The vblank test
+// the hblank test, the pixel paint, and the beam advance. The vblank test
 // is gone; stepCycle establishes that once per cycle for all 8 dots.
 //
 // Do not deduplicate them into one function called six times. The
@@ -941,189 +979,115 @@ func StepFrame() {
 // in stepCycle's comment. Note the trap: the shared version is *smaller*
 // in flash precisely because it failed to inline, so code size is not
 // evidence that it is faster.
-func (v *VICII) dotclock0(reload uint16) {
-	v.dot++
-	if v.dot == reload {
-		v.loadGraphicsData()
-	}
-
-	if v.dot >= VisibleDotsPerLine {
-		return
-	}
-	if !v.lineDrawable || v.dot < renderFirstDot || v.dot >= renderDotAfter {
-		return
-	}
-
-	v.paintGraphicsPixel()
-}
-
-// dotclock1 is dotclock0 for cycle phase 1 - see dotclock0's comment.
 func (v *VICII) dotclock1(reload uint16) {
-	v.dot++
 	if v.dot == reload {
 		v.loadGraphicsData()
 	}
 
-	if v.dot >= VisibleDotsPerLine {
-		return
+	if v.dot < VisibleDotsPerLine && v.lineDrawable &&
+		v.dot >= renderFirstDot && v.dot < renderDotAfter {
+		v.paintGraphicsPixel()
 	}
-	if !v.lineDrawable || v.dot < renderFirstDot || v.dot >= renderDotAfter {
-		return
-	}
-
-	v.paintGraphicsPixel()
+	v.dot++
 }
 
-// dotclock2 is dotclock0 for cycle phase 2 - see dotclock0's comment.
+// dotclock2 is dotclock1 for cycle phase 2 - see dotclock1's comment.
 func (v *VICII) dotclock2(reload uint16) {
-	v.dot++
 	if v.dot == reload {
 		v.loadGraphicsData()
 	}
 
-	if v.dot >= VisibleDotsPerLine {
-		return
+	if v.dot < VisibleDotsPerLine && v.lineDrawable &&
+		v.dot >= renderFirstDot && v.dot < renderDotAfter {
+		v.paintGraphicsPixel()
 	}
-	if !v.lineDrawable || v.dot < renderFirstDot || v.dot >= renderDotAfter {
-		return
-	}
-
-	v.paintGraphicsPixel()
+	v.dot++
 }
 
-// dotclock3 is dotclock0 for cycle phase 3 - see dotclock0's
-// comment. phi0low runs immediately after this call (see stepCycle).
+// dotclock3 is dotclock1 for cycle phase 3 - see dotclock1's comment.
 func (v *VICII) dotclock3(reload uint16) {
-	v.dot++
 	if v.dot == reload {
 		v.loadGraphicsData()
 	}
 
-	if v.dot >= VisibleDotsPerLine {
-		return
+	if v.dot < VisibleDotsPerLine && v.lineDrawable &&
+		v.dot >= renderFirstDot && v.dot < renderDotAfter {
+		v.paintGraphicsPixel()
 	}
-	if !v.lineDrawable || v.dot < renderFirstDot || v.dot >= renderDotAfter {
-		return
-	}
-
-	v.paintGraphicsPixel()
+	v.dot++
 }
 
-// dotclock4 is dotclock0 for cycle phase 4 - see dotclock0's comment.
+// dotclock4 is dotclock1 for cycle phase 4 - see dotclock1's comment.
 func (v *VICII) dotclock4(reload uint16) {
-	v.dot++
 	if v.dot == reload {
 		v.loadGraphicsData()
 	}
 
-	if v.dot >= VisibleDotsPerLine {
-		return
+	if v.dot < VisibleDotsPerLine && v.lineDrawable &&
+		v.dot >= renderFirstDot && v.dot < renderDotAfter {
+		v.paintGraphicsPixel()
 	}
-	if !v.lineDrawable || v.dot < renderFirstDot || v.dot >= renderDotAfter {
-		return
-	}
-
-	v.paintGraphicsPixel()
+	v.dot++
 }
 
-// dotclock5 is dotclock0 for cycle phase 5 - see dotclock0's comment.
+// dotclock5 is dotclock1 for cycle phase 5 - see dotclock1's comment.
 func (v *VICII) dotclock5(reload uint16) {
-	v.dot++
 	if v.dot == reload {
 		v.loadGraphicsData()
 	}
 
-	if v.dot >= VisibleDotsPerLine {
-		return
+	if v.dot < VisibleDotsPerLine && v.lineDrawable &&
+		v.dot >= renderFirstDot && v.dot < renderDotAfter {
+		v.paintGraphicsPixel()
 	}
-	if !v.lineDrawable || v.dot < renderFirstDot || v.dot >= renderDotAfter {
-		return
-	}
-
-	v.paintGraphicsPixel()
+	v.dot++
 }
 
-// dotclock6 handles cycle phase 6. Its beam advance reaches phase 6
-// (8N+7), where the 38-column left border comparison occurs.
+// dotclock6 is dotclock1 for cycle phase 6 - see dotclock1's comment.
 func (v *VICII) dotclock6(reload uint16) {
-	v.dot++
 	if v.dot == reload {
 		v.loadGraphicsData()
 	}
 
-	// Section 3.9 rule 1, the 38-column half: reaching the right
-	// comparison value sets the main border flip-flop.
-	if v.dot == rightEdge38 && v.control2&csel == 0 {
-		v.mainBorder = true
+	if v.dot < VisibleDotsPerLine && v.lineDrawable &&
+		v.dot >= renderFirstDot && v.dot < renderDotAfter {
+		v.paintGraphicsPixel()
 	}
-	if v.dot == leftComp38 && v.control2&csel == 0 {
-		rsel := (v.control1 >> 3) & 1
-		if v.rasterLine == bottomComp[rsel] {
-			v.verticalBorder = true
-		}
-		if v.rasterLine == topComp[rsel] && v.control1&0x10 != 0 {
-			v.verticalBorder = false
-		}
-		if !v.verticalBorder {
-			v.mainBorder = false
-		}
-	}
-
-	if v.dot >= VisibleDotsPerLine {
-		return
-	}
-	if !v.lineDrawable || v.dot < renderFirstDot || v.dot >= renderDotAfter {
-		return
-	}
-
-	v.paintGraphicsPixel()
+	v.dot++
 }
 
-// dotclock7 handles cycle phase 7. Its beam advance reaches phase 7
-// (8N+8 = 0 mod 8), where line wrap, the 40-column left comparison, and
-// both right comparisons occur. The VIC X counter wraps before the right
-// comparisons, placing article coordinates $14f/$158 at dots 408/416.
+// dotclock7 handles cycle phase 7, dots ≡ 7 (mod 8), where both 38-column
+// border comparisons fall. Otherwise it is dotclock1.
 func (v *VICII) dotclock7(reload uint16) {
-	v.dot++
 	if v.dot == reload {
 		v.loadGraphicsData()
 	}
-	if v.dot >= DotsPerLine {
-		// Only the beam wraps here. The raster counter moved 76 dots ago,
-		// in article cycle 1; see phi0low.
-		v.dot = 0
-	}
 
-	if !v.lineVisible {
-		return
-	}
-
-	// Section 3.9 rule 1, the 40-column half.
-	if v.dot == rightEdge40 && v.control2&csel != 0 {
-		v.mainBorder = true
-	}
-	if v.dot == leftComp40 && v.control2&csel != 0 {
-		rsel := (v.control1 >> 3) & 1
-		if v.rasterLine == bottomComp[rsel] {
-			v.verticalBorder = true
+	if v.lineVisible {
+		// Section 3.9 rule 1, the 38-column half: reaching the right
+		// comparison value sets the main border flip-flop.
+		if v.dot == rightEdge38 && v.control2&csel == 0 {
+			v.mainBorder = true
 		}
-		if v.rasterLine == topComp[rsel] && v.control1&0x10 != 0 {
-			v.verticalBorder = false
-		}
-		if !v.verticalBorder {
-			v.mainBorder = false
+		if v.dot == leftComp38 && v.control2&csel == 0 {
+			rsel := (v.control1 >> 3) & 1
+			if v.rasterLine == bottomComp[rsel] {
+				v.verticalBorder = true
+			}
+			if v.rasterLine == topComp[rsel] && v.control1&0x10 != 0 {
+				v.verticalBorder = false
+			}
+			if !v.verticalBorder {
+				v.mainBorder = false
+			}
 		}
 	}
 
-	if v.dot >= VisibleDotsPerLine {
-		return
+	if v.dot < VisibleDotsPerLine && v.lineDrawable &&
+		v.dot >= renderFirstDot && v.dot < renderDotAfter {
+		v.paintGraphicsPixel()
 	}
-
-	if !v.lineDrawable || v.dot < renderFirstDot || v.dot >= renderDotAfter {
-		return
-	}
-
-	v.paintGraphicsPixel()
+	v.dot++
 }
 
 // phi0low runs after the first four dots of every 8-dot cycle: while the VIC-II is
@@ -1133,11 +1097,10 @@ func (v *VICII) dotclock7(reload uint16) {
 // cycleRaster0/cycleRaster30/cycleIsBadLine/cycleIsCAccess are inlined
 // directly here (each had exactly one call site, unconditional or nearly
 // so) to remove function-call overhead from the frame fast path.
-func (v *VICII) phi0low() {
+func (v *VICII) phi0low(slot uint16) {
 	// slot indexes the 8-dot bus cycles across a line. The article's cycle
 	// numbering starts 10 slots later (its cycle N is our slot N-11, mod
 	// 63), so the constants below are the article's rebased onto slot.
-	slot := v.dot / 8
 
 	// The raster counter increments in article cycle 1, not at the first
 	// visible dot of the line: section 3.5 puts cycle 1 at X $194 and the
@@ -1571,10 +1534,7 @@ func (v *VICII) cycleBorderComp() {
 // phi0high runs after the eighth dot of every 8-dot cycle: it performs a Bad
 // Line's c-access (article cycles 15-54) and hands the bus to the CPU for
 // Phi2.
-func (v *VICII) phi0high() {
-	// slot as in phi0low, but 4 dots later, so its offset from the
-	// article's cycle numbering differs by one.
-	slot := (v.dot - 1) / 8
+func (v *VICII) phi0high(slot uint16) {
 	if slot >= 4 && slot <= 43 && v.badLine {
 		v.cycleCAccess()
 	}

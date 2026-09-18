@@ -71,19 +71,19 @@ func TestVICStepCycleCPUWriteLandsMidSlot(t *testing.T) {
 	if vic.dot != 48 || bus.RW || bus.Address != 0xD020 || bus.Data != 5 {
 		t.Fatalf("store did not complete in the slot ending at dot 48: dot=%d bus=%+v", vic.dot, bus)
 	}
-	for dot := uint16(41); dot <= 44; dot++ {
+	for dot := uint16(40); dot <= 43; dot++ {
 		if !frameBufferPixelIs(dot, 100, 2) {
 			t.Fatalf("dot %d was painted with the new color before CPU Phi2", dot)
 		}
 	}
-	for dot := uint16(45); dot <= 48; dot++ {
+	for dot := uint16(44); dot <= 47; dot++ {
 		if !frameBufferPixelIs(dot, 100, 5) {
 			t.Fatalf("dot %d was painted with the old color after CPU Phi2", dot)
 		}
 	}
 
 	vic.StepCycle()
-	for dot := uint16(49); dot <= 56; dot++ {
+	for dot := uint16(48); dot <= 55; dot++ {
 		if !frameBufferPixelIs(dot, 100, 5) {
 			t.Fatalf("dot %d did not use the color written in the previous cycle", dot)
 		}

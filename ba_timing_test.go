@@ -76,22 +76,22 @@ func TestVICWarningReleaseAndReset(t *testing.T) {
 	vic.dot, vic.rasterLine = 12, 0x33
 	vic.allowBadLine, vic.control1 = true, 0x13
 	for n := 0; n < 2; n++ {
-		vic.phi0low()
-		vic.phi0high()
+		vic.phi0low(vic.dot / DotsPerCycle)
+		vic.phi0high(vic.dot / DotsPerCycle)
 		if !vic.AEC() {
 			t.Fatal("AEC low before warning expires")
 		}
 	}
 	vic.control1 = 0x14 // Cancel the badline and reset the warning.
-	vic.phi0low()
-	vic.phi0high()
+	vic.phi0low(vic.dot / DotsPerCycle)
+	vic.phi0high(vic.dot / DotsPerCycle)
 	if !vic.BA || !vic.AEC() || vic.baLowCycles != 0 {
 		t.Fatal("cancelled warning did not release the bus")
 	}
 	vic.control1 = 0x13
 	for n := 0; n < 4; n++ {
-		vic.phi0low()
-		vic.phi0high()
+		vic.phi0low(vic.dot / DotsPerCycle)
+		vic.phi0high(vic.dot / DotsPerCycle)
 		if vic.AEC() != (n < 3) {
 			t.Fatalf("restarted warning cycle %d: AEC=%v", n, vic.AEC())
 		}
@@ -203,11 +203,11 @@ func TestCPUIsOffTheBusBeforeAECDrops(t *testing.T) {
 	// And the warning: cycles AEC stays high after BA falls.
 	var v VICII
 	v.BA = true
-	v.phi0high()
+	v.phi0high(v.dot / DotsPerCycle)
 	v.BA = false
 	warning := 0
 	for i := 0; i < 16; i++ {
-		v.phi0high()
+		v.phi0high(v.dot / DotsPerCycle)
 		if !v.AEC() {
 			break
 		}
