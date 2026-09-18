@@ -103,6 +103,35 @@ func addressOccupied(address uint8) bool {
 
 // iecTick advances every attached peripheral by one Phi2 cycle.
 func iecTick() {
+	// A generic drive that has finished a LOAD sits in iecIdle for the
+	// rest of the session, and that state is inert by construction: it
+	// keeps no clock of its own, its state timer is reset on entry to
+	// every state and read only while transferring, and the only line it
+	// watches is ATN. Ticking it costs a slice walk and an interface call
+	// that will not inline, on all 19,656 cycles of every frame, to reach
+	// a switch arm whose body is a comment.
+	//
+	// So skip it - but only on what can be read back from the device
+	// itself. The ATN level is compared against the device's own record
+	// of what it last saw, not a copy kept here, because the device acts
+	// on the edge: skip a cycle in which ATN moves and it never sees the
+	// release, so the next assertion produces no edge at all and the C64
+	// waits forever for an acknowledgement. Nothing is cached, so nothing
+	// can fall out of step with iecBus, which the tests reassign directly.
+	//
+	// Anything that is not a generic drive falls through to the loop and
+	// is clocked exactly as before: a physical 1541 runs a CPU and two
+	// VIAs from its own crystal and times the serial protocol with them,
+	// so its sense of time cannot be stopped while the C64's keeps
+	// running, and a device the bus has never heard of gets no say in
+	// whether it is worth clocking. The single device case is the one
+	// worth special casing because it is the one everybody runs.
+	if len(iecBus) == 1 {
+		if d, ok := iecBus[0].(*iecDevice); ok &&
+			d.state == iecIdle && d.atn == ATNAsserted() {
+			return
+		}
+	}
 	for _, p := range iecBus {
 		p.iecTick()
 	}
