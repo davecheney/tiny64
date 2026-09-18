@@ -1,7 +1,9 @@
 # The Commodore IEC serial bus
 
 Notes gathered while implementing the two IEC devices in this tree: the full
-1541 (`1541.go`, `6502.go`, `6522.go`, `d64.go`) and the generic drive
+1541 (`1541.go`, `6502.go`, `6522.go`, `d64_drive1541.go`,
+`iec_drive1541.go`, all built only under `-tags drive1541`) and the
+generic drive, which is what answers for device 8 by default
 (`iecdevice.go`, `cbmdos.go`, `d64fs.go`).
 
 The published documentation on this bus is unusually contradictory - the two

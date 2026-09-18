@@ -37,7 +37,6 @@ func TestParseFlagsRejectsConflicts(t *testing.T) {
 		{"-prg", "a.prg", "-disk", "a.d64"},
 		{"-prg", "a.prg", "-crop", "-border"},
 		{"-prg", "a.prg", "-frames", "0"},
-		{"-prg", "a.prg", "-drive", "fast"},
 		{"-prg", "a.prg", "-out-pattern", "frame.png"},
 	} {
 		if _, err := parseFlags(args); err == nil {
@@ -100,7 +99,6 @@ func TestRenderMachineCode(t *testing.T) {
 	}
 	output := filepath.Join(t.TempDir(), "frame.png")
 	cfg := config{
-		drive:  "virtual",
 		frames: 2,
 		output: output,
 		start:  optionalAddress{value: 0x2000, set: true},

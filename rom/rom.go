@@ -16,6 +16,3 @@ var DiagCart []byte
 
 //go:embed dead_test.bin
 var DeadTest []byte
-
-//go:embed 1541.901229-02.bin
-var Drive1541 []byte

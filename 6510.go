@@ -75,9 +75,7 @@ func Reset() {
 	cartridge.reset()
 	cpu.Reset()
 	vic.Reset()
-	if driveAttached {
-		ResetDrive()
-	}
+	resetDriveIfAttached()
 }
 
 func (c *CPU) Reset() {

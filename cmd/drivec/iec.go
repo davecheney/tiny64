@@ -1,3 +1,5 @@
+//go:build drive1541
+
 // The Commodore serial (IEC) bus from the controller's side, which on a
 // real machine is the C64's KERNAL bit-banging CIA2's port A. drivec needs
 // its own copy so it can talk to the drive with no C64 in the picture.

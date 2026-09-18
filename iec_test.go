@@ -45,11 +45,7 @@ func (s *stubPeripheral) iecAddress() uint8 { return s.addr }
 // saveBus isolates a test from the package-level bus.
 func saveBus(t *testing.T) {
 	saved := append([]iecPeripheral(nil), iecBus...)
-	savedAttached := driveAttached
-	t.Cleanup(func() {
-		driveAttached = savedAttached
-		iecBus = saved
-	})
+	t.Cleanup(func() { iecBus = saved })
 	iecBus = nil
 }
 
@@ -67,7 +63,7 @@ func saveBus(t *testing.T) {
 func TestAttachIECReplacesByAddress(t *testing.T) {
 	saveBus(t)
 
-	AttachDrive(true) // 1541 at 8
+	AttachVirtualDrive(8) // a drive at 8
 	replacement := &stubPeripheral{addr: 8}
 	attachIEC(replacement) // different type, same address
 
@@ -85,7 +81,7 @@ func TestAttachIECReplacesByAddress(t *testing.T) {
 func TestAttachIECKeepsDistinctAddresses(t *testing.T) {
 	saveBus(t)
 
-	AttachDrive(true)                   // 1541 at 8
+	AttachVirtualDrive(8)               // a drive at 8
 	attachIEC(&stubPeripheral{addr: 9}) // second device at 9
 
 	if len(iecBus) != 2 {
@@ -102,14 +98,14 @@ func TestAttachIECKeepsDistinctAddresses(t *testing.T) {
 func TestDetachIECDoesNotWriteThroughSnapshots(t *testing.T) {
 	saveBus(t)
 
-	AttachDrive(true)
+	AttachVirtualDrive(8)
 	snapshot := iecBus
 
-	AttachDrive(false)                  // detach, freeing slot 0 of the shared array
+	DetachVirtualDrive()                // detach, freeing slot 0 of the shared array
 	attachIEC(&stubPeripheral{addr: 8}) // attach, which used to reuse that slot
 
-	if _, ok := snapshot[0].(*drive1541); !ok {
-		t.Fatalf("snapshot of the bus now holds %T, want the 1541 it was taken of", snapshot[0])
+	if _, ok := snapshot[0].(*iecDevice); !ok {
+		t.Fatalf("snapshot of the bus now holds %T, want the drive it was taken of", snapshot[0])
 	}
 }
 
@@ -133,20 +129,19 @@ func TestDetachIECStopsTicking(t *testing.T) {
 // backing array, so any reference to the bus saw its contents change under
 // it.
 //
-// This drives it through AttachDrive rather than calling attachIEC
-// directly, because that is the production route: AttachDrive attaches
-// straight onto whatever address 8 already holds without detaching first,
-// and InsertDisk goes that way. A version of this test that displaces the
-// occupant with a call that detaches first passes with the bug present -
-// it never reaches the replace path at all, and looks identical to one
-// that does.
+// This drives it through AttachVirtualDrive rather than calling attachIEC
+// directly, because that is the production route: AttachVirtualDrive
+// attaches straight onto whatever address 8 already holds without
+// detaching first. A version of this test that displaces the occupant with
+// a call that detaches first passes with the bug present - it never
+// reaches the replace path at all, and looks identical to one that does.
 func TestAttachIECDoesNotWriteThroughSnapshots(t *testing.T) {
 	saveBus(t)
 
 	attachIEC(&stubPeripheral{addr: 8}) // occupy address 8
 	snapshot := iecBus
 
-	AttachDrive(true) // displaces it in place, no detach
+	AttachVirtualDrive(8) // displaces it in place, no detach
 
 	if _, ok := snapshot[0].(*stubPeripheral); !ok {
 		t.Fatalf("snapshot of the bus now holds %T, want the device it was taken of", snapshot[0])

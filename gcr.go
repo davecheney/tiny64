@@ -1,3 +1,5 @@
+//go:build drive1541
+
 package tiny64
 
 // gcrEncodeTable maps a 4-bit nibble to its 5-bit GCR code, the standard

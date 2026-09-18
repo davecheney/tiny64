@@ -1,3 +1,5 @@
+//go:build drive1541
+
 // Command drivec runs the 1541 drive emulator headless, with no C64 in
 // the picture: it speaks the IEC serial bus itself (see iec.go), so the
 // drive can be given real DOS commands - format a disk, read the error
