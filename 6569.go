@@ -845,10 +845,9 @@ func (v *VICII) StepFrame() {
 // besides.
 func (v *VICII) stepCycle() {
 	// Two answers the whole cycle shares, worked out before any dot
-	// moves. slot is which of the line's 63 bus cycles this is, a
-	// property of the cycle rather than of any one of its dots; phi0low
-	// and phi0high are handed it rather than re-deriving it from a beam
-	// that has moved on since. The graphics sequencer's reload dot is
+	// moves. slot is which of the line's 63 bus cycles this is: a
+	// property of the cycle, not of any one of its dots, so phi0low and
+	// phi0high are handed it. The graphics sequencer's reload dot is
 	// likewise fixed for the cycle, for the reason reloadDot gives.
 	slot := v.dot / DotsPerCycle
 	reload := v.reloadDot()
@@ -889,11 +888,10 @@ func (v *VICII) stepCycle() {
 	v.phi0high(slot)
 
 	// The beam has just stepped off the line's last dot. Wrapping it here
-	// rather than inside dotclock7 keeps the dotclocks ignorant of where
-	// they sit in the line, and leaves v.dot a coordinate a caller can
-	// read at every bus-cycle boundary. The raster counter does not move
-	// with it: that happens in article cycle 1, 76 dots earlier, in
-	// phi0low.
+	// keeps v.dot a coordinate a caller can read at every bus-cycle
+	// boundary, and leaves the dotclocks ignorant of where they sit in
+	// the line. The raster counter does not move with it: that happens in
+	// article cycle 1, 76 dots earlier, in phi0low.
 	if v.dot >= DotsPerLine {
 		v.dot = 0
 	}
