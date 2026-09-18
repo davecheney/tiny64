@@ -69,6 +69,13 @@ const (
 	borderSlotRight38 = rightEdge38 / DotsPerCycle
 	borderSlotRight40 = rightEdge40 / DotsPerCycle
 
+	// The render window in slots. Its edges are bus-cycle aligned, so a
+	// slot is wholly inside it or wholly outside, and the question can be
+	// asked of the slot number rather than of the beam.
+	renderFirstSlot = renderFirstDot / DotsPerCycle
+	renderSlotAfter = renderDotAfter / DotsPerCycle
+	visibleSlots    = VisibleDotsPerLine / DotsPerCycle
+
 	// vincSlot is the bus cycle carrying VINC, the VIC-II's own
 	// increment-vertical-counter strobe, and so the bus cycle the raster
 	// counter moves in. The VIC-II manual's horizontal decode table puts
@@ -847,8 +854,22 @@ func (v *VICII) ReadRegister(addr uint16) uint8 {
 // one function per dot, each with exactly one call site) is the one that
 // held up.
 func (v *VICII) StepFrame() {
+	slot := v.dot / DotsPerCycle
+	if slot == 0 {
+		for range RasterLinesPerFrame {
+			v.stepLine()
+		}
+		return
+	}
+
+	// Parked mid-line, so the frame cannot be walked as whole lines. This
+	// is the relative step the doc comment promises, one cycle at a time.
 	for range CyclesPerFrame {
-		v.stepCycle()
+		v.stepCycle(slot)
+		slot++
+		if slot >= CyclesPerLine {
+			slot = 0
+		}
 	}
 }
 
@@ -903,75 +924,49 @@ const (
 	_ = uint(0 - VisibleDotsPerLine%DotsPerCycle)
 )
 
-func (v *VICII) stepCycle() {
-	// Two answers the whole cycle shares, worked out before any dot
-	// moves. slot is which of the line's 63 bus cycles this is: a
-	// property of the cycle, not of any one of its dots, so phi0low and
-	// phi0high are handed it. The graphics sequencer's reload dot is
-	// likewise fixed for the cycle, for the reason reloadDot gives.
-	slot := v.dot / DotsPerCycle
+// slot is which of the line's 63 bus cycles this is - a property of the
+// cycle, not of any one of its dots. The caller counts it rather than this
+// recovering it from the beam, because a loop that knows where it is does
+// not have to ask: StepFrame divides once a frame instead of 19,656 times.
+// cycleDraw runs one bus cycle that paints: four dots, the VIC-II's own
+// phase, the CPU and what it clocks, four more dots, the CPU's phase.
+//
+// The two halves are written out rather than shared, because nothing in
+// this path inlines: a helper holding them would be two more real calls per
+// bus cycle, 39,312 a frame, to save eight lines here.
+func (v *VICII) cycleDraw(slot uint16, borderSlot bool) {
+	// The sequencer's reload dot is fixed for the cycle, for the reason
+	// reloadDot gives.
 	reload := v.reloadDot()
-	borderSlot := slot == borderSlotLeft || slot == borderSlotRight38 ||
-		slot == borderSlotRight40
-	// Whether this cycle's dots reach the screen. The window's edges are
-	// bus-cycle aligned - renderWindowIsCycleAligned enforces it - so all
-	// eight dots of a cycle are inside it or all eight are outside, and
-	// the question is worth asking once rather than eight times.
-	//
-	// A cycle outside it has nothing for the dot path to do at all: no dot
-	// paints, reloadDot cannot land here (it only returns dots 48 to 367),
-	// and none of the four comparison values is here either. So the beam
-	// steps over it exactly as it does on a line that never paints.
-	onScreen := v.dot >= renderFirstDot &&
-		v.dot+DotsPerCycle <= renderDotAfter &&
-		v.dot+DotsPerCycle <= VisibleDotsPerLine
-	// The only place a line's drawability is asked. Both arms run the same
-	// sequence - four dots, the VIC-II's phase, the CPU and what it
-	// clocks, four dots, the CPU's phase - and differ only in whether the
-	// dots are shifted out or the beam simply steps over them.
-	//
-	// The two halves are written out rather than shared, because nothing
-	// in this path inlines: a helper holding them would be two more real
-	// calls per bus cycle, 39,312 a frame, to save eight lines here.
-	switch {
-	case v.lineDrawable && onScreen:
-		v.dotclock(reload, borderSlot)
-		v.dotclock(reload, borderSlot)
-		v.dotclock(reload, borderSlot)
-		v.dotclock(reload, borderSlot)
-		v.phi0low(slot)
 
-		// The CPU runs first, since the VIC has just handed it the bus.
-		cpu.TickPhi2()
+	v.dotclock(reload, borderSlot)
+	v.dotclock(reload, borderSlot)
+	v.dotclock(reload, borderSlot)
+	v.dotclock(reload, borderSlot)
+	v.phi0low(slot)
 
-		// The CIAs clock on that Phi2's falling edge, so they run after
-		// the CPU and see whatever its bus cycle wrote.
-		ciaTick()
+	// The CPU runs first, since the VIC has just handed it the bus.
+	cpu.TickPhi2()
 
-		// The IEC devices run last, because what they find on the bus is
-		// whatever CIA2 has just driven onto it.
-		iecTick()
+	// The CIAs clock on that Phi2's falling edge, so they run after the
+	// CPU and see whatever its bus cycle wrote.
+	ciaTick()
 
-		v.dotclock(reload, borderSlot)
-		v.dotclock(reload, borderSlot)
-		v.dotclock(reload, borderSlot)
-		v.dotclock(reload, borderSlot)
-		v.phi0high(slot)
-	default:
-		v.dot += DotsPerCycle / 2
-		v.phi0low(slot)
-		cpu.TickPhi2()
-		ciaTick()
-		iecTick()
-		v.dot += DotsPerCycle / 2
-		v.phi0high(slot)
-	}
+	// The IEC devices run last, because what they find on the bus is
+	// whatever CIA2 has just driven onto it.
+	iecTick()
 
-	// The beam has just stepped off the line's last dot, so it moves to the
-	// next row here. Wrapping both in stepCycle keeps (dot, beamLine) a
-	// pixel coordinate a caller can read at every bus-cycle boundary, and
-	// leaves the dotclocks ignorant of where they sit in the frame. $D012
-	// does not move with it: that happened on VINC, 80 dots earlier.
+	v.dotclock(reload, borderSlot)
+	v.dotclock(reload, borderSlot)
+	v.dotclock(reload, borderSlot)
+	v.dotclock(reload, borderSlot)
+	v.phi0high(slot)
+
+	// The beam has just stepped off the line's last dot, so it moves to
+	// the next row here. Wrapping both here keeps (dot, beamLine) a pixel
+	// coordinate a caller can read at every bus-cycle boundary, and leaves
+	// the dotclocks ignorant of where they sit in the frame. $D012 does
+	// not move with it: that happened on VINC, 80 dots earlier.
 	if v.dot >= DotsPerLine {
 		v.dot = 0
 		v.beamLine++
@@ -979,6 +974,100 @@ func (v *VICII) stepCycle() {
 			v.beamLine = 0
 		}
 	}
+}
+
+// cycleBlank runs one bus cycle whose dots reach nothing: the same
+// sequence, with the beam stepping over the dots instead of shifting them
+// out. Everything the VIC-II and the CPU do in a cycle still happens.
+func (v *VICII) cycleBlank(slot uint16) {
+	v.dot += DotsPerCycle / 2
+	v.phi0low(slot)
+	cpu.TickPhi2()
+	ciaTick()
+	iecTick()
+	v.dot += DotsPerCycle / 2
+	v.phi0high(slot)
+
+	// The beam has just stepped off the line's last dot, so it moves to
+	// the next row here. Wrapping both here keeps (dot, beamLine) a pixel
+	// coordinate a caller can read at every bus-cycle boundary, and leaves
+	// the dotclocks ignorant of where they sit in the frame. $D012 does
+	// not move with it: that happened on VINC, 80 dots earlier.
+	if v.dot >= DotsPerLine {
+		v.dot = 0
+		v.beamLine++
+		if v.beamLine >= RasterLinesPerFrame {
+			v.beamLine = 0
+		}
+	}
+}
+
+// drawRun paints the bus cycles from slot through to-1. None of them is a
+// slot the border comparator can match, which is what makes it a run.
+func (v *VICII) drawRun(from, to uint16) {
+	for slot := from; slot < to; slot++ {
+		v.cycleDraw(slot, false)
+	}
+}
+
+// blankRun runs the bus cycles from slot through to-1 without painting.
+func (v *VICII) blankRun(from, to uint16) {
+	for slot := from; slot < to; slot++ {
+		v.cycleBlank(slot)
+	}
+}
+
+// stepLine advances the machine by one raster line: CyclesPerLine bus
+// cycles, starting at slot 0.
+//
+// A line has more in common across it than a bus cycle does, and this is
+// where that is spent. Which slots paint and which can match a border
+// comparison are fixed for every line, so the line is walked as runs with
+// the answer built into each rather than asked per cycle: slots 0 to 50
+// paint, slots 6, 44 and 46 are the three the comparator can match, and
+// everything from 51 on is blanked.
+//
+// Drawability is read once, at the top. That is sound because every slot
+// that paints is below renderSlotAfter, and VINC - where the raster
+// counter moves and the flag is recomputed - is at slot 53, above it. So
+// no line ever changes its mind about painting while it still has painting
+// left to do. TestLineDrawabilityIsSettledBeforeAnythingPaints pins it.
+func (v *VICII) stepLine() {
+	if !v.lineDrawable {
+		v.blankRun(0, CyclesPerLine)
+		return
+	}
+
+	v.drawRun(0, borderSlotLeft)
+	v.cycleDraw(borderSlotLeft, true)
+	v.drawRun(borderSlotLeft+1, borderSlotRight38)
+	v.cycleDraw(borderSlotRight38, true)
+	v.drawRun(borderSlotRight38+1, borderSlotRight40)
+	v.cycleDraw(borderSlotRight40, true)
+	v.drawRun(borderSlotRight40+1, renderSlotAfter)
+	v.blankRun(renderSlotAfter, CyclesPerLine)
+}
+
+// stepCycle advances the machine by one bus cycle, whichever slot it is
+// in. StepFrame walks whole lines instead; this is what a caller stepping
+// a cycle at a time gets, and what StepFrame falls back to when the beam
+// is not parked on a line boundary.
+//
+// slot is which of the line's 63 bus cycles this is - a property of the
+// cycle, not of any one of its dots.
+func (v *VICII) stepCycle(slot uint16) {
+	borderSlot := slot == borderSlotLeft || slot == borderSlotRight38 ||
+		slot == borderSlotRight40
+	// Whether this cycle's dots reach the screen. The window's edges are
+	// bus-cycle aligned - renderWindowIsCycleAligned enforces it - so all
+	// eight dots of a cycle are inside it or all eight are outside.
+	onScreen := slot >= renderFirstSlot && slot < renderSlotAfter &&
+		slot < visibleSlots
+	if v.lineDrawable && onScreen {
+		v.cycleDraw(slot, borderSlot)
+		return
+	}
+	v.cycleBlank(slot)
 }
 
 // StepCycle advances the VIC-II, and therefore the rest of the machine it
@@ -992,7 +1081,7 @@ func (v *VICII) stepCycle() {
 // function outright would put its linkage at the mercy of whether the
 // linker can still prove it internal.
 func (v *VICII) StepCycle() {
-	v.stepCycle()
+	v.stepCycle(v.dot / DotsPerCycle)
 }
 
 // StepFrame advances the singleton machine by exactly one PAL frame. See
