@@ -102,8 +102,8 @@ func TestVICReloadDotMatchesPerDotRule(t *testing.T) {
 			want := uint16(0xFFFF)
 			matches := 0
 			got := v.reloadDot()
-			for offset := uint16(1); offset <= DotsPerCycle; offset++ {
-				// Reload is checked after incrementing, before dotclock7 wraps.
+			for offset := uint16(0); offset < DotsPerCycle; offset++ {
+				// The cycle beginning at start acts on these dots.
 				dot := start + offset
 				oldReload := dot/8 >= 6 && dot/8 <= 45 && dot&7 == phase
 				if oldReload {
@@ -119,7 +119,7 @@ func TestVICReloadDotMatchesPerDotRule(t *testing.T) {
 				t.Fatalf("start=%d control2=%#02x: reload=%d, want %d (%d matches)",
 					start, control, got, want, matches)
 			}
-			if got != noReloadDot && (got < 48 || got >= 368 || got <= start || got > start+DotsPerCycle) {
+			if got != noReloadDot && (got < 48 || got >= 368 || got < start || got >= start+DotsPerCycle) {
 				t.Fatalf("start=%d control2=%#02x: reload=%d outside cell/cycle bounds",
 					start, control, got)
 			}
@@ -130,29 +130,28 @@ func TestVICReloadDotMatchesPerDotRule(t *testing.T) {
 func TestVICXScrollDelaysGraphicsReload(t *testing.T) {
 	// Dot 48 is the boundary of the first character cell of the display
 	// window, and where an unscrolled sequencer takes up its g-access
-	// result. reloadDot is asked at the start of the cycle that advances
-	// onto the dot in question, so dot 41-48's cycle begins at dot 40.
+	// result. reloadDot is asked at the head of the cycle that paints the
+	// dot, and dot 48's cycle is the one that begins there.
 	unscrolled := &VICII{}
-	unscrolled.dot = 40
+	unscrolled.dot = 48
 	if got := unscrolled.reloadDot(); got != 48 {
 		t.Fatalf("unscrolled reload dot = %d, want the cell boundary at 48", got)
 	}
 
 	// XSCROLL=3 moves the reload three dots into the cell, to 51.
 	v := &VICII{control2: 3, gdPending: 0xFF, videoBufferPending: 0x0100}
-	v.dot = 40
+	v.dot = 48
 	if got := v.reloadDot(); got == 48 {
 		t.Fatal("sequencer reloaded on the cell boundary with XSCROLL=3")
 	}
-	v.dot = 48
 	if got := v.reloadDot(); got != 51 {
 		t.Fatalf("reload dot = %d with XSCROLL=3, want 51", got)
 	}
 
-	// And the data is actually taken up there. dotclock2 is the phase
-	// that advances the beam onto dot 51.
-	v.dot = 50
-	v.dotclock2(51)
+	// And the data is actually taken up there. dot 51 is 8N+3, so
+	// dotclock3 is the phase that sees it.
+	v.dot = 51
+	v.dotclock3(51)
 	// The sequencer holds two bits per dot, so the pending $FF is 0x5555
 	// once widened - see expandGraphicsData.
 	if v.gdSequencer != 0x5555 || v.videoBuffer != 0x0100 {
@@ -170,18 +169,18 @@ func TestVICMulticolorXScrollSevenReloadsAtPairBoundary(t *testing.T) {
 		gdPending:          0xFF,
 		videoBufferPending: 0x0100,
 	}
-	v.dot = 47
+	v.dot = 48 // the cycle covering dots 48 to 55
 	if got := v.reloadDot(); got == 55 {
 		t.Fatal("sequencer reloaded at dot 55 in multicolor mode with XSCROLL=7")
 	}
-	v.dot = 48
+	v.dot = 56
 	if got := v.reloadDot(); got != 56 {
 		t.Fatalf("multicolor XSCROLL=7 reload dot = %d, want 56", got)
 	}
 
-	// dotclock7 is the phase that advances the beam onto dot 56.
-	v.dot = 55
-	v.dotclock7(56)
+	// dot 56 is 8N+0, so dotclock0 is the phase that sees it.
+	v.dot = 56
+	v.dotclock0(56)
 	// $FF widened two bits to the dot. This character is not multicolor
 	// itself - bit 11 of the video buffer is clear - so it widens as a
 	// standard one even though MCM is set.
@@ -197,8 +196,8 @@ func TestVICMulticolorXScrollSevenReloadsAtPairBoundary(t *testing.T) {
 	if got := v.reloadDot(); got != 55 {
 		t.Fatalf("standard-resolution XSCROLL=7 reload dot = %d, want 55", got)
 	}
-	v.dot = 54
-	v.dotclock6(55)
+	v.dot = 55
+	v.dotclock7(55)
 	if v.gdSequencer != 0x4411 { // $A5 widened two bits to the dot
 		t.Fatal("standard-resolution XSCROLL=7 did not reload at dot 55")
 	}
@@ -252,7 +251,7 @@ func TestVICSideBorderOpen40To38Trick(t *testing.T) {
 
 	// Past $14F with CSEL=1, so it does not match. Rule 6 cleared the main
 	// border flip-flop back at the left comparison.
-	for v.dot < rightEdge38 {
+	for v.dot <= rightEdge38 {
 		v.StepCycle()
 	}
 	if v.mainBorder {
@@ -263,7 +262,7 @@ func TestVICSideBorderOpen40To38Trick(t *testing.T) {
 	v.WriteRegister(0xD016, 0)
 
 	// $158 now finds CSEL=0, so it does not match either.
-	for v.dot < rightEdge40 {
+	for v.dot <= rightEdge40 {
 		v.StepCycle()
 	}
 	if v.mainBorder {
@@ -272,7 +271,7 @@ func TestVICSideBorderOpen40To38Trick(t *testing.T) {
 
 	// Without the trick the same beam position latches the border.
 	vNormal := openDisplayVIC(csel)
-	for vNormal.dot < rightEdge40 {
+	for vNormal.dot <= rightEdge40 {
 		vNormal.StepCycle()
 	}
 	if !vNormal.mainBorder {
@@ -289,7 +288,7 @@ func TestVICSideBorderOpen38To40Trick(t *testing.T) {
 
 	// Widen to 40 columns before $14F, so its comparison finds CSEL=1.
 	v.WriteRegister(0xD016, csel)
-	for v.dot < rightEdge38 {
+	for v.dot <= rightEdge38 {
 		v.StepCycle()
 	}
 	if v.mainBorder {
@@ -298,7 +297,7 @@ func TestVICSideBorderOpen38To40Trick(t *testing.T) {
 
 	// Narrow back to 38 before $158, so its comparison finds CSEL=0.
 	v.WriteRegister(0xD016, 0)
-	for v.dot < rightEdge40 {
+	for v.dot <= rightEdge40 {
 		v.StepCycle()
 	}
 	if v.mainBorder {
@@ -316,7 +315,7 @@ func TestVICSideBorderComparisonIsNotRevisited(t *testing.T) {
 	parkMachine(t)
 	v := openDisplayVIC(csel) // 40 columns
 
-	for v.dot < rightEdge40 {
+	for v.dot <= rightEdge40 {
 		v.StepCycle()
 	}
 	if !v.mainBorder {
@@ -354,9 +353,12 @@ func TestVICSideBorderWriteReachesTheNextComparison(t *testing.T) {
 	}
 	v.WriteRegister(0xD016, 0)
 
+	// One cycle to finish the slot the write was made in, and one to enter
+	// $158's own, where rule 1 runs on the first dot.
 	v.StepCycle()
-	if v.dot != rightEdge40 {
-		t.Fatalf("beam at dot %d after one cycle, want %d", v.dot, rightEdge40)
+	v.StepCycle()
+	if v.dot != rightEdge40+DotsPerCycle {
+		t.Fatalf("beam at dot %d after two cycles, want %d", v.dot, rightEdge40+DotsPerCycle)
 	}
 	if v.mainBorder {
 		t.Fatal("$158 did not see a CSEL write made in the preceding bus cycle")
@@ -373,9 +375,10 @@ func TestVICSideBorderWriteAtCompareDot(t *testing.T) {
 
 	v.WriteRegister(0xD016, csel)
 
-	// dotclock7 is the phase that owns the 40-column left comparison, so
-	// run just that one rather than a whole cycle around it.
-	v.dotclock7(v.reloadDot())
+	// dotclock0 owns the 40-column left comparison, so run just that one
+	// rather than a whole cycle around it.
+	v.dot = leftComp40
+	v.dotclock0(v.reloadDot())
 	if v.mainBorder {
 		t.Fatal("mainBorder=true: the left comparison missed a CSEL write made one dot earlier")
 	}

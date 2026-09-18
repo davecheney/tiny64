@@ -47,11 +47,11 @@ func TestVICSpriteSingleColorRendering(t *testing.T) {
 		v.StepCycle()
 	}
 
-	// Step 8 dots (pixels 0-7, byte 0 = 0xFF -> all red = color 2)
-	for range 8 {
-		v.paintGraphicsPixel()
-		v.dot++
-	}
+	// One bus cycle paints dots 48 to 55 - pixels 0-7 of byte 0, $FF, so
+	// all eight are red. Stepping rather than calling paintGraphicsPixel
+	// by hand matters because dot 48 is also where the left comparison
+	// opens the border, and that happens inside the cycle that paints it.
+	v.StepCycle()
 
 	// Verify byte 0 drawn pixels (dots 48..55 on line 56) match Red palette color
 	buf := FrameBufferRGBA()
@@ -99,11 +99,8 @@ func TestVICSpriteMulticolorRendering(t *testing.T) {
 		v.StepCycle()
 	}
 
-	// Paint 8 dots (4 pairs of 2 dots each)
-	for range 8 {
-		v.paintGraphicsPixel()
-		v.dot++
-	}
+	// One bus cycle paints dots 48 to 55: four pairs of two dots each.
+	v.StepCycle()
 
 	buf := FrameBufferRGBA()
 	cyan := C64Palette[3]
@@ -220,6 +217,15 @@ func TestVICSpritePriority(t *testing.T) {
 		v.StepCycle()
 	}
 
+	// Dot 48 is the first dot inside the display window, and the beam is
+	// parked just before it, so the border flip-flop is still closed - the
+	// left comparison runs at the head of the cycle that paints dot 48.
+	// The tests below place the beam on that dot by hand rather than
+	// stepping the cycle, because stepping it would run the g-access and
+	// overwrite the sequencer contents each one sets up. Opening the
+	// border here is the rest of that same hand placement.
+	v.mainBorder = false
+
 	red := C64Palette[2]
 	white := C64Palette[1]
 
@@ -320,20 +326,21 @@ func TestVICSpriteDataCollision(t *testing.T) {
 	v.WriteRegister(0xD015, 0x01) // Enable Sprite 0
 	v.WriteRegister(0xD01A, 0x08) // Enable Sprite-Data Collision IRQ (bit 3)
 
-	// The foreground pixel the sprite has to collide with comes from the
-	// g-access, not from here: $1000 holds $80 for the sprite's own shape,
-	// and CB=2 in memPointers points the character generator at the same
-	// address, so the character fetched for this dot has its top bit set
-	// and the sequencer shifts out a foreground pixel. Setting gdSequencer
-	// and videoBuffer by hand at this point would be no help either way,
-	// since the loop below reloads both from memory before the dot that
-	// matters.
-
 	v.control1 = 0x1B
 	v.control2 = 0x08
 	for v.rasterLine != 56 || v.dot != 48 {
 		v.StepCycle()
 	}
+
+	// A sprite-data collision needs a foreground graphics pixel under the
+	// sprite pixel, and which dots the g-access makes foreground is
+	// whatever the character ROM the VIC sees at $1000 happens to hold -
+	// $80 in RAM there is the sprite's shape, not the character. So the
+	// sequencer is loaded by hand, as TestVICSpritePriority does, and the
+	// beam placed on the dot the sprite starts at.
+	v.gdSequencer = 0x4000 // foreground graphics pixel, two bits a dot
+	v.videoBuffer = 0x0100
+	v.refreshGraphicsPalette()
 	v.dot = 48
 	v.paintGraphicsPixel()
 
@@ -553,10 +560,7 @@ func TestVICSpriteShapeIsLatchedPerLine(t *testing.T) {
 	}
 	ram[0x0400+0x03F8] = 65
 
-	for range 8 {
-		v.paintGraphicsPixel()
-		v.dot++
-	}
+	v.StepCycle()
 
 	red := C64Palette[2]
 	for dot := uint16(48); dot < 56; dot++ {
@@ -570,10 +574,7 @@ func TestVICSpriteShapeIsLatchedPerLine(t *testing.T) {
 	for v.rasterLine != 57 || v.dot != 48 {
 		v.StepCycle()
 	}
-	for range 8 {
-		v.paintGraphicsPixel()
-		v.dot++
-	}
+	v.StepCycle()
 	for dot := uint16(48); dot < 56; dot++ {
 		if got := frameBufferPixelRGBA(dot, 57); got == red {
 			t.Errorf("dot %d on line 57 = Red, want background (shape was re-fetched on line 56)", dot)
