@@ -101,7 +101,7 @@ func parseFlags(args []string) (config, error) {
 	fs.StringVar(&cfg.output, "o", "snapshot.png", "final PNG filename")
 	fs.StringVar(&cfg.outPattern, "out-pattern", "", "write every frame using a fmt pattern such as frame_%04d.png")
 	fs.BoolVar(&cfg.crop, "crop", false, "capture only the 320x200 active display")
-	fs.BoolVar(&cfg.border, "border", false, "capture the full 405x284 visible PAL raster (default)")
+	fs.BoolVar(&cfg.border, "border", false, "capture the full 408x293 visible PAL raster (default)")
 	fs.Var(&cfg.start, "start", "entry address for machine code, in decimal, $hex, or 0xhex")
 	if err := fs.Parse(args); err != nil {
 		return config{}, err

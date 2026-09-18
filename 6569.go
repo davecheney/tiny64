@@ -12,20 +12,26 @@ const (
 
 	// dot 0 is the leftmost position of a raster line (inside the left
 	// overscan, so not necessarily visible on a given TV); the beam moves
-	// one dot right per dot clock, and dots 0-404 carry picture. The
+	// one dot right per dot clock, and dots 0-407 carry picture. The
 	// remaining dots are the horizontal blanking interval, during which
 	// the beam retraces to the left and the line counter advances.
-	VisibleDotsPerLine = 405
+	//
+	// 408 is how much of the line VICE keeps with full borders on. The
+	// display window lands at dots 48-367 either way, so this only widens
+	// the right border; the left edge is already where VICE puts it.
+	VisibleDotsPerLine = 408
 
-	// PAL 6569 vertical blanking interval: raster lines 300-311 and 0-15,
-	// during which the video signal (and thus the raster) is off.
-	firstVBlankLine = 300
-	lastVBlankLine  = 15
+	// PAL 6569 vertical blanking interval: raster lines 301-311 and 0-7.
+	// These bound the picture rather than the 6569's own blanking, and are
+	// set to keep the same 293 lines VICE shows with full borders on.
+	firstVBlankLine = 301
+	lastVBlankLine  = 7
 
-	// The picture occupies raster lines 16-299; writePixelToBuffer is
+	// The picture occupies raster lines 8-300; writePixelToBuffer is
 	// never called outside FirstVisibleLine..FirstVisibleLine+VisibleLines
 	// horizontally 0..VisibleDotsPerLine, so a display only needs a buffer
-	// that size.
+	// that size. The display window is raster lines 51-250, leaving 43
+	// lines of border above it and 50 below, as VICE has it.
 	FirstVisibleLine = lastVBlankLine + 1
 	VisibleLines     = firstVBlankLine - FirstVisibleLine
 
