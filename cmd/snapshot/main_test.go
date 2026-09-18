@@ -118,7 +118,8 @@ func TestRenderMachineCode(t *testing.T) {
 	if got := img.Bounds(); got != imageRect(tiny64.VisibleDotsPerLine, tiny64.VisibleLines) {
 		t.Fatalf("rendered bounds = %v", got)
 	}
-	if got := color.RGBAModel.Convert(img.At(0, 0)).(color.RGBA); got != (color.RGBA{0x88, 0, 0, 0xff}) {
+	red := tiny64.C64Palette[2]
+	if got := color.RGBAModel.Convert(img.At(0, 0)).(color.RGBA); got != (color.RGBA{red[0], red[1], red[2], red[3]}) {
 		t.Fatalf("border pixel = %#v, want red", got)
 	}
 }
