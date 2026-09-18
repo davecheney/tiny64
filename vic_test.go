@@ -279,9 +279,9 @@ func TestVICRasterIRQTriggersWhenCompareIsWrittenOnCurrentLine(t *testing.T) {
 		}
 
 		v.WriteRegister(0xD012, 2)
-		// The raster counter increments in article cycle 1, so run the beam
-		// up to that bus cycle rather than to the beam wrap 76 dots later.
-		for v.dot <= rasterIncSlot*DotsPerCycle {
+		// The raster counter increments on VINC, so run the beam up to
+		// that bus cycle rather than to the beam wrap 80 dots later.
+		for v.dot <= vincSlot*DotsPerCycle {
 			v.StepCycle()
 		}
 		if !v.IRQ {
@@ -309,14 +309,14 @@ func TestVICRasterLineZeroIRQTriggersInCycleTwo(t *testing.T) {
 	v := &VICII{}
 	v.Reset()
 	v.rasterLine = RasterLinesPerFrame - 1
-	// Parked so that the cycle stepped below is article cycle 1, where the
-	// raster counter wraps to line 0. That is 76 dots before the beam
+	// Parked so that the cycle stepped below is the VINC cycle, where the
+	// raster counter wraps to line 0. That is 80 dots before the beam
 	// reaches dot 0, not at the beam wrap.
-	v.dot = rasterIncSlot * DotsPerCycle
+	v.dot = vincSlot * DotsPerCycle
 
 	v.StepCycle()
 	if v.rasterLine != 0 {
-		t.Fatalf("raster=%d after article cycle 1, want the top of the frame", v.rasterLine)
+		t.Fatalf("raster=%d after VINC, want the top of the frame", v.rasterLine)
 	}
 	if v.interruptStatus&0x01 != 0 {
 		t.Fatal("line-zero raster IRQ triggered in cycle 1")
