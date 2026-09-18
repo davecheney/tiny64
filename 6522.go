@@ -1,3 +1,5 @@
+//go:build drive1541
+
 package tiny64
 
 // VIA emulates a MOS 6522 Versatile Interface Adapter. The 1541 has two:

@@ -3,8 +3,6 @@ package tiny64
 import (
 	"fmt"
 	"testing"
-
-	"github.com/davecheney/tiny64/rom"
 )
 
 // The schedules below use bus-cycle numbering, not Visual6502's T-state
@@ -20,16 +18,30 @@ type irqTestCPU struct {
 	put                       func(uint16, byte)
 	read                      func(uint16) byte
 	bus                       func() busCycle
+
+	// The peripheral-sourced subtests differ between the cores in which
+	// chip raises the interrupt and how it is acknowledged, not in what
+	// they assert. Keeping that divergence here rather than in the test
+	// bodies is what lets the 6502 arm live in its own file: a build
+	// without the 1541 has no VIA type at all, so a test body that named
+	// one would not compile.
+	irqStatePtr           func() *irqState
+	poisonBus             func()
+	armTimer              func() (cycles int, entry uint16)
+	armFinalRead          func(c irqTestCPU)
+	finalReadAcked        func() bool
+	armPenultimateWrite   func(c irqTestCPU)
+	penultimateWriteAcked func() bool
 }
 
 func newIRQTestCPU(t *testing.T, core string) irqTestCPU {
 	t.Helper()
 	saveMachine(t)
-	savedBus, savedDriveBus := bus, driveBus
-	t.Cleanup(func() { bus, driveBus = savedBus, savedDriveBus })
+	savedBus := bus
+	t.Cleanup(func() { bus = savedBus })
+	saveIRQDriveState(t)
 	cpu = CPU{PC: 0x0200, SP: 0xFF, PortDDR: 0xFF}
 	cia1, cia2 = CIA{}, CIA{}
-	via1, via2 = VIA{}, VIA{}
 	keyboard = Keyboard{}
 	vic = VICII{BA: true}
 	cartridge = Cartridge{}
@@ -59,45 +71,30 @@ func newIRQTestCPU(t *testing.T, core string) irqTestCPU {
 			put:  func(addr uint16, b byte) { ram[addr] = b },
 			read: func(addr uint16) byte { return ram[addr] },
 			bus:  func() busCycle { return busCycle{bus.Address, bus.Data, !bus.RW} },
-		}
-	case "6502":
-		savedROM := rom.Drive1541
-		rom.Drive1541 = make([]byte, len(savedROM))
-		t.Cleanup(func() { rom.Drive1541 = savedROM })
-		driveCPU = DriveCPU{PC: 0x0200, SP: 0xFF}
-		driveRAM = [0x0800]byte{}
-		driveBus = DriveBus{}
-		via1, via2 = VIA{}, VIA{}
-		via1SampleATN()
-		c = irqTestCPU{
-			pc: &driveCPU.PC, sp: &driveCPU.SP, p: &driveCPU.regP, x: &driveCPU.X, y: &driveCPU.Y,
-			opcode: &driveCPU.Opcode, tstate: &driveCPU.TState, interrupt: &driveCPU.Interrupt,
-			tick: driveCPU.TickPhi2, reset: driveCPU.Reset,
-			pin: func(a, b bool) {
-				for i, asserted := range []bool{a, b} {
-					v := []*VIA{&via2, &via1}[i]
-					v.ier, v.ifr = viaIFRCA1, 0
-					if asserted {
-						v.ifr = viaIFRCA1
-					}
-					v.updateIRQ()
-				}
+
+			irqStatePtr: func() *irqState { return &cpu.irq },
+			poisonBus:   func() { bus.Address = 0xDEAD },
+			armTimer: func() (int, uint16) {
+				cia1 = CIA{timerA: 1, latchA: 0xFFFF, runningA: true, imr: 1}
+				return 4, 0x0202
 			},
-			put: func(addr uint16, b byte) {
-				switch {
-				case addr < 0x0800:
-					driveRAM[addr] = b
-				case addr >= 0xC000:
-					rom.Drive1541[addr-0xC000] = b
-				default:
-					t.Fatalf("IRQ fixture write outside drive memory: $%04X", addr)
-				}
+			armFinalRead: func(c irqTestCPU) {
+				cpu.Port = 6 // Expose I/O; the test stops before reading ROM vectors.
+				cia1 = CIA{icr: 0x81, imr: 1, IRQ: true}
+				cia1.setIRQ(true)
+				c.program(0x0200, 0xAD, 0x0D, 0xDC)
 			},
-			read: driveLoad,
-			bus:  func() busCycle { return busCycle{driveBus.Address, driveBus.Data, !driveBus.RW} },
+			finalReadAcked: func() bool { return !cia1.IRQ },
+			armPenultimateWrite: func(c irqTestCPU) {
+				cpu.Port = 6
+				vic.interruptEnable, vic.interruptStatus = 1, 1
+				vic.updateIRQ()
+				c.program(0x0200, 0xEE, 0x19, 0xD0)
+			},
+			penultimateWriteAcked: func() bool { return !vic.IRQ },
 		}
 	default:
-		t.Fatalf("unknown IRQ test core %q", core)
+		c = newIRQTestCPUForCore(t, core)
 	}
 	for addr := uint16(0x0200); addr < 0x0800; addr++ {
 		c.put(addr, 0xEA)
@@ -135,16 +132,13 @@ func (c irqTestCPU) checkEntry(t *testing.T, want bool, pc uint16) {
 }
 
 func TestIRQInactiveCycleSampling(t *testing.T) {
-	for _, core := range []string{"6510", "6502"} {
+	for _, core := range irqTestCores {
 		for _, pending := range []bool{false, true} {
 			for sources := range 4 {
 				for _, masked := range []bool{false, true} {
 					t.Run(fmt.Sprintf("%s/pending=%t/sources=%d/masked=%t", core, pending, sources, masked), func(t *testing.T) {
 						c := newIRQTestCPU(t, core)
-						state := &cpu.irq
-						if core == "6502" {
-							state = &driveCPU.irq
-						}
+						state := c.irqStatePtr()
 						*state = irqState{pending: pending}
 						*c.opcode, *c.tstate = 0xEA, 1 // Complete NOP without an eligible prior sample.
 						if masked {
@@ -166,7 +160,7 @@ func TestIRQInactiveCycleSampling(t *testing.T) {
 }
 
 func TestIRQInstructionPulses(t *testing.T) {
-	for _, core := range []string{"6510", "6502"} {
+	for _, core := range irqTestCores {
 		for _, tc := range []struct {
 			name   string
 			code   []byte
@@ -226,7 +220,7 @@ func TestIRQInstructionPulses(t *testing.T) {
 }
 
 func TestIRQBranchPulses(t *testing.T) {
-	for _, core := range []string{"6510", "6502"} {
+	for _, core := range irqTestCores {
 		for _, branch := range []struct{ op, mask, taken uint8 }{
 			{0x10, P_SIGN, 0}, {0x30, P_SIGN, P_SIGN},
 			{0x50, P_OVERFLOW, 0}, {0x70, P_OVERFLOW, P_OVERFLOW},
@@ -271,7 +265,7 @@ func TestIRQBranchPulses(t *testing.T) {
 }
 
 func TestIRQMaskPolling(t *testing.T) {
-	for _, core := range []string{"6510", "6502"} {
+	for _, core := range irqTestCores {
 		for _, tc := range []struct {
 			name              string
 			op, before, after uint8
@@ -317,7 +311,7 @@ func TestIRQMaskPolling(t *testing.T) {
 }
 
 func TestIRQEntryBusCycles(t *testing.T) {
-	for _, core := range []string{"6510", "6502"} {
+	for _, core := range irqTestCores {
 		t.Run(core, func(t *testing.T) {
 			c := newIRQTestCPU(t, core)
 			*c.p = P_CARRY | P_BREAK
@@ -335,7 +329,7 @@ func TestIRQEntryBusCycles(t *testing.T) {
 				{0xFFFF, 0x04, false},
 			}
 			for i, cycle := range want {
-				bus.Address, driveBus.Address = 0xDEAD, 0xDEAD
+				c.poisonBus()
 				c.tick()
 				if got := c.bus(); got != cycle {
 					t.Fatalf("IRQ cycle %d: got %+v, want %+v", i, got, cycle)
@@ -356,7 +350,7 @@ func TestIRQEntryBusCycles(t *testing.T) {
 }
 
 func TestIRQPersistentLevel(t *testing.T) {
-	for _, core := range []string{"6510", "6502"} {
+	for _, core := range irqTestCores {
 		for source := range 2 {
 			t.Run(fmt.Sprintf("%s/source-%d", core, source), func(t *testing.T) {
 				c := newIRQTestCPU(t, core)
@@ -379,7 +373,7 @@ func TestIRQPersistentLevel(t *testing.T) {
 }
 
 func TestIRQLateLevel(t *testing.T) {
-	for _, core := range []string{"6510", "6502"} {
+	for _, core := range irqTestCores {
 		t.Run(core, func(t *testing.T) {
 			c := newIRQTestCPU(t, core)
 			c.tick()
@@ -393,7 +387,7 @@ func TestIRQLateLevel(t *testing.T) {
 }
 
 func TestIRQMaskedPulseIsNotQueued(t *testing.T) {
-	for _, core := range []string{"6510", "6502"} {
+	for _, core := range irqTestCores {
 		t.Run(core, func(t *testing.T) {
 			c := newIRQTestCPU(t, core)
 			*c.p = P_INTERRUPT
@@ -410,7 +404,7 @@ func TestIRQMaskedPulseIsNotQueued(t *testing.T) {
 }
 
 func TestIRQOverlappingSources(t *testing.T) {
-	for _, core := range []string{"6510", "6502"} {
+	for _, core := range irqTestCores {
 		t.Run(core, func(t *testing.T) {
 			c := newIRQTestCPU(t, core)
 			c.program(0x0200, 0xAD, 0x00, 0x03)
@@ -428,7 +422,7 @@ func TestIRQOverlappingSources(t *testing.T) {
 }
 
 func TestIRQResetClearsAcceptance(t *testing.T) {
-	for _, core := range []string{"6510", "6502"} {
+	for _, core := range irqTestCores {
 		t.Run(core, func(t *testing.T) {
 			c := newIRQTestCPU(t, core)
 			c.pin(true, false)
@@ -471,7 +465,7 @@ func TestIRQAcceptedAlongsideNMI(t *testing.T) {
 }
 
 func TestIRQInBranchLoop(t *testing.T) {
-	for _, core := range []string{"6510", "6502"} {
+	for _, core := range irqTestCores {
 		t.Run(core, func(t *testing.T) {
 			c := newIRQTestCPU(t, core)
 			c.program(0x0200, 0xD0, 0xFE)
@@ -566,7 +560,7 @@ func TestIRQMaskWriteUnmasksLatchedFlag(t *testing.T) {
 }
 
 func TestIRQPeripheralSampling(t *testing.T) {
-	for _, core := range []string{"6510", "6502"} {
+	for _, core := range irqTestCores {
 		t.Run(core+"/timer", func(t *testing.T) {
 			c := newIRQTestCPU(t, core)
 			// The two cores phase their timer against the CPU
@@ -587,48 +581,24 @@ func TestIRQPeripheralSampling(t *testing.T) {
 			// The 1541 has no VIC-II to hang a clock tree off, so its
 			// VIAs are still clocked at the top of DriveCPU.TickPhi2 and
 			// an underflow is sampled in the cycle it happens.
-			cycles, entry := 2, uint16(0x0201)
-			if core == "6510" {
-				cia1 = CIA{timerA: 1, latchA: 0xFFFF, runningA: true, imr: 1}
-				cycles, entry = 4, 0x0202
-			} else {
-				via2 = VIA{t1c: 1, t1l: 0xFFFF, acr: 0x40, ier: 0x40}
-			}
+			cycles, entry := c.armTimer()
 			c.cycles(cycles)
 			c.checkEntry(t, true, entry)
 		})
 		t.Run(core+"/final-read-acknowledgement", func(t *testing.T) {
 			c := newIRQTestCPU(t, core)
-			if core == "6510" {
-				cpu.Port = 6 // Expose I/O; the test stops before reading ROM vectors.
-				cia1 = CIA{icr: 0x81, imr: 1, IRQ: true}
-				cia1.setIRQ(true)
-				c.program(0x0200, 0xAD, 0x0D, 0xDC)
-			} else {
-				via1.ier, via1.ifr = viaIFRCA1, viaIFRCA1
-				via1.updateIRQ()
-				c.program(0x0200, 0xAD, 0x01, 0x18)
-			}
+			c.armFinalRead(c)
 			c.cycles(4)
-			if cia1.IRQ || via1.IRQ {
+			if !c.finalReadAcked() {
 				t.Fatal("final read did not acknowledge IRQ")
 			}
 			c.checkEntry(t, true, 0x0203)
 		})
 		t.Run(core+"/penultimate-write-acknowledgement", func(t *testing.T) {
 			c := newIRQTestCPU(t, core)
-			if core == "6510" {
-				cpu.Port = 6
-				vic.interruptEnable, vic.interruptStatus = 1, 1
-				vic.updateIRQ()
-				c.program(0x0200, 0xEE, 0x19, 0xD0)
-			} else {
-				via2.ier, via2.ifr = viaIFRCA1, viaIFRCA1
-				via2.updateIRQ()
-				c.program(0x0200, 0xEE, 0x0D, 0x1C)
-			}
+			c.armPenultimateWrite(c)
 			c.cycles(6)
-			if vic.IRQ || via2.IRQ {
+			if !c.penultimateWriteAcked() {
 				t.Fatal("dummy write did not acknowledge IRQ")
 			}
 			c.checkEntry(t, false, 0)

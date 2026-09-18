@@ -33,7 +33,6 @@ var (
 type config struct {
 	prgPath    string
 	diskPath   string
-	drive      string
 	frames     int
 	seconds    float64
 	output     string
@@ -97,7 +96,6 @@ func parseFlags(args []string) (config, error) {
 	fs.SetOutput(io.Discard)
 	fs.StringVar(&cfg.prgPath, "prg", "", "PRG file to load and run")
 	fs.StringVar(&cfg.diskPath, "disk", "", "D64 image whose first PRG is loaded and run")
-	fs.StringVar(&cfg.drive, "drive", "virtual", `drive 8 implementation: "virtual" or "1541"`)
 	fs.IntVar(&cfg.frames, "frames", 60, "number of frames to run after starting the program")
 	fs.Float64Var(&cfg.seconds, "seconds", 0, "seconds to run after starting the program (overrides -frames)")
 	fs.StringVar(&cfg.output, "o", "snapshot.png", "final PNG filename")
@@ -113,9 +111,6 @@ func parseFlags(args []string) (config, error) {
 	}
 	if (cfg.prgPath == "") == (cfg.diskPath == "") {
 		return config{}, errors.New("specify exactly one of -prg or -disk")
-	}
-	if cfg.drive != "virtual" && cfg.drive != "1541" {
-		return config{}, fmt.Errorf("unknown -drive %q, want \"virtual\" or \"1541\"", cfg.drive)
 	}
 	if cfg.seconds < 0 || math.IsNaN(cfg.seconds) || math.IsInf(cfg.seconds, 0) {
 		return config{}, errors.New("-seconds must be a finite non-negative number")
@@ -183,7 +178,7 @@ func loadInput(cfg config) ([]byte, []byte, error) {
 }
 
 func render(cfg config, program, disk []byte) error {
-	resetMachine(disk, cfg.drive)
+	resetMachine(disk)
 	if err := waitForReady(bootFrameLimit); err != nil {
 		return err
 	}
@@ -226,18 +221,18 @@ func render(cfg config, program, disk []byte) error {
 	return nil
 }
 
-func resetMachine(disk []byte, drive string) {
+// resetMachine returns the machine to a cold start with disk in drive 8.
+// Which drive answers there was decided at compile time - the virtual
+// drive by default, the 1541 under -tags drive1541 - so the only thing to
+// do here is take the previous one off the bus before InsertDisk puts a
+// fresh one on.
+func resetMachine(disk []byte) {
 	clear(tiny64.Ram())
 	clear(tiny64.ColorRam())
 	tiny64.ClearFrameBuffer()
 	tiny64.Keys().ReleaseAll()
 	tiny64.DetachVirtualDrive()
-	tiny64.AttachDrive(false)
 	tiny64.InsertDisk(disk)
-	if drive == "virtual" {
-		tiny64.AttachDrive(false)
-		tiny64.AttachVirtualDrive(8)
-	}
 	tiny64.Reset()
 }
 

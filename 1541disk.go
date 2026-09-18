@@ -1,3 +1,5 @@
+//go:build drive1541
+
 package tiny64
 
 // The drive's mechanical state - where the head is, whether the motor is

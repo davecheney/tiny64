@@ -56,7 +56,7 @@ func BenchmarkDemoFrames(b *testing.B) {
 			// its power-on state (all pins inputs, floating high) first.
 			c := tiny64.GetCPU()
 			c.Port, c.PortDDR = 0, 0
-			resetMachine(nil, "")
+			resetMachine(nil)
 			if err := waitForReady(bootFrameLimit); err != nil {
 				b.Fatal(err)
 			}

@@ -88,6 +88,19 @@ func detachIEC(p iecPeripheral) {
 	iecBus = kept
 }
 
+// addressOccupied reports whether some peripheral already answers for a
+// primary address. attachDefaultDrive asks this rather than a per-drive
+// flag, because the bus is the thing that can only hold one device per
+// address, and only the bus knows about every kind of drive.
+func addressOccupied(address uint8) bool {
+	for _, p := range iecBus {
+		if p.iecAddress() == address {
+			return true
+		}
+	}
+	return false
+}
+
 // iecTick advances every attached peripheral by one Phi2 cycle.
 func iecTick() {
 	for _, p := range iecBus {
@@ -181,59 +194,6 @@ func cia2ReadPRA() uint8 {
 	return base | in
 }
 
-// via1ClkOut reports whether VIA1 is currently driving CLOCK OUT (PRB bit
-// 3) low; it only has effect when that bit is configured as an output.
-func via1ClkOut() bool {
-	return via1.DDRB&0x08 != 0 && via1.ORB&0x08 != 0
-}
-
-// via1DataOut reports whether VIA1 is currently pulling DATA low: either
-// it has explicitly driven DATA OUT (PRB bit 1), or - the classic IEC
-// auto-acknowledge quirk - ATN is asserted on the bus and the drive hasn't
-// yet set its ATN acknowledge bit (PRB bit 4) to override that.
-func via1DataOut() bool {
-	dataOut := via1.DDRB&0x02 != 0 && via1.ORB&0x02 != 0
-	atnAck := via1.DDRB&0x10 != 0 && via1.ORB&0x10 != 0
-	return dataOut || (ATNAsserted() && !atnAck)
-}
-
-// via1ReadPRB constructs VIA1's Port B read value: ATN IN/device jumpers/
-// CLOCK IN/DATA IN (bits 7,6,5,2,0) always reflect the live bus/jumper
-// state regardless of DDR, while ATN ACK/CLOCK OUT/DATA OUT (bits 4,3,1)
-// use normal DDR-effective read-back.
-func via1ReadPRB() uint8 {
-	var in uint8
-	if ATNAsserted() {
-		in |= 0x80
-	}
-	// Device address jumpers: 00 = device #8 (both bits 0).
-	if CLKAsserted() {
-		in |= 0x04
-	}
-	if DATAAsserted() {
-		in |= 0x01
-	}
-
-	out := viaEffective(via1.ORB, via1.DDRB) & 0x1A
-	return in | out
-}
-
-// via1AtnAck reports whether VIA1 has set its ATN acknowledge bit (PRB bit
-// 4), overriding the automatic ATN->DATA pulldown.
-func via1AtnAck() bool {
-	return via1.DDRB&0x10 != 0 && via1.ORB&0x10 != 0
-}
-
-// via1SampleATN presents the current bus ATN state to VIA1's CA1 pin,
-// which is how the drive learns that the C64 wants its attention: the
-// 7406 inverter between the bus and the chip means an asserted (low) ATN
-// arrives at CA1 as a high level, and the DOS ROM programs PCR bit 0 for
-// a low-to-high active edge and enables the CA1 interrupt, so asserting
-// ATN interrupts the drive into its command handler.
-func via1SampleATN() {
-	via1.setCA1(ATNAsserted())
-}
-
 // IECStatus returns a human-readable summary of the IEC bus lines, who is
 // driving each one, and the attached peripherals - for debugging tools.
 func IECStatus() string {
@@ -259,18 +219,13 @@ func IECStatus() string {
 		dataDrivers = append(dataDrivers, "C64")
 	}
 	for _, p := range iecBus {
+		// The 1541 is only a type this build knows about when it is
+		// compiled in; describeDrive1541 is the seam, and reports false
+		// in a build without one.
+		if describeDrive1541(p, &devices, &clkDrivers, &dataDrivers) {
+			continue
+		}
 		switch d := p.(type) {
-		case *drive1541:
-			devices = append(devices, "1541 #8")
-			if via1ClkOut() {
-				clkDrivers = append(clkDrivers, "1541")
-			}
-			if via1.DDRB&0x02 != 0 && via1.ORB&0x02 != 0 {
-				dataDrivers = append(dataDrivers, "1541:DATA_OUT")
-			}
-			if ATNAsserted() && !via1AtnAck() {
-				dataDrivers = append(dataDrivers, "1541:auto-ack")
-			}
 		case *iecDevice:
 			devices = append(devices, "device #"+itoa(int(d.address))+" "+d.stateName())
 			if d.clk {

@@ -24,6 +24,22 @@ jobs:
       - name: Test
         run: go test ./...
 
+      # The physical 1541 is behind a build tag, so the steps above do not
+      # compile it, its GCR codec, its two VIAs, or the 6502 core they hang
+      # off - nor the 6502 arm of the IRQ suite, which is the only non-6510
+      # core under test anywhere. That is 252 test cases the default
+      # configuration cannot see. This pass is what keeps them honest, and
+      # it has to stay next to the untagged one: between them they are the
+      # only coverage either configuration gets.
+      - name: Build (1541)
+        run: go build -tags drive1541 ./...
+
+      - name: Test (1541)
+        run: go test -tags drive1541 ./...
+
+      - name: Vet (1541)
+        run: go vet -tags drive1541 ./...
+
       # There's no golangci-lint in the repo yet, so "lint" is what the
       # standard toolchain offers: vet, plus a formatting check, written
       # out longhand because gofmt -l only lists offending files and

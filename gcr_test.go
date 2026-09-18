@@ -1,3 +1,5 @@
+//go:build drive1541
+
 package tiny64
 
 import (

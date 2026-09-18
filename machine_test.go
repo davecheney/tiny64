@@ -19,23 +19,23 @@ func saveMachine(t *testing.T) {
 	savedCPU, savedCIA1, savedCIA2 := cpu, cia1, cia2
 	savedKeyboard, savedVIC, savedCartridge := keyboard, vic, cartridge
 	savedRAM, savedColorRAM := ram, colorRAM
-	savedDriveCPU, savedVIA1, savedVIA2 := driveCPU, via1, via2
-	savedDriveRAM, savedDisk := driveRAM, diskImage
-	savedDriveAttached := driveAttached
-	// The bus is its own state, not a shadow of driveAttached: a peripheral
-	// can sit on it without setting that flag at all. Snapshot the slice
-	// header and its contents, since a test may replace an entry.
+	savedDisk := diskImage
+	// Whatever drive this build has is saved behind the seam, because a
+	// build without the 1541 has no drive CPU, VIAs or drive RAM to put
+	// back. The disk goes back through the same closure so that the order
+	// - drive state, then the disk, then the track - is stated in one
+	// place rather than split across two files.
+	restoreDrive := saveDriveState()
+	// The bus is its own state, not a shadow of any drive's: a peripheral
+	// can sit on it without a drive being attached at all. Snapshot the
+	// slice header and its contents, since a test may replace an entry.
 	savedBus := append([]iecPeripheral(nil), iecBus...)
 	t.Cleanup(func() {
 		cpu, cia1, cia2 = savedCPU, savedCIA1, savedCIA2
 		keyboard, vic, cartridge = savedKeyboard, savedVIC, savedCartridge
 		ram, colorRAM = savedRAM, savedColorRAM
-		driveCPU, via1, via2 = savedDriveCPU, savedVIA1, savedVIA2
-		driveRAM = savedDriveRAM
-		InsertDisk(savedDisk)
-		driveResetDisk()
-		driveAttached = savedDriveAttached
-		// Last, because InsertDisk above attaches a 1541 of its own.
+		restoreDrive(savedDisk)
+		// Last, because InsertDisk above attaches a drive of its own.
 		iecBus = savedBus
 	})
 }

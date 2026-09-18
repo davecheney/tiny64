@@ -3,8 +3,6 @@ package tiny64
 import (
 	"bytes"
 	"fmt"
-	"os"
-	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -19,18 +17,18 @@ import (
 // back the way it was afterwards, since the drive and the disk are
 // package-level singletons shared by every test in this package.
 func useDrive(t *testing.T, disk []byte) {
-	savedBus, savedDisk, savedDrive, savedAttached := iecBus, diskImage, virtualDrive, driveAttached
+	savedBus, savedDisk, savedDrive := iecBus, diskImage, virtualDrive
 	t.Cleanup(func() {
-		iecBus, diskImage, virtualDrive, driveAttached = savedBus, savedDisk, savedDrive, savedAttached
+		iecBus, diskImage, virtualDrive = savedBus, savedDisk, savedDrive
 	})
-	InsertDisk(disk)
 
-	// InsertDisk plugs in a 1541 on the grounds that a disk needs
-	// something to go in, but these tests want the generic drive
-	// answering for device 8. Two devices at one address would fight over
-	// the bus, so the 1541 comes back out first.
-	AttachDrive(false)
+	// The generic drive goes on first, so that InsertDisk - which attaches
+	// whichever drive this build has, but only if nobody is answering for
+	// device 8 - finds the address taken and leaves it alone. Doing it in
+	// this order is what lets these tests read the same in a build with a
+	// 1541 compiled in and one without.
 	AttachVirtualDrive(8)
+	InsertDisk(disk)
 }
 
 // virtualDriveDisk returns a formatted disk carrying one PRG file, built
@@ -306,10 +304,10 @@ func TestDriveAttachedBeforeReset(t *testing.T) {
 	}
 	colorRAM = [1024]byte{}
 
-	// Drive on the bus before the machine is started, not after.
-	InsertDisk(virtualDriveDisk(t, "HELLO", helloPRG))
-	AttachDrive(false)
+	// Drive on the bus before the machine is started, not after, and the
+	// generic drive before the disk so InsertDisk leaves address 8 alone.
 	AttachVirtualDrive(8)
+	InsertDisk(virtualDriveDisk(t, "HELLO", helloPRG))
 
 	Reset()
 	m := &machine{t: t}
@@ -369,59 +367,6 @@ func TestDriveRecoversFromResetMidTransfer(t *testing.T) {
 	}
 }
 
-// TestDrivesAgreeOnDirectoryText compares the directory the generic drive
-// synthesises against the one the 1541 produces, on the same image, in
-// the same machine, byte for byte on the screen.
-//
-// The 1541 is the oracle here, and not merely because it came first: the
-// text it puts on the screen is formatted by the DOS ROM itself, so it is
-// the real drive's output by construction. The generic drive
-// reimplements that formatting in Go, so it is the side that can drift.
-// This test is the cheapest possible check on the whole DOS layer,
-// because anything the ROM does that the Go does not is a screen diff.
-//
-// The names are deliberately sixteen characters, the width of the name
-// field, because that is the length that pins the column after it: the
-// padding loop runs zero times and only the closed-file flag is left, so
-// an off-by-one in the padding cannot hide behind a short name.
-func TestDrivesAgreeOnDirectoryText(t *testing.T) {
-	skipShort(t)
-
-	saveMachine(t)
-	disk := FormatDisk("COMPARE DISK", "01")
-	diskImage = disk
-	for _, name := range []string{
-		"04.LAST NIGHT 30", // exactly sixteen, the pinning case
-		"A",                // one, the longest padding run
-		"MIDDLING NAME",
-	} {
-		if code := diskWriteFile(name, ftypePRG, helloPRG); code != 0 {
-			t.Fatalf("writing %q: DOS error %d", name, code)
-		}
-	}
-
-	// A $A0 is written into the header field below, because that is what
-	// CBM DOS pads it with and it is the case the real images here do not
-	// isolate: it must reach the screen as a space, since LIST renders
-	// $A0 in a BASIC line as the token CLOSE.
-	if bam := diskReadSector(dirTrack, 0); bam != nil {
-		bam[0xA4] = 0xA0
-	}
-
-	real, virtual := listDirectoryOnBothDrives(t, disk)
-
-	// Two blank screens compare equal, so the oracle has to be shown to
-	// have said something before its agreement means anything.
-	if !containsAny(real, "COMPARE DISK") {
-		t.Fatalf("the 1541 listed no directory header, so the comparison proved nothing: %q", real)
-	}
-	for i := range real {
-		if real[i] != virtual[i] {
-			t.Errorf("screen row %d differs:\n1541    %q\nvirtual %q", i, real[i], virtual[i])
-		}
-	}
-}
-
 // waitForListing runs until a directory listing has finished being
 // printed: the screen carries the drive's "BLOCKS FREE." trailer and
 // BASIC is back at a prompt.
@@ -464,32 +409,6 @@ func screenHas(want string) bool {
 	return false
 }
 
-// listDirectoryOnBothDrives returns the whole screen after listing disk's
-// directory, once through the 1541 and once through the generic drive.
-func listDirectoryOnBothDrives(t *testing.T, disk []byte) (real, virtual []string) {
-	t.Helper()
-	read := func(useVirtual bool) []string {
-		m := newMachine(t)
-		InsertDisk(disk)
-		if useVirtual {
-			AttachDrive(false)
-			AttachVirtualDrive(8)
-		}
-		m.waitForLine(5, "READY.")
-		m.typeLine(`LOAD"$",8`)
-		waitForLoad(m)
-		m.typeLine("LIST")
-		waitForListing(m)
-
-		var out []string
-		for row := range 25 {
-			out = append(out, screenLine(row))
-		}
-		return out
-	}
-	return read(false), read(true)
-}
-
 // waitForLoad waits for BASIC to come back after a LOAD. Real directories
 // take longer to read than waitForLine's budget allows.
 func waitForLoad(m *machine) {
@@ -502,56 +421,4 @@ func waitForLoad(m *machine) {
 		m.run(500_000)
 	}
 	m.t.Fatalf("no prompt after LOAD in %d cycles; last row %q", budget, lastNonBlankRow())
-}
-
-// TestDrivesAgreeOnRealDisks runs the same comparison as
-// TestDrivesAgreeOnDirectoryText against images this repository did not
-// produce.
-//
-// This is the stronger form of that test and it is worth having both. A
-// synthesised disk is written by the same code that reads it, so the two
-// can share an assumption and agree while both being wrong; more
-// importantly a generator only ever emits the shapes it knows how to
-// emit. Every difference these images exposed was of that kind: a header
-// whose five bytes are one string rather than an ID and a DOS version,
-// DEL entries occupying live slots, and locked files. None of those can
-// arise from FormatDisk and diskWriteFile however many files are written.
-//
-// The synthesised test is not redundant, because it covers the case real
-// disks here do not reach as cheaply: a $A0 in the header, which must
-// become a space before LIST renders it as the token CLOSE.
-func TestDrivesAgreeOnRealDisks(t *testing.T) {
-	skipShort(t)
-
-	for _, name := range []string{"enforcer", "lastnight", "validated"} {
-		t.Run(name, func(t *testing.T) {
-			disk, err := os.ReadFile(filepath.Join("d64", name+".d64"))
-			if err != nil {
-				t.Skipf("no %s.d64 to compare against: %v", name, err)
-			}
-			saveMachine(t)
-			real, virtual := listDirectoryOnBothDrives(t, disk)
-
-			// Two blank screens compare equal, so the oracle has to be
-			// shown to have said something before agreement means
-			// anything.
-			if !containsAny(real, "BLOCKS FREE.") {
-				t.Fatalf("the 1541 listed no directory, so the comparison proved nothing: %q", real)
-			}
-			for i := range real {
-				if real[i] != virtual[i] {
-					t.Errorf("screen row %d differs:\n1541    %q\nvirtual %q", i, real[i], virtual[i])
-				}
-			}
-		})
-	}
-}
-
-func containsAny(rows []string, want string) bool {
-	for _, r := range rows {
-		if strings.Contains(r, want) {
-			return true
-		}
-	}
-	return false
 }

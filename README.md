@@ -82,32 +82,45 @@ tiny64 emulates:
 - the 6510 CPU
 - the 6569 VIC-II video chip (PAL)
 - the 6526 CIA I/O chips
-- the 6522 VIA and a complete 1541 disk drive - its own 6502 running the
-  real DOS ROM, a rotating GCR track under the head, and the serial IEC
-  bus between the two machines - so `LOAD"$",8` reads a real D64, and the
-  DOS can format a blank one for itself
+- the serial IEC bus, and a drive on it
 
-There is also a second, much smaller drive that speaks the same wire
-protocol without modelling any of the 1541's internals: `AttachVirtualDrive`
-puts a device on the bus that handles the serial handshake cycle by cycle
-but implements CBM DOS in Go against a D64 image. It has no drive CPU to
-step and no GCR to decode, so it costs almost nothing to run, and the
-unmodified KERNAL cannot tell the difference - but it cannot run anything
-that talks to the drive's own processor.
+## Drives
 
-A drive is only plugged in when something asks for one, with
-`AttachDrive`, or by inserting a disk: `cmd/c64` and `cmd/c64cli` both
-take a `-disk FILE` flag naming a 35-track or 40-track D64 image, and a `-drive` flag
-choosing which drive answers for device 8 — `1541` (the default) or
-`virtual`. Only one drive can answer for a given address, so attaching one
-replaces the other.
+Two drives can answer for device 8, and **which one is a compile-time
+choice**.
 
-    go run ./cmd/c64 -disk demo.d64                  # the real 1541
-    go run ./cmd/c64 -disk demo.d64 -drive=virtual   # the generic drive
+By default you get the generic drive: it handles the serial handshake
+cycle by cycle, so the unmodified KERNAL cannot tell the difference, but
+it implements CBM DOS in Go against a D64 image rather than modelling the
+1541's internals. There is no drive CPU to step and no GCR to decode.
 
-Both should behave identically for `LOAD"$",8`, `LOAD"NAME",8` and
-`SAVE`; the difference only shows for software that drives the 1541's own
-processor.
+Building with `-tags drive1541` replaces it with a complete 1541 - its own
+6502 running the real DOS ROM, its two 6522 VIAs, and a rotating GCR track
+under the head. That is what software driving the drive's own processor
+needs: fastloaders, copy protection, drive-code upload.
+
+    go run ./cmd/c64 -disk demo.d64                     # the generic drive
+    go run -tags drive1541 ./cmd/c64 -disk demo.d64     # the real 1541
+
+Both behave identically for `LOAD"$",8`, `LOAD"NAME",8` and `SAVE`.
+
+**The tag is a compile-time choice because the 1541 is not cheap.** The
+bus is clocked on every Phi2 cycle, and a 1541 on it means a second 6502
+plus two VIAs on every one of a PAL frame's 19,656 cycles -
+unconditionally, because the DOS ROM idles in an ATN polling loop and
+never sleeps. Measured over the demo fixtures on an M4 Max, against a
+machine with nothing on the bus:
+
+| device on the bus | cost per frame |
+|---|---|
+| the generic drive | +3.9% |
+| the full 1541 | +41.7% |
+
+A drive is only plugged in when something asks for one, by inserting a
+disk: `cmd/c64` and `cmd/c64cli` both take a `-disk FILE` flag naming a
+35-track or 40-track D64 image. Only one drive can answer for a given
+address, so `InsertDisk` leaves address 8 alone if something is already
+there.
 
 The desktop and headless front ends also have an opt-in `-wedge` flag. It plugs
 an 8K autostart cartridge into the expansion port before reset, the way a
@@ -119,7 +132,7 @@ switched in at `$8000-$9FFF` only while servicing wedge commands; BASIC,
 the screen editor, KERNAL disk operations, and loaded programs see normal RAM:
 
     go run ./cmd/c64 -disk demo.d64 -wedge
-    go run ./cmd/c64cli -disk demo.d64 -drive=virtual -wedge
+    go run ./cmd/c64cli -disk demo.d64 -wedge
 
 The cartridge prints `DOS WEDGE ACTIVE` as it starts up, just above the first
 `READY.`, and accepts the historical direct-mode DOS Wedge / DOS Manager 5.1
@@ -242,7 +255,8 @@ Raspberry Pi Pico.
 - `cmd/gopher-badge64` is the TinyGo build target for the Gopher Badge
 - `cmd/tufty2040` is the TinyGo build target for the Pimoroni Tufty 2040,
   using its parallel ST7789 display through PIO/DMA
-- `cmd/drivec` is a standalone 1541 drive/IEC bus test harness
+- `cmd/drivec` is a standalone 1541 drive/IEC bus test harness, and so is
+  built only under `-tags drive1541`
 - `cmd/prg` inspects `.prg` files: header, BASIC listing, disassembly
 - `cmd/snapshot` captures headless PNGs and checks `testdata/demos` goldens
 - `cmd/internal/prg` and `cmd/internal/disasm` are the PRG decoder and the
@@ -305,6 +319,14 @@ is most of the suite's runtime. They are skipped under `-short`:
 
     go test -short ./...   # fast local run, drive and wedge tests skipped
     go test ./...          # everything, as CI runs it
+
+The physical 1541 is behind a build tag, so `go test ./...` does not
+compile it, its GCR codec, its VIAs, or the 6502 core they hang off - nor
+the 6502 arm of the IRQ suite, which is the only non-6510 core under test
+anywhere. That is 252 test cases the default configuration cannot see, so
+CI runs both and so should you before touching drive code:
+
+    go test -tags drive1541 ./...
 
 ## Snapshot regression tests
 
