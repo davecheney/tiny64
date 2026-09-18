@@ -78,6 +78,12 @@ const (
 	reloadFirstSlot = 6
 	reloadSlotAfter = 46
 
+	// The interior of the display window: every slot between the first
+	// border comparison and the second, which is the longest run on a line
+	// and the one where every question phi0low asks has a fixed answer.
+	displayFirstSlot = borderSlotLeft + 1
+	displaySlotAfter = borderSlotRight38
+
 	renderFirstSlot = renderFirstDot / DotsPerCycle
 	renderSlotAfter = renderDotAfter / DotsPerCycle
 	visibleSlots    = VisibleDotsPerLine / DotsPerCycle
@@ -992,6 +998,38 @@ func (v *VICII) cycleDraw(slot uint16, borderSlot, mayReload bool) {
 	}
 }
 
+// cycleDrawDisplay is cycleDraw for the interior of the display window,
+// where phi0lowDisplay stands in for phi0low. The body is spelled out
+// rather than shared with cycleDraw for the reason cycleDraw gives: nothing
+// in this path inlines, so a shared helper would be real calls.
+func (v *VICII) cycleDrawDisplay(slot uint16) {
+	reload := v.reloadDot(true)
+
+	v.dotclock(reload, false)
+	v.dotclock(reload, false)
+	v.dotclock(reload, false)
+	v.dotclock(reload, false)
+	v.phi0lowDisplay(slot)
+
+	cpu.TickPhi2()
+	ciaTick()
+	iecTick()
+
+	v.dotclock(reload, false)
+	v.dotclock(reload, false)
+	v.dotclock(reload, false)
+	v.dotclock(reload, false)
+	v.phi0high(slot)
+
+	if v.dot >= DotsPerLine {
+		v.dot = 0
+		v.beamLine++
+		if v.beamLine >= RasterLinesPerFrame {
+			v.beamLine = 0
+		}
+	}
+}
+
 // cycleBlank runs one bus cycle whose dots reach nothing: the same
 // sequence, with the beam stepping over the dots instead of shifting them
 // out. Everything the VIC-II and the CPU do in a cycle still happens.
@@ -1060,7 +1098,9 @@ func (v *VICII) stepLine() {
 	// has to ask.
 	v.drawRun(0, borderSlotLeft, false)
 	v.cycleDraw(borderSlotLeft, true, true)
-	v.drawRun(borderSlotLeft+1, borderSlotRight38, true)
+	for slot := uint16(displayFirstSlot); slot < displaySlotAfter; slot++ {
+		v.cycleDrawDisplay(slot)
+	}
 	v.cycleDraw(borderSlotRight38, true, true)
 	v.drawRun(borderSlotRight38+1, borderSlotRight40, true)
 	v.cycleDraw(borderSlotRight40, true, false)
@@ -1190,6 +1230,42 @@ func (v *VICII) borderCompare() {
 	} else if v.dot == leftComp38 {
 		v.resolveVerticalBorder()
 	}
+}
+
+// phi0lowDisplay is phi0low for the interior of the display window, slots
+// displayFirstSlot through displaySlotAfter-1. Every slot test in phi0low
+// has the same answer across that run: none of the one-off cycles is in it,
+// and the three ranges - BA on a Bad Line, the c-access and the g-access -
+// all cover it whole. So the run's phase is this, with the answers built
+// in rather than asked 37 times a line.
+//
+// It must stay in step with phi0low; TestPhi0LowDisplayMatchesPhi0Low walks
+// the run both ways and compares.
+func (v *VICII) phi0lowDisplay(slot uint16) {
+	// Bad Line state is not hoistable even here: YSCROLL is writable
+	// mid-line, so a $D011 store moves the condition between one cycle and
+	// the next.
+	if v.rasterLine == badLineRasterStart && v.control1&0x10 != 0 {
+		v.denLatch = true
+	}
+
+	yscroll := v.control1 & 0x07
+	badLine := v.rasterLine >= badLineRasterStart && v.rasterLine <= badLineRasterEnd &&
+		uint8(v.rasterLine)&0x07 == yscroll && v.allowBadLine
+	v.badLine = badLine
+	if badLine {
+		v.idle = false
+	}
+
+	ba := !badLine && !v.spriteDMAStall(slot)
+	v.BA = ba
+	if ba {
+		v.baLowCycles = 0
+	} else if v.baLowCycles <= baWarningCycles {
+		v.baLowCycles++
+	}
+
+	v.cycleGAccess()
 }
 
 func (v *VICII) phi0low(slot uint16) {
