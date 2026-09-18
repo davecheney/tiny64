@@ -90,8 +90,21 @@ func TestVICBitmapIdleAccessUsesIdleData(t *testing.T) {
 	}
 }
 
+// mayReload is what stepLine's run structure tells reloadDot: whether this
+// bus cycle is one the graphics sequencer can take up a result in. The
+// tests below park the beam by hand, so they work it out from the beam.
+func mayReload(v *VICII) bool {
+	slot := v.dot / DotsPerCycle
+	return slot >= reloadFirstSlot && slot < reloadSlotAfter
+}
+
 func TestVICReloadDotMatchesPerDotRule(t *testing.T) {
-	for start := uint16(0); start < DotsPerLine; start++ {
+	// reloadDot is asked at the head of a bus cycle, never part-way
+	// through one - stepLine and stepCycle both call it with the beam on a
+	// boundary. That is what lets it take the caller's slot instead of
+	// dividing the beam back down to one, so the sweep stays on
+	// boundaries too.
+	for start := uint16(0); start < DotsPerLine; start += DotsPerCycle {
 		for control := 0; control < 256; control++ {
 			v := VICII{dot: start, control2: uint8(control)}
 			// Preserve the old per-dot rule independently of graphicsReloadPhase.
@@ -101,7 +114,9 @@ func TestVICReloadDotMatchesPerDotRule(t *testing.T) {
 			}
 			want := uint16(0xFFFF)
 			matches := 0
-			got := v.reloadDot()
+			// The caller decides whether the cycle can reload; the old
+			// rule's slot range is that decision, so it is made here.
+			got := v.reloadDot(mayReload(&v))
 			for offset := uint16(0); offset < DotsPerCycle; offset++ {
 				// The cycle beginning at start acts on these dots.
 				dot := start + offset
@@ -134,17 +149,17 @@ func TestVICXScrollDelaysGraphicsReload(t *testing.T) {
 	// dot, and dot 48's cycle is the one that begins there.
 	unscrolled := &VICII{}
 	unscrolled.dot = 48
-	if got := unscrolled.reloadDot(); got != 48 {
+	if got := unscrolled.reloadDot(mayReload(unscrolled)); got != 48 {
 		t.Fatalf("unscrolled reload dot = %d, want the cell boundary at 48", got)
 	}
 
 	// XSCROLL=3 moves the reload three dots into the cell, to 51.
 	v := &VICII{control2: 3, gdPending: 0xFF, videoBufferPending: 0x0100}
 	v.dot = 48
-	if got := v.reloadDot(); got == 48 {
+	if got := v.reloadDot(mayReload(v)); got == 48 {
 		t.Fatal("sequencer reloaded on the cell boundary with XSCROLL=3")
 	}
-	if got := v.reloadDot(); got != 51 {
+	if got := v.reloadDot(mayReload(v)); got != 51 {
 		t.Fatalf("reload dot = %d with XSCROLL=3, want 51", got)
 	}
 
@@ -171,11 +186,11 @@ func TestVICMulticolorXScrollSevenReloadsAtPairBoundary(t *testing.T) {
 		videoBufferPending: 0x0100,
 	}
 	v.dot = 48 // the cycle covering dots 48 to 55
-	if got := v.reloadDot(); got == 55 {
+	if got := v.reloadDot(mayReload(v)); got == 55 {
 		t.Fatal("sequencer reloaded at dot 55 in multicolor mode with XSCROLL=7")
 	}
 	v.dot = 56
-	if got := v.reloadDot(); got != 56 {
+	if got := v.reloadDot(mayReload(v)); got != 56 {
 		t.Fatalf("multicolor XSCROLL=7 reload dot = %d, want 56", got)
 	}
 
@@ -194,7 +209,7 @@ func TestVICMulticolorXScrollSevenReloadsAtPairBoundary(t *testing.T) {
 	// earlier, because there is no pair to finish.
 	v = &VICII{control2: 7, gdPending: 0xA5}
 	v.dot = 48
-	if got := v.reloadDot(); got != 55 {
+	if got := v.reloadDot(mayReload(v)); got != 55 {
 		t.Fatalf("standard-resolution XSCROLL=7 reload dot = %d, want 55", got)
 	}
 	v.dot = 55

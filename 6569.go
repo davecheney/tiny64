@@ -72,6 +72,12 @@ const (
 	// The render window in slots. Its edges are bus-cycle aligned, so a
 	// slot is wholly inside it or wholly outside, and the question can be
 	// asked of the slot number rather than of the beam.
+	// The bus cycles the graphics sequencer can take up a g-access result
+	// in. The g-access runs in slots 5 to 44 and the reload is one slot
+	// behind it, so these are that window shifted by one.
+	reloadFirstSlot = 6
+	reloadSlotAfter = 46
+
 	renderFirstSlot = renderFirstDot / DotsPerCycle
 	renderSlotAfter = renderDotAfter / DotsPerCycle
 	visibleSlots    = VisibleDotsPerLine / DotsPerCycle
@@ -541,15 +547,25 @@ const noReloadDot = 0xFFFF
 // The eight dotclocks used to ask this individually, once per dot,
 // through a function call that seven of them could never act on. Asking
 // once per cycle instead takes 157,248 calls out of a PAL frame.
-func (v *VICII) reloadDot() uint16 {
+// reloadDot is the dot in this bus cycle the graphics sequencer takes up
+// its g-access result on, or noReloadDot if this cycle has none.
+//
+// mayReload is whether the cycle is one of the forty that can reload at
+// all - slots reloadFirstSlot through reloadSlotAfter-1. The caller knows
+// that from the slot number; asking here would mean dividing the beam
+// position back down to a slot the caller already has.
+//
+// The phase cannot be hoisted any further than this. XSCROLL is writable
+// mid-line, so a $D016 store in one cycle moves the next cycle's reload
+// dot, which is what TestVICXScrollWriteReloadsAtCurrentDot pins.
+func (v *VICII) reloadDot(mayReload bool) uint16 {
+	if !mayReload {
+		return noReloadDot
+	}
 	// The dotclocks act on dots v.dot through v.dot+DotsPerCycle-1, so the
 	// phase is matched against those. Exactly one of them is congruent to
 	// the reload phase; this is it.
-	dot := v.dot + ((graphicsReloadPhase(v.control2) - v.dot) & 7)
-	if slot := dot / DotsPerCycle; slot < 6 || slot > 45 {
-		return noReloadDot
-	}
-	return dot
+	return v.dot + ((graphicsReloadPhase(v.control2) - v.dot) & 7)
 }
 
 // refreshGraphicsPalette works out the colours the graphics sequencer can
@@ -934,10 +950,10 @@ const (
 // The two halves are written out rather than shared, because nothing in
 // this path inlines: a helper holding them would be two more real calls per
 // bus cycle, 39,312 a frame, to save eight lines here.
-func (v *VICII) cycleDraw(slot uint16, borderSlot bool) {
+func (v *VICII) cycleDraw(slot uint16, borderSlot, mayReload bool) {
 	// The sequencer's reload dot is fixed for the cycle, for the reason
 	// reloadDot gives.
-	reload := v.reloadDot()
+	reload := v.reloadDot(mayReload)
 
 	v.dotclock(reload, borderSlot)
 	v.dotclock(reload, borderSlot)
@@ -1004,9 +1020,9 @@ func (v *VICII) cycleBlank(slot uint16) {
 
 // drawRun paints the bus cycles from slot through to-1. None of them is a
 // slot the border comparator can match, which is what makes it a run.
-func (v *VICII) drawRun(from, to uint16) {
+func (v *VICII) drawRun(from, to uint16, mayReload bool) {
 	for slot := from; slot < to; slot++ {
-		v.cycleDraw(slot, false)
+		v.cycleDraw(slot, false, mayReload)
 	}
 }
 
@@ -1038,13 +1054,17 @@ func (v *VICII) stepLine() {
 		return
 	}
 
-	v.drawRun(0, borderSlotLeft)
-	v.cycleDraw(borderSlotLeft, true)
-	v.drawRun(borderSlotLeft+1, borderSlotRight38)
-	v.cycleDraw(borderSlotRight38, true)
-	v.drawRun(borderSlotRight38+1, borderSlotRight40)
-	v.cycleDraw(borderSlotRight40, true)
-	v.drawRun(borderSlotRight40+1, renderSlotAfter)
+	// The reload window opens at slot 6, which is also the first slot the
+	// border comparator can match, and closes after 45 - one slot before
+	// the comparator's last. So the runs already divide on it, and no run
+	// has to ask.
+	v.drawRun(0, borderSlotLeft, false)
+	v.cycleDraw(borderSlotLeft, true, true)
+	v.drawRun(borderSlotLeft+1, borderSlotRight38, true)
+	v.cycleDraw(borderSlotRight38, true, true)
+	v.drawRun(borderSlotRight38+1, borderSlotRight40, true)
+	v.cycleDraw(borderSlotRight40, true, false)
+	v.drawRun(borderSlotRight40+1, renderSlotAfter, false)
 	v.blankRun(renderSlotAfter, CyclesPerLine)
 }
 
@@ -1064,7 +1084,8 @@ func (v *VICII) stepCycle(slot uint16) {
 	onScreen := slot >= renderFirstSlot && slot < renderSlotAfter &&
 		slot < visibleSlots
 	if v.lineDrawable && onScreen {
-		v.cycleDraw(slot, borderSlot)
+		v.cycleDraw(slot, borderSlot,
+			slot >= reloadFirstSlot && slot < reloadSlotAfter)
 		return
 	}
 	v.cycleBlank(slot)
