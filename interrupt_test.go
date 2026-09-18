@@ -61,7 +61,7 @@ func TestInterruptClockMatchesPolledSources(t *testing.T) {
 // directly, covered separately by TestInterruptCombinedNMIEdges and the
 // RESTORE tests in 6510_nmi_test.go.
 func TestInterruptPeripheralNotifications(t *testing.T) {
-	newIRQTestCPU(t, "6510")
+	newIRQTestCPU(t)
 	for _, c := range []*CIA{&cia1, &cia2} {
 		c.Store(4, 1)
 		c.Store(5, 0)
@@ -108,7 +108,7 @@ func TestInterruptPeripheralNotifications(t *testing.T) {
 // recognized only on its own 0->1 transition and to release cleanly on
 // acknowledgement.
 func TestInterruptCombinedNMIEdges(t *testing.T) {
-	c := newIRQTestCPU(t, "6510")
+	c := newIRQTestCPU(t)
 
 	keyboard.Restore()
 	c.tick()
@@ -143,7 +143,7 @@ func TestInterruptCombinedNMIEdges(t *testing.T) {
 }
 
 func TestInterruptResetRetainsPeripheralLevels(t *testing.T) {
-	newIRQTestCPU(t, "6510")
+	newIRQTestCPU(t)
 	vic.setIRQ(true)
 	cia1.setIRQ(true)
 	cia2.setIRQ(true)
@@ -160,7 +160,7 @@ func TestInterruptResetRetainsPeripheralLevels(t *testing.T) {
 }
 
 func TestInterruptUnconnectedPeripherals(t *testing.T) {
-	newIRQTestCPU(t, "6510")
+	newIRQTestCPU(t)
 	var c CIA
 	var v VICII
 	var k Keyboard

@@ -67,7 +67,7 @@ func TestIRQTransistorReference(t *testing.T) {
 				tc.StackStatus = P_UNUSED
 			}
 			const irqVector = 0x8000
-			c := newIRQTestCPU(t, "6510")
+			c := newIRQTestCPU(t)
 			for i := range ram {
 				ram[i] = 0xEA
 			}
