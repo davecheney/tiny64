@@ -240,13 +240,15 @@ func (v *VICII) ReadRegister(addr uint16) uint8 {
 	switch {
 	case reg < 0x11:
 		return v.registers00To10[reg]
-	case reg < regControl2:
+	// Unsigned offset tests prove both bounds, including the lower bounds
+	// hidden by the special-register returns above.
+	case reg-0x12 < uint16(len(v.registers12To15)):
 		return v.registers12To15[reg-0x12]
 	case reg == 0x17:
 		return v.register17
-	case reg < regBorderColor:
+	case reg-0x19 < uint16(len(v.registers19To1F)):
 		return v.registers19To1F[reg-0x19]
-	case reg < 0x2F:
+	case reg-0x22 < uint16(len(v.registers22To2E)):
 		return v.registers22To2E[reg-0x22]
 	}
 	return 0xFF

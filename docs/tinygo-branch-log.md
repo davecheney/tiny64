@@ -1,5 +1,40 @@
 # tinygo branch log
 
+## Accepted register-read bounds adaptation: 2026-09-18
+
+The user accepted the adaptation of upstream `f0fb2a5` after a Tufty
+A/B/A comparison, then authorized adoption at 10:35 AEST. This commit is
+based directly on accepted `531bd66`, not the local review branch that
+also contains the rejected #82 trial.
+
+Preserve the lightweight VIC register arrays and use unsigned offset
+range tests in `ReadRegister` instead of importing mainline's sprite
+and background-array refactors. These tests expose both bounds to the
+compiler without changing register mapping or adding storage.
+Tests cover all 1024 mirrored addresses, all 256 stored-byte patterns,
+and raster lines 0, 255, 256 and 311.
+
+Tufty `-opt=2 -scheduler=none`, accepted wedge/virtual-drive MAZE workload,
+ten 50-frame windows ending at frames 500 through 950, each run continuing
+through frame 1000:
+
+| Run | Mean ms/frame |
+| --- | ---: |
+| A before | 70.416990 |
+| B candidate | 70.417770 |
+| A after | 70.417346 |
+
+B versus average A is +0.000602ms (+0.000855%): effectively flat, not a
+demonstrated speedup. Flash falls 8 bytes (198364 to 198356), RAM unchanged.
+Host tests passed on this isolated candidate. User acceptance permits
+adoption of the code-generation simplification despite no measured speedup.
+
+Artifacts are retained in session
+`1c4c73da-12e2-4bc3-98bb-878099dafd16/files/register-bounds/`.
+Measured B UF2 SHA-256:
+`144a8c3b905cf45148bb5a63340d03f007c4de7c23f29afd1d78fc952dd5096d`.
+No ROM relocation, IEC changes, or rejected #82 changes are included.
+
 The `tinygo` branch is a long-running fork of `main`, hosting the
 microcontroller device builds (`cmd/tufty2040`, `cmd/gopher-badge64`).
 `main` is pushing towards cycle-accurate VIC-II/6502 emulation good enough

@@ -52,6 +52,36 @@ func TestVICRegisterStorage(t *testing.T) {
 	}
 }
 
+func TestVICRegisterReadMirrors(t *testing.T) {
+	for _, raster := range []uint16{0, 255, 256, 311} {
+		for value := 0; value < 256; value++ {
+			var v VICII
+			var stored [64]uint8
+			for reg := uint16(0); reg < 0x2F; reg++ {
+				stored[reg] = uint8(value) ^ uint8(reg)
+				v.WriteRegister(0xD000+reg, stored[reg])
+			}
+			v.rasterLine = raster
+			for addr := uint16(0xD000); addr < 0xD400; addr++ {
+				reg := addr & 0x3F
+				want := stored[reg]
+				switch {
+				case reg == 0x11:
+					want = stored[reg]&0x7F | uint8((raster>>1)&0x80)
+				case reg == 0x12:
+					want = uint8(raster)
+				case reg >= 0x2F:
+					want = 0xFF
+				}
+				if got := v.ReadRegister(addr); got != want {
+					t.Fatalf("raster=%d value=%d address=$%04X: got $%02X, want $%02X",
+						raster, value, addr, got, want)
+				}
+			}
+		}
+	}
+}
+
 // TestVICStaysIdleWithoutDEN is a regression test: without DEN ever being
 // set, there is never a Bad Line Condition, so the video logic must stay
 // in idle state and RC/VC/VCBase must stay at 0 forever (previously, RC
