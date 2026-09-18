@@ -18,28 +18,13 @@ type irqTestCPU struct {
 	put                       func(uint16, byte)
 	read                      func(uint16) byte
 	bus                       func() busCycle
-
-	// The peripheral-sourced subtests differ between the cores in which
-	// chip raises the interrupt and how it is acknowledged, not in what
-	// they assert. Keeping that divergence here rather than in the test
-	// bodies is what lets the 6502 arm live in its own file: a build
-	// without the 1541 has no VIA type at all, so a test body that named
-	// one would not compile.
-	irqStatePtr           func() *irqState
-	poisonBus             func()
-	armTimer              func() (cycles int, entry uint16)
-	armFinalRead          func(c irqTestCPU)
-	finalReadAcked        func() bool
-	armPenultimateWrite   func(c irqTestCPU)
-	penultimateWriteAcked func() bool
 }
 
-func newIRQTestCPU(t *testing.T, core string) irqTestCPU {
+func newIRQTestCPU(t *testing.T) irqTestCPU {
 	t.Helper()
 	saveMachine(t)
 	savedBus := bus
 	t.Cleanup(func() { bus = savedBus })
-	saveIRQDriveState(t)
 	cpu = CPU{PC: 0x0200, SP: 0xFF, PortDDR: 0xFF}
 	cia1, cia2 = CIA{}, CIA{}
 	keyboard = Keyboard{}
@@ -48,53 +33,26 @@ func newIRQTestCPU(t *testing.T, core string) irqTestCPU {
 	bus = Bus{}
 	ram = [65536]byte{}
 
-	var c irqTestCPU
-	switch core {
-	case "6510":
-		c = irqTestCPU{
-			pc: &cpu.PC, sp: &cpu.SP, p: &cpu.regP, x: &cpu.X, y: &cpu.Y,
-			opcode: &cpu.Opcode, tstate: &cpu.TState, interrupt: &cpu.Interrupt,
-			tick: func() {
-				// One whole bus cycle, not just the CPU's share of it.
-				// The C64's CIAs hang off the VIC-II's Phi2 rather than
-				// off the CPU (see ciaTick), so a harness that called
-				// only TickPhi2 would leave their timers frozen and the
-				// peripheral-sourced subtests below would assert nothing.
-				cpu.TickPhi2()
-				ciaTick()
-			},
-			reset: cpu.Reset,
-			pin: func(a, b bool) {
-				vic.setIRQ(a)
-				cia1.setIRQ(b)
-			},
-			put:  func(addr uint16, b byte) { ram[addr] = b },
-			read: func(addr uint16) byte { return ram[addr] },
-			bus:  func() busCycle { return busCycle{bus.Address, bus.Data, !bus.RW} },
-
-			irqStatePtr: func() *irqState { return &cpu.irq },
-			poisonBus:   func() { bus.Address = 0xDEAD },
-			armTimer: func() (int, uint16) {
-				cia1 = CIA{timerA: 1, latchA: 0xFFFF, runningA: true, imr: 1}
-				return 4, 0x0202
-			},
-			armFinalRead: func(c irqTestCPU) {
-				cpu.Port = 6 // Expose I/O; the test stops before reading ROM vectors.
-				cia1 = CIA{icr: 0x81, imr: 1, IRQ: true}
-				cia1.setIRQ(true)
-				c.program(0x0200, 0xAD, 0x0D, 0xDC)
-			},
-			finalReadAcked: func() bool { return !cia1.IRQ },
-			armPenultimateWrite: func(c irqTestCPU) {
-				cpu.Port = 6
-				vic.interruptEnable, vic.interruptStatus = 1, 1
-				vic.updateIRQ()
-				c.program(0x0200, 0xEE, 0x19, 0xD0)
-			},
-			penultimateWriteAcked: func() bool { return !vic.IRQ },
-		}
-	default:
-		c = newIRQTestCPUForCore(t, core)
+	c := irqTestCPU{
+		pc: &cpu.PC, sp: &cpu.SP, p: &cpu.regP, x: &cpu.X, y: &cpu.Y,
+		opcode: &cpu.Opcode, tstate: &cpu.TState, interrupt: &cpu.Interrupt,
+		tick: func() {
+			// One whole bus cycle, not just the CPU's share of it.
+			// The C64's CIAs hang off the VIC-II's Phi2 rather than
+			// off the CPU (see ciaTick), so a harness that called
+			// only TickPhi2 would leave their timers frozen and the
+			// peripheral-sourced subtests below would assert nothing.
+			cpu.TickPhi2()
+			ciaTick()
+		},
+		reset: cpu.Reset,
+		pin: func(a, b bool) {
+			vic.setIRQ(a)
+			cia1.setIRQ(b)
+		},
+		put:  func(addr uint16, b byte) { ram[addr] = b },
+		read: func(addr uint16) byte { return ram[addr] },
+		bus:  func() busCycle { return busCycle{bus.Address, bus.Data, !bus.RW} },
 	}
 	for addr := uint16(0x0200); addr < 0x0800; addr++ {
 		c.put(addr, 0xEA)
@@ -132,317 +90,287 @@ func (c irqTestCPU) checkEntry(t *testing.T, want bool, pc uint16) {
 }
 
 func TestIRQInactiveCycleSampling(t *testing.T) {
-	for _, core := range irqTestCores {
-		for _, pending := range []bool{false, true} {
-			for sources := range 4 {
-				for _, masked := range []bool{false, true} {
-					t.Run(fmt.Sprintf("%s/pending=%t/sources=%d/masked=%t", core, pending, sources, masked), func(t *testing.T) {
-						c := newIRQTestCPU(t, core)
-						state := c.irqStatePtr()
-						*state = irqState{pending: pending}
-						*c.opcode, *c.tstate = 0xEA, 1 // Complete NOP without an eligible prior sample.
-						if masked {
-							*c.p |= P_INTERRUPT
-						}
-						c.pin(sources&1 != 0, sources&2 != 0)
-						c.tick()
-						if want := (irqState{sampled: sources != 0, pending: pending}); *state != want {
-							t.Fatalf("IRQ state = %+v, want %+v", *state, want)
-						}
-						if *c.tstate != 0 {
-							t.Fatal("NOP did not complete")
-						}
-					})
-				}
-			}
-		}
-	}
-}
-
-func TestIRQInstructionPulses(t *testing.T) {
-	for _, core := range irqTestCores {
-		for _, tc := range []struct {
-			name   string
-			code   []byte
-			cycles int
-			pc     uint16
-			setup  func(irqTestCPU)
-		}{
-			{"NOP", []byte{0xEA}, 2, 0x0201, nil},
-			{"LDA-immediate", []byte{0xA9, 0x42}, 2, 0x0202, nil},
-			{"LDA-zp", []byte{0xA5, 0x10}, 3, 0x0202, nil},
-			{"LDA-zp-X", []byte{0xB5, 0x10}, 4, 0x0202, nil},
-			{"LDA-absolute", []byte{0xAD, 0x00, 0x03}, 4, 0x0203, nil},
-			{"LDA-absolute-X", []byte{0xBD, 0x00, 0x03}, 4, 0x0203, nil},
-			{"LDA-absolute-X-cross", []byte{0xBD, 0xFF, 0x03}, 5, 0x0203, func(c irqTestCPU) { *c.x = 1 }},
-			{"LDA-indirect-X", []byte{0xA1, 0x10}, 6, 0x0202, func(c irqTestCPU) { c.put(0x11, 0x03) }},
-			{"LDA-indirect-Y", []byte{0xB1, 0x10}, 5, 0x0202, func(c irqTestCPU) { c.put(0x11, 0x03) }},
-			{"LDA-indirect-Y-cross", []byte{0xB1, 0x10}, 6, 0x0202, func(c irqTestCPU) {
-				*c.y = 1
-				c.put(0x10, 0xFF)
-				c.put(0x11, 0x03)
-			}},
-			{"STA-absolute", []byte{0x8D, 0x00, 0x03}, 4, 0x0203, nil},
-			{"STA-indirect-X", []byte{0x81, 0x10}, 6, 0x0202, func(c irqTestCPU) { c.put(0x11, 0x03) }},
-			{"INC-zp", []byte{0xE6, 0x10}, 5, 0x0202, nil},
-			{"INC-absolute-X", []byte{0xFE, 0xFF, 0x03}, 7, 0x0203, func(c irqTestCPU) { *c.x = 1 }},
-			{"PHA", []byte{0x48}, 3, 0x0201, nil},
-			{"PLA", []byte{0x68}, 4, 0x0201, nil},
-			{"JMP", []byte{0x4C, 0x00, 0x05}, 3, 0x0500, nil},
-			{"JMP-indirect", []byte{0x6C, 0x10, 0x00}, 5, 0x0500, func(c irqTestCPU) { c.put(0x11, 0x05) }},
-			{"JSR", []byte{0x20, 0x00, 0x05}, 6, 0x0500, nil},
-			{"RTS", []byte{0x60}, 6, 0x0500, func(c irqTestCPU) {
-				*c.sp = 0xFD
-				c.put(0x01FE, 0xFF)
-				c.put(0x01FF, 0x04)
-			}},
-		} {
-			for pulse := range tc.cycles {
-				t.Run(fmt.Sprintf("%s/%s/pulse-%d", core, tc.name, pulse), func(t *testing.T) {
-					c := newIRQTestCPU(t, core)
-					c.program(0x0200, tc.code...)
-					if tc.setup != nil {
-						tc.setup(c)
+	for _, pending := range []bool{false, true} {
+		for sources := range 4 {
+			for _, masked := range []bool{false, true} {
+				t.Run(fmt.Sprintf("pending=%t/sources=%d/masked=%t", pending, sources, masked), func(t *testing.T) {
+					c := newIRQTestCPU(t)
+					state := &cpu.irq
+					*state = irqState{pending: pending}
+					*c.opcode, *c.tstate = 0xEA, 1 // Complete NOP without an eligible prior sample.
+					if masked {
+						*c.p |= P_INTERRUPT
 					}
-					for cycle := range tc.cycles {
-						c.pin(cycle == pulse, false)
-						c.tick()
+					c.pin(sources&1 != 0, sources&2 != 0)
+					c.tick()
+					if want := (irqState{sampled: sources != 0, pending: pending}); *state != want {
+						t.Fatalf("IRQ state = %+v, want %+v", *state, want)
 					}
-					c.pin(false, false)
 					if *c.tstate != 0 {
-						t.Fatalf("instruction not finished after %d cycles: TState=%d", tc.cycles, *c.tstate)
+						t.Fatal("NOP did not complete")
 					}
-					c.checkEntry(t, pulse == tc.cycles-2, tc.pc)
 				})
 			}
 		}
 	}
 }
 
-func TestIRQBranchPulses(t *testing.T) {
-	for _, core := range irqTestCores {
-		for _, branch := range []struct{ op, mask, taken uint8 }{
-			{0x10, P_SIGN, 0}, {0x30, P_SIGN, P_SIGN},
-			{0x50, P_OVERFLOW, 0}, {0x70, P_OVERFLOW, P_OVERFLOW},
-			{0x90, P_CARRY, 0}, {0xB0, P_CARRY, P_CARRY},
-			{0xD0, P_ZERO, 0}, {0xF0, P_ZERO, P_ZERO},
-		} {
-			for _, tc := range []struct {
-				name   string
-				pc     uint16
-				offset byte
-				taken  bool
-				cycles int
-				target uint16
-			}{
-				{"not-taken", 0x0200, 0x05, false, 2, 0x0202},
-				{"same-page", 0x0200, 0x05, true, 3, 0x0207},
-				{"cross-up", 0x02FC, 0x05, true, 4, 0x0303},
-				{"cross-down", 0x0300, 0xFC, true, 4, 0x02FE},
-			} {
-				for pulse := range tc.cycles {
-					t.Run(fmt.Sprintf("%s/%02X/%s/pulse-%d", core, branch.op, tc.name, pulse), func(t *testing.T) {
-						c := newIRQTestCPU(t, core)
-						*c.pc, *c.p = tc.pc, branch.taken
-						if !tc.taken {
-							*c.p ^= branch.mask
-						}
-						c.program(tc.pc, branch.op, tc.offset)
-						for cycle := range tc.cycles {
-							c.pin(cycle == pulse, false)
-							c.tick()
-						}
-						c.pin(false, false)
-						if *c.tstate != 0 || *c.pc != tc.target {
-							t.Fatalf("branch did not complete: PC=$%04X TState=%d", *c.pc, *c.tstate)
-						}
-						c.checkEntry(t, pulse == 0 || tc.cycles == 4 && pulse == 2, tc.target)
-					})
+func TestIRQInstructionPulses(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		code   []byte
+		cycles int
+		pc     uint16
+		setup  func(irqTestCPU)
+	}{
+		{"NOP", []byte{0xEA}, 2, 0x0201, nil},
+		{"LDA-immediate", []byte{0xA9, 0x42}, 2, 0x0202, nil},
+		{"LDA-zp", []byte{0xA5, 0x10}, 3, 0x0202, nil},
+		{"LDA-zp-X", []byte{0xB5, 0x10}, 4, 0x0202, nil},
+		{"LDA-absolute", []byte{0xAD, 0x00, 0x03}, 4, 0x0203, nil},
+		{"LDA-absolute-X", []byte{0xBD, 0x00, 0x03}, 4, 0x0203, nil},
+		{"LDA-absolute-X-cross", []byte{0xBD, 0xFF, 0x03}, 5, 0x0203, func(c irqTestCPU) { *c.x = 1 }},
+		{"LDA-indirect-X", []byte{0xA1, 0x10}, 6, 0x0202, func(c irqTestCPU) { c.put(0x11, 0x03) }},
+		{"LDA-indirect-Y", []byte{0xB1, 0x10}, 5, 0x0202, func(c irqTestCPU) { c.put(0x11, 0x03) }},
+		{"LDA-indirect-Y-cross", []byte{0xB1, 0x10}, 6, 0x0202, func(c irqTestCPU) {
+			*c.y = 1
+			c.put(0x10, 0xFF)
+			c.put(0x11, 0x03)
+		}},
+		{"STA-absolute", []byte{0x8D, 0x00, 0x03}, 4, 0x0203, nil},
+		{"STA-indirect-X", []byte{0x81, 0x10}, 6, 0x0202, func(c irqTestCPU) { c.put(0x11, 0x03) }},
+		{"INC-zp", []byte{0xE6, 0x10}, 5, 0x0202, nil},
+		{"INC-absolute-X", []byte{0xFE, 0xFF, 0x03}, 7, 0x0203, func(c irqTestCPU) { *c.x = 1 }},
+		{"PHA", []byte{0x48}, 3, 0x0201, nil},
+		{"PLA", []byte{0x68}, 4, 0x0201, nil},
+		{"JMP", []byte{0x4C, 0x00, 0x05}, 3, 0x0500, nil},
+		{"JMP-indirect", []byte{0x6C, 0x10, 0x00}, 5, 0x0500, func(c irqTestCPU) { c.put(0x11, 0x05) }},
+		{"JSR", []byte{0x20, 0x00, 0x05}, 6, 0x0500, nil},
+		{"RTS", []byte{0x60}, 6, 0x0500, func(c irqTestCPU) {
+			*c.sp = 0xFD
+			c.put(0x01FE, 0xFF)
+			c.put(0x01FF, 0x04)
+		}},
+	} {
+		for pulse := range tc.cycles {
+			t.Run(fmt.Sprintf("%s/pulse-%d", tc.name, pulse), func(t *testing.T) {
+				c := newIRQTestCPU(t)
+				c.program(0x0200, tc.code...)
+				if tc.setup != nil {
+					tc.setup(c)
 				}
+				for cycle := range tc.cycles {
+					c.pin(cycle == pulse, false)
+					c.tick()
+				}
+				c.pin(false, false)
+				if *c.tstate != 0 {
+					t.Fatalf("instruction not finished after %d cycles: TState=%d", tc.cycles, *c.tstate)
+				}
+				c.checkEntry(t, pulse == tc.cycles-2, tc.pc)
+			})
+		}
+	}
+}
+
+func TestIRQBranchPulses(t *testing.T) {
+	for _, branch := range []struct{ op, mask, taken uint8 }{
+		{0x10, P_SIGN, 0}, {0x30, P_SIGN, P_SIGN},
+		{0x50, P_OVERFLOW, 0}, {0x70, P_OVERFLOW, P_OVERFLOW},
+		{0x90, P_CARRY, 0}, {0xB0, P_CARRY, P_CARRY},
+		{0xD0, P_ZERO, 0}, {0xF0, P_ZERO, P_ZERO},
+	} {
+		for _, tc := range []struct {
+			name   string
+			pc     uint16
+			offset byte
+			taken  bool
+			cycles int
+			target uint16
+		}{
+			{"not-taken", 0x0200, 0x05, false, 2, 0x0202},
+			{"same-page", 0x0200, 0x05, true, 3, 0x0207},
+			{"cross-up", 0x02FC, 0x05, true, 4, 0x0303},
+			{"cross-down", 0x0300, 0xFC, true, 4, 0x02FE},
+		} {
+			for pulse := range tc.cycles {
+				t.Run(fmt.Sprintf("%02X/%s/pulse-%d", branch.op, tc.name, pulse), func(t *testing.T) {
+					c := newIRQTestCPU(t)
+					*c.pc, *c.p = tc.pc, branch.taken
+					if !tc.taken {
+						*c.p ^= branch.mask
+					}
+					c.program(tc.pc, branch.op, tc.offset)
+					for cycle := range tc.cycles {
+						c.pin(cycle == pulse, false)
+						c.tick()
+					}
+					c.pin(false, false)
+					if *c.tstate != 0 || *c.pc != tc.target {
+						t.Fatalf("branch did not complete: PC=$%04X TState=%d", *c.pc, *c.tstate)
+					}
+					c.checkEntry(t, pulse == 0 || tc.cycles == 4 && pulse == 2, tc.target)
+				})
 			}
 		}
 	}
 }
 
 func TestIRQMaskPolling(t *testing.T) {
-	for _, core := range irqTestCores {
-		for _, tc := range []struct {
-			name              string
-			op, before, after uint8
-			cycles            int
-			immediate         bool
-		}{
-			{"CLI", 0x58, P_INTERRUPT, 0, 2, false},
-			{"SEI", 0x78, 0, P_INTERRUPT, 2, true},
-			{"PLP-clear", 0x28, P_INTERRUPT, 0, 4, false},
-			{"PLP-set", 0x28, 0, P_INTERRUPT, 4, true},
-			{"RTI-clear", 0x40, P_INTERRUPT, 0, 6, true},
-			{"RTI-set", 0x40, 0, P_INTERRUPT, 6, false},
-		} {
-			t.Run(core+"/"+tc.name, func(t *testing.T) {
-				c := newIRQTestCPU(t, core)
-				*c.p, *c.sp = tc.before, 0xFC
-				c.program(0x0200, tc.op)
-				c.put(0x01FD, tc.after)
-				c.put(0x01FE, 0x00)
-				c.put(0x01FF, 0x05)
-				// A pulse on the relevant penultimate cycle cannot be
-				// cancelled by a later flag change or pin release.
-				for cycle := range tc.cycles {
-					c.pin(cycle == tc.cycles-2, false)
-					c.tick()
+	for _, tc := range []struct {
+		name              string
+		op, before, after uint8
+		cycles            int
+		immediate         bool
+	}{
+		{"CLI", 0x58, P_INTERRUPT, 0, 2, false},
+		{"SEI", 0x78, 0, P_INTERRUPT, 2, true},
+		{"PLP-clear", 0x28, P_INTERRUPT, 0, 4, false},
+		{"PLP-set", 0x28, 0, P_INTERRUPT, 4, true},
+		{"RTI-clear", 0x40, P_INTERRUPT, 0, 6, true},
+		{"RTI-set", 0x40, 0, P_INTERRUPT, 6, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			c := newIRQTestCPU(t)
+			*c.p, *c.sp = tc.before, 0xFC
+			c.program(0x0200, tc.op)
+			c.put(0x01FD, tc.after)
+			c.put(0x01FE, 0x00)
+			c.put(0x01FF, 0x05)
+			// A pulse on the relevant penultimate cycle cannot be
+			// cancelled by a later flag change or pin release.
+			for cycle := range tc.cycles {
+				c.pin(cycle == tc.cycles-2, false)
+				c.tick()
+			}
+			c.pin(false, false)
+			pc := uint16(0x0201)
+			if tc.op == 0x40 {
+				pc = 0x0500
+			}
+			c.checkEntry(t, tc.immediate, pc)
+			if tc.immediate {
+				c.cycles(4)
+				got := c.read(0x0100 + uint16(*c.sp+1))
+				if want := tc.after | P_UNUSED; got != want {
+					t.Fatalf("stacked status=$%02X, want $%02X", got, want)
 				}
-				c.pin(false, false)
-				pc := uint16(0x0201)
-				if tc.op == 0x40 {
-					pc = 0x0500
-				}
-				c.checkEntry(t, tc.immediate, pc)
-				if tc.immediate {
-					c.cycles(4)
-					got := c.read(0x0100 + uint16(*c.sp+1))
-					if want := tc.after | P_UNUSED; got != want {
-						t.Fatalf("stacked status=$%02X, want $%02X", got, want)
-					}
-				}
-			})
-		}
+			}
+		})
 	}
 }
 
 func TestIRQEntryBusCycles(t *testing.T) {
-	for _, core := range irqTestCores {
-		t.Run(core, func(t *testing.T) {
-			c := newIRQTestCPU(t, core)
-			*c.p = P_CARRY | P_BREAK
-			c.pin(true, false)
-			c.tick() // NOP opcode fetch: sample IRQ.
-			c.pin(false, false)
-			c.tick() // NOP terminal cycle: accept the preceding sample.
-			want := []busCycle{
-				{0x0201, 0xEA, false},
-				{0x0201, 0xEA, false},
-				{0x01FF, 0x02, true},
-				{0x01FE, 0x01, true},
-				{0x01FD, P_UNUSED | P_CARRY, true},
-				{0xFFFE, 0x00, false},
-				{0xFFFF, 0x04, false},
-			}
-			for i, cycle := range want {
-				c.poisonBus()
-				c.tick()
-				if got := c.bus(); got != cycle {
-					t.Fatalf("IRQ cycle %d: got %+v, want %+v", i, got, cycle)
-				}
-				if masked := *c.p&P_INTERRUPT != 0; masked != (i >= 5) {
-					t.Fatalf("IRQ cycle %d: I set=%v, want %v", i, masked, i >= 5)
-				}
-			}
-			if *c.pc != 0x0400 || *c.sp != 0xFC || *c.p&P_INTERRUPT == 0 {
-				t.Fatalf("after entry: PC=$%04X SP=$%02X P=$%02X", *c.pc, *c.sp, *c.p)
-			}
-			c.tick()
-			if *c.interrupt != 0 || *c.opcode != 0xEA {
-				t.Fatal("first handler instruction was not fetched")
-			}
-		})
+	c := newIRQTestCPU(t)
+	*c.p = P_CARRY | P_BREAK
+	c.pin(true, false)
+	c.tick() // NOP opcode fetch: sample IRQ.
+	c.pin(false, false)
+	c.tick() // NOP terminal cycle: accept the preceding sample.
+	want := []busCycle{
+		{0x0201, 0xEA, false},
+		{0x0201, 0xEA, false},
+		{0x01FF, 0x02, true},
+		{0x01FE, 0x01, true},
+		{0x01FD, P_UNUSED | P_CARRY, true},
+		{0xFFFE, 0x00, false},
+		{0xFFFF, 0x04, false},
+	}
+	for i, cycle := range want {
+		bus.Address = 0xDEAD
+		c.tick()
+		if got := c.bus(); got != cycle {
+			t.Fatalf("IRQ cycle %d: got %+v, want %+v", i, got, cycle)
+		}
+		if masked := *c.p&P_INTERRUPT != 0; masked != (i >= 5) {
+			t.Fatalf("IRQ cycle %d: I set=%v, want %v", i, masked, i >= 5)
+		}
+	}
+	if *c.pc != 0x0400 || *c.sp != 0xFC || *c.p&P_INTERRUPT == 0 {
+		t.Fatalf("after entry: PC=$%04X SP=$%02X P=$%02X", *c.pc, *c.sp, *c.p)
+	}
+	c.tick()
+	if *c.interrupt != 0 || *c.opcode != 0xEA {
+		t.Fatal("first handler instruction was not fetched")
 	}
 }
 
 func TestIRQPersistentLevel(t *testing.T) {
-	for _, core := range irqTestCores {
-		for source := range 2 {
-			t.Run(fmt.Sprintf("%s/source-%d", core, source), func(t *testing.T) {
-				c := newIRQTestCPU(t, core)
-				*c.p = P_INTERRUPT
-				c.program(0x0200, 0xEA, 0x58, 0xEA)
-				c.program(0x0400, 0x40) // RTI without acknowledging the source.
-				c.pin(source == 0, source == 1)
-				c.cycles(2)
-				c.checkEntry(t, false, 0) // CLI must execute despite held IRQ.
-				c.tick()
-				c.checkEntry(t, false, 0) // Instruction following CLI.
-				c.tick()
-				c.checkEntry(t, true, 0x0203)
-				c.cycles(6) // Remaining entry cycles.
-				c.cycles(6) // RTI restores I before its poll.
-				c.checkEntry(t, true, 0x0203)
-			})
-		}
-	}
-}
-
-func TestIRQLateLevel(t *testing.T) {
-	for _, core := range irqTestCores {
-		t.Run(core, func(t *testing.T) {
-			c := newIRQTestCPU(t, core)
-			c.tick()
-			c.pin(true, false) // Too late for this NOP's poll.
-			c.tick()
-			c.checkEntry(t, false, 0)
-			c.tick()
-			c.checkEntry(t, true, 0x0202)
-		})
-	}
-}
-
-func TestIRQMaskedPulseIsNotQueued(t *testing.T) {
-	for _, core := range irqTestCores {
-		t.Run(core, func(t *testing.T) {
-			c := newIRQTestCPU(t, core)
+	for source := range 2 {
+		t.Run(fmt.Sprintf("source-%d", source), func(t *testing.T) {
+			c := newIRQTestCPU(t)
 			*c.p = P_INTERRUPT
-			c.program(0x0200, 0xEA, 0x58, 0xEA, 0xEA)
-			c.pin(true, false)
+			c.program(0x0200, 0xEA, 0x58, 0xEA)
+			c.program(0x0400, 0x40) // RTI without acknowledging the source.
+			c.pin(source == 0, source == 1)
 			c.cycles(2)
-			c.pin(false, false)
-			for range 3 {
-				c.checkEntry(t, false, 0)
-				c.tick()
-			}
-		})
-	}
-}
-
-func TestIRQOverlappingSources(t *testing.T) {
-	for _, core := range irqTestCores {
-		t.Run(core, func(t *testing.T) {
-			c := newIRQTestCPU(t, core)
-			c.program(0x0200, 0xAD, 0x00, 0x03)
-			c.pin(true, false)
+			c.checkEntry(t, false, 0) // CLI must execute despite held IRQ.
 			c.tick()
-			c.pin(true, true)
+			c.checkEntry(t, false, 0) // Instruction following CLI.
 			c.tick()
-			c.pin(false, true)
-			c.tick() // Sample the still-asserted second source.
-			c.pin(false, false)
-			c.tick()
+			c.checkEntry(t, true, 0x0203)
+			c.cycles(6) // Remaining entry cycles.
+			c.cycles(6) // RTI restores I before its poll.
 			c.checkEntry(t, true, 0x0203)
 		})
 	}
 }
 
+func TestIRQLateLevel(t *testing.T) {
+	c := newIRQTestCPU(t)
+	c.tick()
+	c.pin(true, false) // Too late for this NOP's poll.
+	c.tick()
+	c.checkEntry(t, false, 0)
+	c.tick()
+	c.checkEntry(t, true, 0x0202)
+}
+
+func TestIRQMaskedPulseIsNotQueued(t *testing.T) {
+	c := newIRQTestCPU(t)
+	*c.p = P_INTERRUPT
+	c.program(0x0200, 0xEA, 0x58, 0xEA, 0xEA)
+	c.pin(true, false)
+	c.cycles(2)
+	c.pin(false, false)
+	for range 3 {
+		c.checkEntry(t, false, 0)
+		c.tick()
+	}
+}
+
+func TestIRQOverlappingSources(t *testing.T) {
+	c := newIRQTestCPU(t)
+	c.program(0x0200, 0xAD, 0x00, 0x03)
+	c.pin(true, false)
+	c.tick()
+	c.pin(true, true)
+	c.tick()
+	c.pin(false, true)
+	c.tick() // Sample the still-asserted second source.
+	c.pin(false, false)
+	c.tick()
+	c.checkEntry(t, true, 0x0203)
+}
+
 func TestIRQResetClearsAcceptance(t *testing.T) {
-	for _, core := range irqTestCores {
-		t.Run(core, func(t *testing.T) {
-			c := newIRQTestCPU(t, core)
-			c.pin(true, false)
-			c.cycles(2)
-			c.pin(false, false)
-			c.reset()
-			if *c.p&P_INTERRUPT == 0 {
-				t.Fatal("reset did not mask IRQ")
-			}
-			c.program(0x0200, 0x58, 0xEA, 0xEA)
-			for range 3 {
-				c.checkEntry(t, false, 0)
-				c.tick()
-			}
-		})
+	c := newIRQTestCPU(t)
+	c.pin(true, false)
+	c.cycles(2)
+	c.pin(false, false)
+	c.reset()
+	if *c.p&P_INTERRUPT == 0 {
+		t.Fatal("reset did not mask IRQ")
+	}
+	c.program(0x0200, 0x58, 0xEA, 0xEA)
+	for range 3 {
+		c.checkEntry(t, false, 0)
+		c.tick()
 	}
 }
 
 func TestIRQAcceptedAlongsideNMI(t *testing.T) {
-	c := newIRQTestCPU(t, "6510")
+	c := newIRQTestCPU(t)
 	c.program(0x0200, 0xAD, 0x00, 0x03)
 	c.program(0x0500, 0x40)
 	c.put(0xFFFA, 0x00)
@@ -465,18 +393,14 @@ func TestIRQAcceptedAlongsideNMI(t *testing.T) {
 }
 
 func TestIRQInBranchLoop(t *testing.T) {
-	for _, core := range irqTestCores {
-		t.Run(core, func(t *testing.T) {
-			c := newIRQTestCPU(t, core)
-			c.program(0x0200, 0xD0, 0xFE)
-			c.cycles(2)
-			c.pin(true, false) // After the first branch's only poll.
-			c.tick()
-			c.checkEntry(t, false, 0)
-			c.cycles(2)
-			c.checkEntry(t, true, 0x0200)
-		})
-	}
+	c := newIRQTestCPU(t)
+	c.program(0x0200, 0xD0, 0xFE)
+	c.cycles(2)
+	c.pin(true, false) // After the first branch's only poll.
+	c.tick()
+	c.checkEntry(t, false, 0)
+	c.cycles(2)
+	c.checkEntry(t, true, 0x0200)
 }
 
 func TestIRQImplementedInstructionPaths(t *testing.T) {
@@ -490,7 +414,7 @@ func TestIRQImplementedInstructionPaths(t *testing.T) {
 			continue // Branches have their own poll schedule.
 		}
 		t.Run(tc.name, func(t *testing.T) {
-			c := newIRQTestCPU(t, "6510")
+			c := newIRQTestCPU(t)
 			cpu.PC, cpu.SP = tc.initial.PC, tc.initial.SP
 			cpu.A, cpu.X, cpu.Y = tc.initial.A, tc.initial.X, tc.initial.Y
 			cpu.regP = tc.initial.Status &^ P_INTERRUPT
@@ -518,7 +442,7 @@ func TestIRQUndocumentedInstructions(t *testing.T) {
 		{0xB7, 4}, {0xBF, 4}, {0xC7, 5},
 	} {
 		t.Run(fmt.Sprintf("%02X", tc.op), func(t *testing.T) {
-			c := newIRQTestCPU(t, "6510")
+			c := newIRQTestCPU(t)
 			c.program(0x0200, tc.op, 0x10, 0x03)
 			c.put(0x11, 0x03)
 			for cycle := range tc.cycles {
@@ -542,7 +466,7 @@ func TestIRQUndocumentedInstructions(t *testing.T) {
 // the write cycle's own poll samples the pin before the store takes
 // effect.
 func TestIRQMaskWriteUnmasksLatchedFlag(t *testing.T) {
-	c := newIRQTestCPU(t, "6510")
+	c := newIRQTestCPU(t)
 	cpu.Port = 6          // Expose I/O so the store reaches CIA1.
 	cpu.A = 0x81          // Set (not clear) mask bit 0, Timer A.
 	cia1 = CIA{icr: 0x01} // Timer A fired earlier while masked off.
@@ -560,50 +484,55 @@ func TestIRQMaskWriteUnmasksLatchedFlag(t *testing.T) {
 }
 
 func TestIRQPeripheralSampling(t *testing.T) {
-	for _, core := range irqTestCores {
-		t.Run(core+"/timer", func(t *testing.T) {
-			c := newIRQTestCPU(t, core)
-			// The two cores phase their timer against the CPU
-			// differently, so they recognize an underflow a cycle apart.
-			//
-			// On the C64 the CIAs are clocked after the CPU within a bus
-			// cycle (see ciaTick), which is the order the chips see Phi2
-			// fall in: the 6510 latches its IRQ input on that edge and
-			// the CIA's output only settles after it, so an underflow on
-			// cycle N is first sampled on cycle N+1.
-			//
-			// That one cycle costs two here, because acceptance needs the
-			// sample to be live at an instruction's poll cycle and NOP
-			// only polls every second cycle. Slipping past one poll waits
-			// for the next. The extra NOP retired is why entry lands a
-			// byte further on.
-			//
-			// The 1541 has no VIC-II to hang a clock tree off, so its
-			// VIAs are still clocked at the top of DriveCPU.TickPhi2 and
-			// an underflow is sampled in the cycle it happens.
-			cycles, entry := c.armTimer()
-			c.cycles(cycles)
-			c.checkEntry(t, true, entry)
-		})
-		t.Run(core+"/final-read-acknowledgement", func(t *testing.T) {
-			c := newIRQTestCPU(t, core)
-			c.armFinalRead(c)
-			c.cycles(4)
-			if !c.finalReadAcked() {
-				t.Fatal("final read did not acknowledge IRQ")
-			}
-			c.checkEntry(t, true, 0x0203)
-		})
-		t.Run(core+"/penultimate-write-acknowledgement", func(t *testing.T) {
-			c := newIRQTestCPU(t, core)
-			c.armPenultimateWrite(c)
-			c.cycles(6)
-			if !c.penultimateWriteAcked() {
-				t.Fatal("dummy write did not acknowledge IRQ")
-			}
-			c.checkEntry(t, false, 0)
-		})
-	}
+	t.Run("timer", func(t *testing.T) {
+		c := newIRQTestCPU(t)
+		// The two cores phase their timer against the CPU
+		// differently, so they recognize an underflow a cycle apart.
+		//
+		// On the C64 the CIAs are clocked after the CPU within a bus
+		// cycle (see ciaTick), which is the order the chips see Phi2
+		// fall in: the 6510 latches its IRQ input on that edge and
+		// the CIA's output only settles after it, so an underflow on
+		// cycle N is first sampled on cycle N+1.
+		//
+		// That one cycle costs two here, because acceptance needs the
+		// sample to be live at an instruction's poll cycle and NOP
+		// only polls every second cycle. Slipping past one poll waits
+		// for the next. The extra NOP retired is why entry lands a
+		// byte further on.
+		//
+		// The 1541 has no VIC-II to hang a clock tree off, so its
+		// VIAs are still clocked at the top of DriveCPU.TickPhi2 and
+		// an underflow is sampled in the cycle it happens.
+		cia1 = CIA{timerA: 1, latchA: 0xFFFF, runningA: true, imr: 1}
+		cycles, entry := 4, uint16(0x0202)
+		c.cycles(cycles)
+		c.checkEntry(t, true, entry)
+	})
+	t.Run("final-read-acknowledgement", func(t *testing.T) {
+		c := newIRQTestCPU(t)
+		cpu.Port = 6 // Expose I/O; the test stops before reading ROM vectors.
+		cia1 = CIA{icr: 0x81, imr: 1, IRQ: true}
+		cia1.setIRQ(true)
+		c.program(0x0200, 0xAD, 0x0D, 0xDC)
+		c.cycles(4)
+		if cia1.IRQ {
+			t.Fatal("final read did not acknowledge IRQ")
+		}
+		c.checkEntry(t, true, 0x0203)
+	})
+	t.Run("penultimate-write-acknowledgement", func(t *testing.T) {
+		c := newIRQTestCPU(t)
+		cpu.Port = 6
+		vic.interruptEnable, vic.interruptStatus = 1, 1
+		vic.updateIRQ()
+		c.program(0x0200, 0xEE, 0x19, 0xD0)
+		c.cycles(6)
+		if vic.IRQ {
+			t.Fatal("dummy write did not acknowledge IRQ")
+		}
+		c.checkEntry(t, false, 0)
+	})
 }
 
 // RDY holds the instruction sequencer, but not the synchronizer or the
@@ -639,7 +568,7 @@ func TestIRQReadStalls(t *testing.T) {
 	} {
 		for pulse := range tc.cycles + 3 {
 			t.Run(fmt.Sprintf("%s/pulse-%d", tc.name, pulse), func(t *testing.T) {
-				c := newIRQTestCPU(t, "6510")
+				c := newIRQTestCPU(t)
 				cpu.PC, cpu.SP, cpu.regP = tc.pc, 0xFC, tc.beforeI
 				c.program(tc.pc, tc.code...)
 				c.program(0x01FD, tc.stackI, 0x00, 0x05)
@@ -680,7 +609,7 @@ func TestIRQReadStalls(t *testing.T) {
 func TestIRQEntryReadStallsAndWrites(t *testing.T) {
 	for state := uint8(0); state < 7; state++ {
 		t.Run(fmt.Sprintf("TState-%d", state), func(t *testing.T) {
-			c := newIRQTestCPU(t, "6510")
+			c := newIRQTestCPU(t)
 			c.pin(true, false)
 			c.cycles(2)
 			c.pin(false, false)
@@ -710,7 +639,7 @@ func TestIRQEntryReadStallsAndWrites(t *testing.T) {
 }
 
 func TestIRQHeldPollNMIArbitration(t *testing.T) {
-	c := newIRQTestCPU(t, "6510")
+	c := newIRQTestCPU(t)
 	c.program(0x0500, 0x40)
 	c.put(0xFFFA, 0x00)
 	c.put(0xFFFB, 0x05)
@@ -732,7 +661,7 @@ func TestIRQHeldPollNMIArbitration(t *testing.T) {
 }
 
 func TestIRQResetDuringHeldPoll(t *testing.T) {
-	c := newIRQTestCPU(t, "6510")
+	c := newIRQTestCPU(t)
 	c.pin(true, false)
 	c.tick()
 	vic.BA = false
