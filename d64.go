@@ -15,8 +15,8 @@ const D64Size40 = 196608
 // InsertDisk loads a raw D64 disk image for the drive to read and write;
 // nil ejects whatever was in the drive.
 func InsertDisk(data []byte) {
-	if data != nil && !virtualDriveAttached {
-		AttachVirtualDrive(8) // a disk needs something to put it in
+	if data != nil {
+		attachDefaultDrive() // a disk needs something to put it in
 	}
 	replaceDisk(data)
 }

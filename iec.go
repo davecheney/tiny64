@@ -89,6 +89,21 @@ func detachIEC(p iecPeripheral) {
 	iecBus = kept
 }
 
+// addressOccupied reports whether some peripheral already answers for a
+// primary address. attachDefaultDrive asks this rather than a dedicated
+// flag, because the bus is the thing that can only hold one device per
+// address, and only the bus knows about every kind of drive - matching
+// upstream's shape (main@6127934) even though this branch has only ever
+// had the virtual one.
+func addressOccupied(address uint8) bool {
+	for _, p := range iecBus {
+		if p.iecAddress() == address {
+			return true
+		}
+	}
+	return false
+}
+
 // iecTick advances every attached peripheral by one Phi2 cycle.
 func iecTick() {
 	for _, p := range iecBus {

@@ -1,5 +1,71 @@
 # tinygo branch log
 
+## Seam reintegration: 2026-09-18, `6127934` (drive1541 build-tag split)
+
+User is developing iecTick cost-reduction work on `main`, landing on top
+of `6127934`'s new drive seam (`Has1541`, `addressOccupied`,
+`attachDefaultDrive`, `drive_virtual.go`/`drive_real.go`). Asked whether to
+reintegrate that commit here so the future work applies cleanly.
+
+A straight `git cherry-pick 6127934` fails outright: this branch has never
+carried the real 1541 at all (`1541.go`, `1541disk.go`, `6502.go`,
+`6522.go`, `gcr.go`, `cmd/drivec`, the 16K DOS ROM blob, and the `via1*`
+VIA1-bus-glue helpers in `iec.go` do not exist here - confirmed via
+`git ls-files`/`grep` before attempting anything), so most of the diff's
+hunks are modify/delete conflicts against files this branch doesn't have.
+
+Two ways to proceed, and since the user was unavailable to pick, went
+with the one consistent with this branch's standing policy (preserve the
+lightweight renderer/virtual drive; do not import the real 1541 merely to
+match upstream's file layout):
+
+- **(A, not done)** Actually import the real 1541 source behind `-tags
+  drive1541`, matching upstream's tree exactly. Would have been inert for
+  the TinyGo firmware (neither `cmd/tufty2040` nor `cmd/gopher-badge64`
+  reference the drive tag or `cmd/c64`/`cmd/drivec`), but adds ~1500 lines
+  of drive/GCR/second-6502-core source and a CI matrix entry this branch
+  has deliberately never carried, purely for future merge convenience.
+- **(B, done)** Reshape only: adapt the *seam* upstream now uses around
+  the virtual drive this branch already has, without importing any
+  1541/GCR code, so a future commit that touches `addressOccupied`,
+  `attachDefaultDrive`, or `Has1541` can still be read and hand-adapted
+  against matching names.
+
+Changes made (isolated worktree at `origin/tinygo` tip `c9b8491`, not the
+session worktree - same discipline as the earlier register-bounds trial):
+
+- `iec.go`: added `addressOccupied`, matching upstream verbatim - it
+  never depended on anything 1541-specific.
+- `d64.go`: `InsertDisk` now calls `attachDefaultDrive()` instead of
+  checking `virtualDriveAttached` directly, matching upstream's shape.
+- New `drive_virtual.go`: `const Has1541 = false` and `attachDefaultDrive`
+  (guards on `addressOccupied(8)`, calls `AttachVirtualDrive(8)`) under
+  upstream's own names, with commentary noting there is no
+  `drive_real.go` counterpart on this branch and why.
+- Did **not** add `resetDriveIfAttached`, `driveFlushTrack`,
+  `driveDropTrackCache`, or `describeDrive1541` stubs - nothing on this
+  branch calls them (no `ResetDrive`, no GCR track cache, `IECStatus` has
+  no `*drive1541` case to guard), so adding unused stubs would be pure
+  noise.
+
+Verified offline, no hardware access:
+- `go build ./...`, `go vet ./...`, `go test ./...` (host suite) all
+  clean.
+- `tinygo build -target=tufty2040 -opt=2 -scheduler=none` and `tinygo
+  build -target=gopher-badge -opt=2 -scheduler=cores` both succeed.
+- Compared against a fresh clone of the real `origin/tinygo` tip
+  (`c9b8491`) built the same way: both UF2s are **byte-identical**
+  (`cmp` exact match); the ELFs differ only at a fixed low offset that is
+  the embedded build-path string, not code. `arm-none-eabi-size` reports
+  identical `.text`/`.data`/`.bss` for both targets. Confirms the seam
+  reshape has exactly zero effect on either shipped firmware, as
+  expected, since neither TinyGo target calls `InsertDisk`/
+  `attachDefaultDrive` at all (`cmd/tufty2040` only ever calls
+  `AttachVirtualPRG` directly).
+
+Not yet pushed to `origin/tinygo` - offline verification only, awaiting
+confirmation this is the intended scope before publishing.
+
 ## Accepted register-read bounds adaptation: 2026-09-18
 
 The user accepted the adaptation of upstream `f0fb2a5` after a Tufty
