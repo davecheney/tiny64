@@ -14,6 +14,15 @@ import (
 	"github.com/davecheney/tiny64"
 )
 
+// rasterAfter is the raster line a trace should report after n completed
+// cycles. The raster counter does not move when the beam wraps: it moves in
+// article cycle 1, the RasterIncrementCycle'th cycle of the line, which is
+// nine cycles earlier. So the first line of the trace is short by that much
+// and every line after it is a full CyclesPerLine long.
+func rasterAfter(n int) int {
+	return (n + tiny64.CyclesPerLine - tiny64.RasterIncrementCycle) / tiny64.CyclesPerLine
+}
+
 func TestTraceCompletedCycles(t *testing.T) {
 	const cycles = tiny64.CyclesPerLine + 1
 	if os.Getenv("TINY64_TEST_C64CLI") == "1" {
@@ -40,7 +49,7 @@ func TestTraceCompletedCycles(t *testing.T) {
 		n := i + 1
 		if record[1] != strconv.Itoa(n) ||
 			record[3] != strconv.Itoa(n*tiny64.DotsPerCycle%tiny64.DotsPerLine) ||
-			record[4] != strconv.Itoa(n/tiny64.CyclesPerLine) {
+			record[4] != strconv.Itoa(rasterAfter(n)) {
 			t.Fatalf("trace %d has incorrect cycle or beam position: %s", n, record[0])
 		}
 	}

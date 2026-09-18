@@ -155,8 +155,8 @@ func TestAttachIECDoesNotWriteThroughSnapshots(t *testing.T) {
 // say it was clocked at the right moments. A path that clocked every
 // device twice on half the cycles would have the same total as one that
 // clocked it once on each. So each tick is also held to its beam
-// position: it must land on a bus-cycle boundary, and it must be exactly
-// one bus cycle on from the tick before it.
+// position: it must land on the CPU's Phi2 phase within the VIC's slot,
+// and it must be exactly one bus cycle on from the tick before it.
 //
 // Beam position cannot say whether the CPU ran before the tick or after
 // it, though, and that is the other half of the contract. CIA2's timer A
@@ -171,10 +171,13 @@ type countingPeripheral struct {
 	startPhi2 uint16
 	wrongPhi2 int
 
-	// last is the previous tick's beam position in dots from the top of
-	// the frame; offPhase and badGaps count the ticks that broke each of
-	// the two rules above, with firstBadGap keeping the first offending
-	// distance for the failure message.
+	// last is the previous tick's dot. It is a dot within the line rather
+	// than a position in the frame because the raster counter no longer
+	// changes where the beam wraps - it increments 76 dots earlier, in
+	// article cycle 1 - so rasterLine*DotsPerLine+dot is not monotonic.
+	// offPhase and badGaps count the ticks that broke each of the two
+	// rules above, with firstBadGap keeping the first offending distance
+	// for the failure message.
 	last        int
 	offPhase    int
 	badGaps     int
@@ -185,15 +188,18 @@ func (*countingPeripheral) iecCLKOut() bool  { return false }
 func (*countingPeripheral) iecDATAOut() bool { return false }
 
 func (c *countingPeripheral) iecTick() {
-	pos := int(vic.rasterLine)*DotsPerLine + int(vic.dot)
+	pos := int(vic.dot)
 	if cia2.timerA != c.startPhi2-uint16(c.ticks)-1 {
 		c.wrongPhi2++
 	}
-	if vic.dot%DotsPerCycle != 0 {
+	// The 6510's Phi2 falls in the middle of the VIC's eight-dot slot, not
+	// at its end: section 3.5 puts article cycle 1 at X $194, which rebases
+	// to dot 428, and 428 mod 8 is 4.
+	if vic.dot%DotsPerCycle != DotsPerCycle/2 {
 		c.offPhase++
 	}
 	// last starts at the entry position, so the first tick is checked too.
-	if gap := (pos - c.last + DotsPerFrame) % DotsPerFrame; gap != DotsPerCycle {
+	if gap := (pos - c.last + DotsPerLine) % DotsPerLine; gap != DotsPerCycle {
 		if c.badGaps == 0 {
 			c.firstBadGap = gap
 		}
@@ -251,7 +257,12 @@ func TestBusIsClockedOnEveryFramePath(t *testing.T) {
 			dev := &countingPeripheral{
 				addr:      9,
 				startPhi2: armPhi2Counter(),
-				last:      int(startLine)*DotsPerLine + int(startDot),
+				// The beam rests on a slot boundary between cycles, but
+				// Phi2 falls at the slot's midpoint, so the tick before
+				// this run notionally happened half a slot back. Seeding
+				// last there puts the first real tick one whole cycle on,
+				// so it is checked like every other.
+				last: (int(startDot) - DotsPerCycle/2 + DotsPerLine) % DotsPerLine,
 			}
 			attachIEC(dev)
 			tc.run()

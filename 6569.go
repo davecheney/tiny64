@@ -56,16 +56,23 @@ const (
 
 	leftComp38 = 55 // CSEL=0: 38 columns (article $1F)
 	leftComp40 = 48 // CSEL=1: 40 columns (article $18)
-	// rightEdge38/40 are the article's right comparison values, $14F and
-	// $158, rebased onto dot by the same mapping that carries the two left
-	// ones above. rightComp38/40 are where this emulator actually decides,
-	// 48 dots later, and are 51*8 and 52*8 - cycle boundaries, with no
-	// basis in the article. See the note on rightBorderOpen for why.
+	// The right comparison values, the article's $14F and $158, rebased
+	// onto dot by the same mapping that carries the two left ones above.
 	rightEdge38 = 359 // CSEL=0: 38 columns (article $14F)
 	rightEdge40 = 368 // CSEL=1: 40 columns (article $158)
 
-	rightComp38 = 408 // where the CSEL=0 decision is actually taken
-	rightComp40 = 416 // where the CSEL=1 decision is actually taken
+	// rasterIncSlot is the bus cycle the raster counter increments in:
+	// article cycle 1, our slot 53. Section 3.5 puts its first X coo. at
+	// $194 and the line's first visible X coo. at $1e0, so it lands 76
+	// dots before dot 0 - inside horizontal blanking, where no painted dot
+	// can see it.
+	rasterIncSlot = 53
+
+	// RasterIncrementCycle is the same bus cycle counted the way a trace
+	// counts them, from 1 rather than from 0. It is exported because a
+	// trace's DOT and RASTER columns do not step together: RASTER moves
+	// here, nine cycles before the beam wraps.
+	RasterIncrementCycle = rasterIncSlot + 1
 )
 
 // Border unit comparison values, indexed by the RSEL/CSEL control bits.
@@ -99,78 +106,6 @@ type VICII struct {
 	lineDrawable   bool
 	mainBorder     bool
 	verticalBorder bool
-	// rightBorderAt, rightBorderOpen and rightBorder are not hardware. A
-	// 6569 has exactly two border flip-flops and neither of them is "the
-	// right border is open". They are bookkeeping left behind by a modelling
-	// choice, and this is the record of why, because the shape is not
-	// something anyone would arrive at from the article.
-	//
-	// How it got here.
-	//
-	// dd17bf7 implemented section 3.9 as written. rightComp38 and
-	// rightComp40 were 359 and 368 - the article's $14F and $158 rebased
-	// onto dot by the same mapping that carries both left comparisons - and
-	// reaching one set mainBorder. No shadow buffer, no deferral, no flag.
-	//
-	// 31e8125, "Improve VIC-II border trick timing", moved those two
-	// constants to 408 and 416 and added all three fields below. 408 and 416
-	// are 51*8 and 52*8: cycle boundaries, not article values. Their comment
-	// claimed "article $14F/$158, after X counter wrap" until this note was
-	// written, which was simply false - $14F and $158 rebase to 359 and 368,
-	// which is exactly what rightEdge38 and rightEdge40 are. Nothing in the
-	// article puts a comparison at 408 or 416.
-	//
-	// What the deferral costs.
-	//
-	// Deciding the border 48 dots after the beam passed the edge means the
-	// answer arrives after those dots have already been painted. So they are
-	// not painted from the border state at all. paintGraphicsPixel stores a
-	// copy of borderColor for every dot from rightEdge38 on into
-	// rightBorder, and finishSideBorder writes those into the framebuffer at
-	// end of line, on top of the pixels already sitting there.
-	//
-	// That is the part to be uncomfortable about. finishSideBorder addresses
-	// v.rasterLine at dots emitted up to 49 dots earlier on that same line.
-	// A real VIC cannot do this - the beam is gone. It works here only
-	// because the framebuffer is memory and nothing reads a line back until
-	// the frame ends.
-	//
-	// rightBorderOpen is the last patch in that chain. A span replay can say
-	// "all of this is border" or "none of it is". It cannot say "border for
-	// exactly one dot at the boundary, then open", and that single dot is
-	// real and visible. The flag is what says "except that one".
-	//
-	// Why it is still here.
-	//
-	// Because the behaviour is right even though the concept is not. The
-	// article-literal model was rebuilt and measured against a VICE capture
-	// of the-passengers. On the 152 raster lines where the two models
-	// disagree, comparing edge positions per line, this model matches VICE
-	// on 128 and the article-literal one on none. Over the whole frame, 262
-	// of 293 lines match exactly against 134.
-	//
-	// The reason is that the demos which open the side border hold CSEL=1
-	// through dot 368 and drop it during hblank. A model that latches at 368
-	// paints a border the hardware leaves open, so the deferral compensates
-	// for something real: either the effective comparison happens later than
-	// the article's rebased coordinate, or a $D016 write lands earlier
-	// relative to the VIC than it should. Which of those it is has not been
-	// established, and that is the open question here.
-	//
-	// It survived three removal attempts before that, because until #93 and
-	// #94 gave VICE and this emulator the same raster size and the same
-	// palette there was no external judge. The only reference was a set of
-	// fixture PNGs this emulator generated itself, and every change to the
-	// border model moves pixels, so every attempt failed against its own
-	// prior output and read as a regression.
-	//
-	// Known residual. Of the 31 lines where this model still differs from
-	// VICE on the-passengers, 28 have the same edge count with every edge
-	// shifted by 0 or +1 dot, clustered at dots 48-55, the left comparison
-	// window. Three differ structurally. See #62.
-	rightBorderAt   uint16
-	rightBorderOpen bool
-	rightBorder     [VisibleDotsPerLine - rightEdge38]uint8
 	// gdSequencer is the graphics data shift register, held two bits per
 	// dot rather than as the hardware's eight bits so that both pixel
 	// widths shift out under one rule - see expandGraphicsData.
@@ -324,8 +259,6 @@ func (v *VICII) Reset() {
 	// the whole upper border until that comparison arrives.
 	v.mainBorder = true
 	v.verticalBorder = true
-	v.rightBorderAt = 0
-	v.rightBorderOpen = false
 	v.gdSequencer = 0
 	v.graphicsMode = modeStandardText
 	v.multicolor = false
@@ -424,7 +357,6 @@ func (v *VICII) WriteRegister(addr uint16, value uint8) {
 		v.spriteEnable = value
 	case reg == regControl2:
 		v.control2 = value
-		v.sampleSideBorderAtWrite(value)
 		v.sampleGraphicsAtWrite(value)
 	case reg == 0x17:
 		v.spriteExpandY = value
@@ -450,7 +382,6 @@ func (v *VICII) WriteRegister(addr uint16, value uint8) {
 		// Collision registers are read-cleared and ignore writes.
 	case reg == regBorderColor:
 		v.borderColor = value
-		v.sampleBorderColorAtWrite()
 	case reg <= regBackground3:
 		v.background[reg-regBackground0] = value
 		v.refreshGraphicsPalette()
@@ -474,87 +405,8 @@ func (v *VICII) backgroundColor(index uint8) uint8 {
 	return v.background[index&3]
 }
 
-func (v *VICII) sampleBorderColorAtWrite() {
-	if v.dot < rightEdge40 || v.dot >= VisibleDotsPerLine {
-		return
-	}
-	first := v.dot - DotsPerCycle
-	if first < rightEdge38 {
-		first = rightEdge38
-	}
-	for dot := first; dot <= v.dot; dot++ {
-		v.rightBorder[dot-rightEdge38] = v.borderColor & 0x0F
-	}
-}
-
 func (v *VICII) selectedGraphicsMode() uint8 {
 	return (v.control1>>4)&0x06 | (v.control2 >> 4 & 0x01)
-}
-
-func (v *VICII) sampleSideBorderAtWrite(control2 uint8) {
-	csel := control2 & csel
-	left := (v.dot == leftComp38 && csel == 0) ||
-		(v.dot == leftComp40 && csel != 0)
-	if left && !v.verticalBorder {
-		v.mainBorder = false
-	}
-	switch v.dot {
-	case rightEdge38:
-		if csel == 0 {
-			v.rightBorderAt = rightEdge38
-		} else if v.rightBorderAt == rightEdge38 {
-			v.rightBorderAt = 0
-		}
-	case rightEdge40:
-		if csel != 0 {
-			v.rightBorderAt = rightEdge40
-		} else if v.rightBorderAt == rightEdge40 {
-			v.rightBorderAt = 0
-		}
-	}
-	switch v.dot {
-	case rightComp38:
-		if v.rightBorderAt == rightEdge38 {
-			if csel == 0 {
-				v.mainBorder = true
-			} else {
-				v.mainBorder = false
-				v.rightBorderAt = 0
-				v.rightBorderOpen = true
-			}
-		}
-	case rightComp40:
-		if v.rightBorderAt == rightEdge40 {
-			if csel != 0 {
-				v.mainBorder = true
-			} else {
-				v.mainBorder = false
-				v.rightBorderAt = 0
-				v.rightBorderOpen = true
-			}
-		} else if csel == 0 {
-			v.rightBorderOpen = true
-		}
-	}
-}
-
-func (v *VICII) finishSideBorder() {
-	if !v.lineDrawable {
-		v.rightBorderAt = 0
-		v.rightBorderOpen = false
-		return
-	}
-	if v.rightBorderAt != 0 {
-		for dot := v.rightBorderAt; dot < VisibleDotsPerLine; dot++ {
-			writePixelToBuffer(dot, v.rasterLine, v.rightBorder[dot-rightEdge38])
-		}
-	} else if !v.rightBorderOpen {
-		// Preserve the VIC's boundary pixel when a visible CSEL trick opens
-		// the rest of the right border. A later hblank write can open it too.
-		writePixelToBuffer(rightEdge40, v.rasterLine, v.rightBorder[rightEdge40-rightEdge38])
-	}
-	v.rightBorderAt = 0
-	v.rightBorderOpen = false
 }
 
 func (v *VICII) sampleGraphicsAtWrite(control2 uint8) {
@@ -747,9 +599,6 @@ func (v *VICII) paintGraphicsPixel() {
 	// last settled rather than by asking all eight here. The mask keeps
 	// the index provably inside the table; see spriteCoverage.
 	display := v.spriteCoverage[v.dot&511]
-	if v.dot >= rightEdge38 {
-		v.rightBorder[v.dot-rightEdge38] = v.borderColor & 0x0F
-	}
 
 	if display == 0 {
 		if v.mainBorder {
@@ -1012,6 +861,18 @@ func (v *VICII) stepCycle() {
 		v.dot += 4
 	}
 	v.phi0low()
+
+	// The CPU runs first, since the VIC has just handed it the bus.
+	cpu.TickPhi2()
+
+	// The CIAs clock on that Phi2's falling edge, so they run after the
+	// CPU and see whatever its bus cycle wrote.
+	ciaTick()
+
+	// The IEC devices run last, because what they find on the bus is
+	// whatever CIA2 has just driven onto it.
+	iecTick()
+
 	if v.lineDrawable {
 		v.dotclock4(reload)
 		v.dotclock5(reload)
@@ -1029,17 +890,6 @@ func (v *VICII) stepCycle() {
 	// with exactly one call site each.
 	v.dotclock7(reload)
 	v.phi0high()
-
-	// The CPU runs first, since the VIC has just handed it the bus.
-	cpu.TickPhi2()
-
-	// The CIAs clock on that Phi2's falling edge, so they run after the
-	// CPU and see whatever its bus cycle wrote.
-	ciaTick()
-
-	// The IEC devices run last, because what they find on the bus is
-	// whatever CIA2 has just driven onto it.
-	iecTick()
 }
 
 // StepCycle advances the VIC-II, and therefore the rest of the machine it
@@ -1092,11 +942,6 @@ func StepFrame() {
 // in flash precisely because it failed to inline, so code size is not
 // evidence that it is faster.
 func (v *VICII) dotclock0(reload uint16) {
-	if v.dot == rightEdge40 {
-		// CPU writes at the boundary occur after its pixel was first
-		// generated. Capture the resulting border color on the next dot.
-		v.rightBorder[rightEdge40-rightEdge38] = v.borderColor & 0x0F
-	}
 	v.dot++
 	if v.dot == reload {
 		v.loadGraphicsData()
@@ -1206,8 +1051,10 @@ func (v *VICII) dotclock6(reload uint16) {
 		v.loadGraphicsData()
 	}
 
+	// Section 3.9 rule 1, the 38-column half: reaching the right
+	// comparison value sets the main border flip-flop.
 	if v.dot == rightEdge38 && v.control2&csel == 0 {
-		v.rightBorderAt = rightEdge38
+		v.mainBorder = true
 	}
 	if v.dot == leftComp38 && v.control2&csel == 0 {
 		rsel := (v.control1 >> 3) & 1
@@ -1242,48 +1089,18 @@ func (v *VICII) dotclock7(reload uint16) {
 		v.loadGraphicsData()
 	}
 	if v.dot >= DotsPerLine {
-		v.finishSideBorder()
+		// Only the beam wraps here. The raster counter moved 76 dots ago,
+		// in article cycle 1; see phi0low.
 		v.dot = 0
-		v.rasterLine++
-		if v.rasterLine >= RasterLinesPerFrame {
-			v.rasterLine = 0
-		}
-		v.rasterIRQTriggered = false
-		// The only place rasterLine changes in the hot path, so the only
-		// place the cached visibility answers can go stale.
-		v.lineVisible = v.rasterLine < firstVBlankLine && v.rasterLine > lastVBlankLine
-		v.lineDrawable = v.rasterLine >= renderFirstLine && v.rasterLine < renderLineAfter
-		if v.rasterLine != 0 {
-			v.checkRasterIRQ()
-		}
-	} else if v.rasterLine == 0 && v.dot == DotsPerCycle {
-		// Raster line 0 is compared in cycle 2; all other lines are
-		// compared in cycle 1.
-		v.checkRasterIRQ()
 	}
 
 	if !v.lineVisible {
 		return
 	}
 
+	// Section 3.9 rule 1, the 40-column half.
 	if v.dot == rightEdge40 && v.control2&csel != 0 {
-		v.rightBorderAt = rightEdge40
-	}
-	if v.dot == rightComp38 && v.rightBorderAt == rightEdge38 {
-		if v.control2&csel == 0 {
-			v.mainBorder = true
-		} else {
-			v.mainBorder = false
-			v.rightBorderAt = 0
-		}
-	}
-	if v.dot == rightComp40 && v.rightBorderAt == rightEdge40 {
-		if v.control2&csel != 0 {
-			v.mainBorder = true
-		} else {
-			v.mainBorder = false
-			v.rightBorderAt = 0
-		}
+		v.mainBorder = true
 	}
 	if v.dot == leftComp40 && v.control2&csel != 0 {
 		rsel := (v.control1 >> 3) & 1
@@ -1322,9 +1139,38 @@ func (v *VICII) phi0low() {
 	// 63), so the constants below are the article's rebased onto slot.
 	slot := v.dot / 8
 
+	// The raster counter increments in article cycle 1, not at the first
+	// visible dot of the line: section 3.5 puts cycle 1 at X $194 and the
+	// first visible X coo. at $1e0, 76 dots later. Everything the CPU
+	// times off the raster IRQ hangs on this being in the right place - a
+	// program that syncs here and then counts cycles to a $D016 write
+	// inherits any error in it, which is how a constant offset in the
+	// border unit's comparisons can look like a border unit bug.
+	//
+	// Doing it here rather than at the beam wrap costs the framebuffer
+	// nothing: dots 428 to 503 are past VisibleDotsPerLine, so no painted
+	// dot ever sees the old value.
+	if slot == rasterIncSlot {
+		v.rasterLine++
+		if v.rasterLine >= RasterLinesPerFrame {
+			v.rasterLine = 0
+		}
+		v.rasterIRQTriggered = false
+		// The only place rasterLine changes in the hot path, so the only
+		// place the cached visibility answers can go stale.
+		v.lineVisible = v.rasterLine < firstVBlankLine && v.rasterLine > lastVBlankLine
+		v.lineDrawable = v.rasterLine >= renderFirstLine && v.rasterLine < renderLineAfter
+		if v.rasterLine != 0 {
+			v.checkRasterIRQ()
+		}
+	} else if slot == rasterIncSlot+1 && v.rasterLine == 0 {
+		// Raster line 0 is compared in cycle 2; every other line in cycle 1.
+		v.checkRasterIRQ()
+	}
+
 	// cycleRaster0 (article cycle 1): resets VCBase at the start of raster
 	// line 0.
-	if v.rasterLine == 0 && slot == 53 {
+	if v.rasterLine == 0 && slot == rasterIncSlot {
 		v.VCBase = 0
 	}
 
