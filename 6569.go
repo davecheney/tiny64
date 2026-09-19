@@ -295,32 +295,24 @@ func (v *VICII) StepFrame() {
 //     function.
 //
 // Both regressions trace back to repeatedly entering that general per-dot
-// path. This version instead gives each of the 8 dots in a cycle its own
-// function - dotclock0 through dotclock7 - so that each has exactly one
-// call site. That is the whole trick: LLVM inlines an internal function
-// with a single call site near-unconditionally, because the original body
-// is deleted afterwards and net code size barely moves, whereas N call
-// sites into one shared function mean N copies and the cost threshold
-// refuses all of them. Verified in the emitted IR: with the split, no
-// dotclock survives as a function and stepCycle contains zero calls into
-// one; collapsing the identical bodies back into a single function makes
-// it reappear with a real call per dot.
+// path. The first four dots are grouped because none of them has a
+// phase-specific border or line-wrap action; the remaining phases retain
+// their separate functions because dotclock6 and dotclock7 own those
+// transitions. This keeps the compiler-visible call topology small while
+// removing three entries from the hottest half-phase.
 //
 // Splitting them apart also means each only contains the checks that dot's
 // position can actually reach: the border comparisons and the line/frame-wrap
 // and g-access-commit logic only ever trigger on specific dots within a
-// cycle (see each function's comment), so the six interior dots' bodies are
-// smaller besides.
+// cycle (see each function's comment), so the remaining phase-specific
+// bodies are smaller besides.
 func (v *VICII) stepCycle() {
 	// One test covers the whole cycle. Vertical blanking is a property of
 	// the raster line, not of the dot, so it is the same answer for all
 	// eight dots; lineVisible caches it. dotclock0 through dotclock6
 	// therefore carry no vblank check of their own.
 	if v.lineDrawable {
-		v.dotclock0()
-		v.dotclock1()
-		v.dotclock2()
-		v.dotclock3()
+		v.dotclockFirst4()
 	} else {
 		v.dot += 4
 	}
@@ -345,6 +337,65 @@ func (v *VICII) stepCycle() {
 	cpu.TickPhi2()
 	ciaTick()
 	iecTick()
+}
+
+// dotclockFirst4 advances and paints the four dots in the first Phi0
+// half-phase as one operation. These phases cannot perform border
+// transitions or line wrapping, so their shared work is kept here rather
+// than paid through four dotclock calls on every bus cycle.
+func (v *VICII) dotclockFirst4() {
+	v.dot++
+	if v.dot < VisibleDotsPerLine && v.dot >= renderFirstDot && v.dot < renderDotAfter {
+		if v.verticalBorder {
+			writePixelToBuffer(v.dot, v.rasterLine, v.borderColor&0x0F)
+		} else {
+			graphicsColor := v.gdColor[v.gdSequencer>>7]
+			v.gdSequencer <<= 1
+			if v.mainBorder {
+				graphicsColor = v.borderColor
+			}
+			writePixelToBuffer(v.dot, v.rasterLine, graphicsColor&0x0F)
+		}
+	}
+	v.dot++
+	if v.dot < VisibleDotsPerLine && v.dot >= renderFirstDot && v.dot < renderDotAfter {
+		if v.verticalBorder {
+			writePixelToBuffer(v.dot, v.rasterLine, v.borderColor&0x0F)
+		} else {
+			graphicsColor := v.gdColor[v.gdSequencer>>7]
+			v.gdSequencer <<= 1
+			if v.mainBorder {
+				graphicsColor = v.borderColor
+			}
+			writePixelToBuffer(v.dot, v.rasterLine, graphicsColor&0x0F)
+		}
+	}
+	v.dot++
+	if v.dot < VisibleDotsPerLine && v.dot >= renderFirstDot && v.dot < renderDotAfter {
+		if v.verticalBorder {
+			writePixelToBuffer(v.dot, v.rasterLine, v.borderColor&0x0F)
+		} else {
+			graphicsColor := v.gdColor[v.gdSequencer>>7]
+			v.gdSequencer <<= 1
+			if v.mainBorder {
+				graphicsColor = v.borderColor
+			}
+			writePixelToBuffer(v.dot, v.rasterLine, graphicsColor&0x0F)
+		}
+	}
+	v.dot++
+	if v.dot < VisibleDotsPerLine && v.dot >= renderFirstDot && v.dot < renderDotAfter {
+		if v.verticalBorder {
+			writePixelToBuffer(v.dot, v.rasterLine, v.borderColor&0x0F)
+		} else {
+			graphicsColor := v.gdColor[v.gdSequencer>>7]
+			v.gdSequencer <<= 1
+			if v.mainBorder {
+				graphicsColor = v.borderColor
+			}
+			writePixelToBuffer(v.dot, v.rasterLine, graphicsColor&0x0F)
+		}
+	}
 }
 
 // StepCycle advances the VIC-II, and therefore the rest of the machine it
