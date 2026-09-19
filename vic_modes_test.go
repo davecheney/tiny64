@@ -222,14 +222,22 @@ func TestVICMulticolorXScrollSevenReloadsAtPairBoundary(t *testing.T) {
 }
 
 func TestVICXScrollWriteReloadsAtCurrentDot(t *testing.T) {
+	// A register write only ever happens inside the CPU's Phi2, which
+	// falls four dots into a bus cycle. So the only XSCROLL a write can
+	// land on the reload dot of is the one whose phase is that midpoint -
+	// writing any other moves the reload to a dot this cycle has either
+	// already passed or has still to reach.
+	//
+	// v.dot holds the cycle's first dot while the CPU runs, which is what
+	// the dot path leaves behind it; slot 6 is inside the reload window.
 	v := &VICII{
-		dot:                48,
+		dot:                6 * DotsPerCycle,
 		control2:           7,
 		gdPending:          0xA5,
 		videoBufferPending: 0x0D06,
 	}
 
-	v.WriteRegister(0xD016, 0)
+	v.WriteRegister(0xD016, DotsPerCycle/2)
 
 	if v.gdSequencer != 0x4411 || v.videoBuffer != 0x0D06 { // $A5 widened
 		t.Fatalf("sequencer=%#04x buffer=%#04x after same-dot XSCROLL write, want pending graphics data",

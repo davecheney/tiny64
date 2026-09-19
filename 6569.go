@@ -474,9 +474,19 @@ func (v *VICII) selectedGraphicsMode() uint8 {
 	return (v.control1>>4)&0x06 | (v.control2 >> 4 & 0x01)
 }
 
+// sampleGraphicsAtWrite handles a $D016 store that moves XSCROLL onto the
+// dot the sequencer is about to reload on.
+//
+// It runs from the CPU's Phi2, which falls at the midpoint of a bus cycle -
+// four dots in, always, which is what TestVICStepCycleCPUWriteLandsMidSlot
+// pins. So the dot it is asking about is fixed, and only which bus cycle
+// this is has to be looked up. v.dot holds that: the dot path leaves it
+// holding the current cycle's first dot, so dividing gives the slot.
 func (v *VICII) sampleGraphicsAtWrite(control2 uint8) {
-	slot := v.dot / 8
-	if slot >= 6 && slot <= 45 && v.dot&0x07 == graphicsReloadPhase(control2) {
+	if slot := v.dot / DotsPerCycle; slot < reloadFirstSlot || slot >= reloadSlotAfter {
+		return
+	}
+	if graphicsReloadPhase(control2) == DotsPerCycle/2 {
 		v.loadGraphicsData()
 	}
 }
@@ -998,12 +1008,6 @@ func (v *VICII) cycleDraw(slot, dot uint16, borderSlot, mayReload bool) {
 	v.dotclock(dot+1, reload, borderSlot)
 	v.dotclock(dot+2, reload, borderSlot)
 	v.dotclock(dot+3, reload, borderSlot)
-	// v.dot is stored rather than counted: the dot path works in slots
-	// and adds the offset, so this only has to be right where something
-	// outside can see it. That is here, where a register write lands
-	// inside the CPU's Phi2, and at the bus-cycle boundary below. See
-	// Dot and sampleGraphicsAtWrite.
-	v.dot = dot + DotsPerCycle/2
 	v.phi0low(slot)
 
 	// The CPU runs first, since the VIC has just handed it the bus.
@@ -1021,6 +1025,11 @@ func (v *VICII) cycleDraw(slot, dot uint16, borderSlot, mayReload bool) {
 	v.dotclock(dot+5, reload, borderSlot)
 	v.dotclock(dot+6, reload, borderSlot)
 	v.dotclock(dot+7, reload, borderSlot)
+	// v.dot is stored rather than counted: the dot path works in slots and
+	// adds the offset, so the field only has to be right where something
+	// outside that path reads it. Once a cycle covers both readers - Dot,
+	// at the bus-cycle boundary this is, and sampleGraphicsAtWrite, which
+	// sees this same value as the next cycle's first dot.
 	v.dot = dot + DotsPerCycle
 	v.phi0high(slot)
 
@@ -1046,7 +1055,6 @@ func (v *VICII) cycleDrawDisplay(dot uint16) {
 		v.dotclock(dot+2, reload, false)
 		v.dotclock(dot+3, reload, false)
 	}
-	v.dot = dot + DotsPerCycle/2
 	v.phi0lowDisplay()
 
 	cpu.TickPhi2()
@@ -1073,11 +1081,15 @@ func (v *VICII) cycleDrawDisplay(dot uint16) {
 // sequence, with the beam stepping over the dots instead of shifting them
 // out. Everything the VIC-II and the CPU do in a cycle still happens.
 func (v *VICII) cycleBlank(slot, dot uint16) {
-	v.dot = dot + DotsPerCycle/2
 	v.phi0low(slot)
 	cpu.TickPhi2()
 	ciaTick()
 	iecTick()
+	// v.dot is stored rather than counted: the dot path works in slots and
+	// adds the offset, so the field only has to be right where something
+	// outside that path reads it. Once a cycle covers both readers - Dot,
+	// at the bus-cycle boundary this is, and sampleGraphicsAtWrite, which
+	// sees this same value as the next cycle's first dot.
 	v.dot = dot + DotsPerCycle
 	v.phi0high(slot)
 
