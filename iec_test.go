@@ -216,7 +216,11 @@ func TestBusIsClockedOnEveryFramePath(t *testing.T) {
 				vic.StepCycle()
 			}
 		}},
-		{"Interleaved", 45*CyclesPerLine + 15, StepFrame},
+		// Starting on a line other than zero, which is what this case is
+		// for, but on a line boundary: StepFrame requires one. Stepping
+		// part-way into a line and then asking for a frame is what
+		// StepCycle is for, and the case above covers it.
+		{"Interleaved", 45 * CyclesPerLine, StepFrame},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			m := newMachine(t)
