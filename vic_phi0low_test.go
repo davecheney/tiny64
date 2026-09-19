@@ -31,7 +31,7 @@ func TestPhi0LowDisplayMatchesPhi0Low(t *testing.T) {
 							v.rasterLine = raster
 							v.control1 = den | yscroll
 							v.allowBadLine = allow
-							v.dot = slot * DotsPerCycle
+							v.slot = slot
 							v.syncLineVisibility()
 						}
 
@@ -90,7 +90,7 @@ func TestPhi0HighDisplayMatchesPhi0High(t *testing.T) {
 			special.Reset()
 			for _, v := range []*VICII{general, special} {
 				v.badLine = badLine
-				v.dot = slot * DotsPerCycle
+				v.slot = slot
 			}
 			general.phi0high(slot)
 			special.phi0highDisplay()

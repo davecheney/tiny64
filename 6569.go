@@ -125,7 +125,11 @@ var (
 )
 
 type VICII struct {
-	dot uint16 // 0 to 503
+	// slot is which of the line's CyclesPerLine bus cycles the machine is
+	// in. It is the only beam counter kept: a dot position is slot times
+	// DotsPerCycle plus an offset the dot path holds in a register, so
+	// storing dots would be storing this scaled by eight.
+	slot uint16 // 0 to 62
 
 	// beamLine is the raster line the beam is on, and so which framebuffer
 	// row a painted dot lands in. Dot 0 is the leftmost pixel of the line
@@ -281,7 +285,7 @@ type VICII struct {
 	// dot path asks a table rather than eight range tests.
 	//
 	// The table is 512 entries for a 504 dot line so that the index can be
-	// masked rather than checked: v.dot is always inside a line, but the
+	// masked rather than checked: a dot is always inside a line, but the
 	// compiler cannot know that, and a bounds check on the hottest load in
 	// the emulator is exactly the kind of branch this path is won by
 	// removing.
@@ -296,9 +300,17 @@ func VIC() *VICII {
 }
 
 // Dot returns the beam's current horizontal position (0 to 503), for
-// debugging/tracing tools outside this package.
+// debugging/tracing tools outside this package. It is computed: the
+// machine counts bus cycles, and a caller can only look between them, so
+// the answer is always a cycle boundary.
 func (v *VICII) Dot() uint16 {
-	return v.dot
+	return v.slot * DotsPerCycle
+}
+
+// Slot returns which of the line's bus cycles the machine is in, for the
+// same callers. This is what the VIC-II actually counts.
+func (v *VICII) Slot() uint16 {
+	return v.slot
 }
 
 // RasterLine returns the beam's current raster line (0 to 311), for
@@ -312,7 +324,7 @@ func (v *VICII) RasterLine() uint16 {
 // power-on values. Registers ($D000-$D02E) are left untouched: real
 // hardware doesn't clear them on RESET, KERNAL's IOINIT does that.
 func (v *VICII) Reset() {
-	v.dot = 0
+	v.slot = 0
 	v.rasterLine = 0
 	v.beamLine = 0
 	v.BA = true
@@ -480,10 +492,10 @@ func (v *VICII) selectedGraphicsMode() uint8 {
 // It runs from the CPU's Phi2, which falls at the midpoint of a bus cycle -
 // four dots in, always, which is what TestVICStepCycleCPUWriteLandsMidSlot
 // pins. So the dot it is asking about is fixed, and only which bus cycle
-// this is has to be looked up. v.dot holds that: the dot path leaves it
-// holding the current cycle's first dot, so dividing gives the slot.
+// this is has to be looked up, and that is the one thing the machine
+// counts.
 func (v *VICII) sampleGraphicsAtWrite(control2 uint8) {
-	if slot := v.dot / DotsPerCycle; slot < reloadFirstSlot || slot >= reloadSlotAfter {
+	if v.slot < reloadFirstSlot || v.slot >= reloadSlotAfter {
 		return
 	}
 	if graphicsReloadPhase(control2) == DotsPerCycle/2 {
@@ -578,7 +590,7 @@ func (v *VICII) reloadDot(dot uint16, mayReload bool) uint16 {
 	if !mayReload {
 		return noReloadDot
 	}
-	// The dotclocks act on dots v.dot through v.dot+DotsPerCycle-1, so the
+	// The dotclocks act on dots dot through dot+DotsPerCycle-1, so the
 	// phase is matched against those. Exactly one of them is congruent to
 	// the reload phase; this is it.
 	return dot + ((graphicsReloadPhase(v.control2) - dot) & 7)
@@ -928,7 +940,7 @@ func (v *VICII) ReadRegister(addr uint16) uint8 {
 // It remains a relative step in the raster line: a frame begun on line 45
 // ends on line 45. Only the position within the line is pinned.
 func (v *VICII) StepFrame() {
-	if v.dot != 0 {
+	if v.slot != 0 {
 		panic("tiny64: StepFrame needs the beam at the start of a line; " +
 			"finish the line with StepCycle first")
 	}
@@ -1025,12 +1037,9 @@ func (v *VICII) cycleDraw(slot, dot uint16, borderSlot, mayReload bool) {
 	v.dotclock(dot+5, reload, borderSlot)
 	v.dotclock(dot+6, reload, borderSlot)
 	v.dotclock(dot+7, reload, borderSlot)
-	// v.dot is stored rather than counted: the dot path works in slots and
-	// adds the offset, so the field only has to be right where something
-	// outside that path reads it. Once a cycle covers both readers - Dot,
-	// at the bus-cycle boundary this is, and sampleGraphicsAtWrite, which
-	// sees this same value as the next cycle's first dot.
-	v.dot = dot + DotsPerCycle
+	// The bus cycle is over. This is the machine's only beam counter, and
+	// it moves once here rather than eight times through the dot path.
+	v.slot = slot + 1
 	v.phi0high(slot)
 
 }
@@ -1072,7 +1081,7 @@ func (v *VICII) cycleDrawDisplay(dot uint16) {
 		v.dotclock(dot+6, reload, false)
 		v.dotclock(dot+7, reload, false)
 	}
-	v.dot = dot + DotsPerCycle
+	v.slot = dot/DotsPerCycle + 1
 	v.phi0highDisplay()
 
 }
@@ -1085,12 +1094,9 @@ func (v *VICII) cycleBlank(slot, dot uint16) {
 	cpu.TickPhi2()
 	ciaTick()
 	iecTick()
-	// v.dot is stored rather than counted: the dot path works in slots and
-	// adds the offset, so the field only has to be right where something
-	// outside that path reads it. Once a cycle covers both readers - Dot,
-	// at the bus-cycle boundary this is, and sampleGraphicsAtWrite, which
-	// sees this same value as the next cycle's first dot.
-	v.dot = dot + DotsPerCycle
+	// The bus cycle is over. This is the machine's only beam counter, and
+	// it moves once here rather than eight times through the dot path.
+	v.slot = slot + 1
 	v.phi0high(slot)
 
 }
@@ -1129,7 +1135,7 @@ func (v *VICII) blankRun(from, to uint16) {
 // bus cycle asking whether the beam had run off the end of the line;
 // counting in slots makes it a fact about where the loop stopped.
 func (v *VICII) endLine() {
-	v.dot = 0
+	v.slot = 0
 	v.beamLine++
 	if v.beamLine >= RasterLinesPerFrame {
 		v.beamLine = 0
@@ -1186,7 +1192,7 @@ func (v *VICII) stepCycle(slot uint16) {
 	// stepLine wraps the line when its run of slots ends. Stepping one
 	// cycle at a time, the last slot is where that falls.
 	if slot == CyclesPerLine-1 {
-		v.dot = 0
+		v.slot = 0
 		v.beamLine++
 		if v.beamLine >= RasterLinesPerFrame {
 			v.beamLine = 0
@@ -1205,7 +1211,7 @@ func (v *VICII) stepCycle(slot uint16) {
 // function outright would put its linkage at the mercy of whether the
 // linker can still prove it internal.
 func (v *VICII) StepCycle() {
-	v.stepCycle(v.dot / DotsPerCycle)
+	v.stepCycle(v.slot)
 }
 
 // StepFrame advances the singleton machine by exactly one PAL frame. See

@@ -10,7 +10,7 @@ func TestVICBadLineBusWarning(t *testing.T) {
 	for i := 0; i < 128; i++ {
 		ram[0x0200+i] = 0xEA
 	}
-	vic.rasterLine, vic.dot = 0x33, 0
+	vic.rasterLine, vic.slot = 0x33, 0
 	vic.control1, vic.allowBadLine = 0x13, true
 	vic.syncLineVisibility()
 
@@ -49,7 +49,7 @@ func TestVICLateBadLineWarning(t *testing.T) {
 	t.Cleanup(func() { bus = savedBus })
 	cpu.PC = 0x0200
 	ram[0x0200] = 0xEA
-	vic.rasterLine, vic.dot = 0x33, 20*8
+	vic.rasterLine, vic.slot = 0x33, 20
 	vic.control1, vic.allowBadLine = 0x13, true
 	vic.memPointers = 0x10 // Screen at $0400.
 	vic.syncLineVisibility()
@@ -73,25 +73,25 @@ func TestVICLateBadLineWarning(t *testing.T) {
 
 func TestVICWarningReleaseAndReset(t *testing.T) {
 	newMachine(t)
-	vic.dot, vic.rasterLine = 12, 0x33
+	vic.slot, vic.rasterLine = 12, 0x33
 	vic.allowBadLine, vic.control1 = true, 0x13
 	for n := 0; n < 2; n++ {
-		vic.phi0low(vic.dot / DotsPerCycle)
-		vic.phi0high(vic.dot / DotsPerCycle)
+		vic.phi0low(vic.slot)
+		vic.phi0high(vic.slot)
 		if !vic.AEC() {
 			t.Fatal("AEC low before warning expires")
 		}
 	}
 	vic.control1 = 0x14 // Cancel the badline and reset the warning.
-	vic.phi0low(vic.dot / DotsPerCycle)
-	vic.phi0high(vic.dot / DotsPerCycle)
+	vic.phi0low(vic.slot)
+	vic.phi0high(vic.slot)
 	if !vic.BA || !vic.AEC() || vic.baLowCycles != 0 {
 		t.Fatal("cancelled warning did not release the bus")
 	}
 	vic.control1 = 0x13
 	for n := 0; n < 4; n++ {
-		vic.phi0low(vic.dot / DotsPerCycle)
-		vic.phi0high(vic.dot / DotsPerCycle)
+		vic.phi0low(vic.slot)
+		vic.phi0high(vic.slot)
 		if vic.AEC() != (n < 3) {
 			t.Fatalf("restarted warning cycle %d: AEC=%v", n, vic.AEC())
 		}
@@ -203,11 +203,11 @@ func TestCPUIsOffTheBusBeforeAECDrops(t *testing.T) {
 	// And the warning: cycles AEC stays high after BA falls.
 	var v VICII
 	v.BA = true
-	v.phi0high(v.dot / DotsPerCycle)
+	v.phi0high(v.slot)
 	v.BA = false
 	warning := 0
 	for i := 0; i < 16; i++ {
-		v.phi0high(v.dot / DotsPerCycle)
+		v.phi0high(v.slot)
 		if !v.AEC() {
 			break
 		}

@@ -43,7 +43,7 @@ func TestVICSpriteSingleColorRendering(t *testing.T) {
 	v.control2 = 0x08
 
 	// Advance VIC to line 55, dot 48 (start of sprite 0)
-	for v.rasterLine != 56 || v.dot != 48 {
+	for v.rasterLine != 56 || v.slot != 6 {
 		v.StepCycle()
 	}
 
@@ -95,7 +95,7 @@ func TestVICSpriteMulticolorRendering(t *testing.T) {
 
 	v.control1 = 0x1B
 	v.control2 = 0x08
-	for v.rasterLine != 56 || v.dot != 48 {
+	for v.rasterLine != 56 || v.slot != 6 {
 		v.StepCycle()
 	}
 
@@ -157,12 +157,12 @@ func TestVICSpriteExpansionXY(t *testing.T) {
 	// and inverted once per line thereafter, which makes row 0 occupy a
 	// single line and every later row occupy two.
 	for line := uint16(56); line <= 59; line++ {
-		for cycles := 0; v.rasterLine != line || v.dot != 48; cycles++ {
+		for cycles := 0; v.rasterLine != line || v.slot != 6; cycles++ {
 			if cycles >= CyclesPerFrame {
 				t.Fatalf("did not reach line %d, dot 48 within a frame", line)
 			}
-			if v.dot%DotsPerCycle != 0 {
-				t.Fatalf("StepCycle starting at unaligned dot %d on raster line %d", v.dot, v.rasterLine)
+			if v.Dot()%DotsPerCycle != 0 {
+				t.Fatalf("StepCycle starting at unaligned dot %d on raster line %d", v.Dot(), v.rasterLine)
 			}
 			v.StepCycle()
 		}
@@ -213,7 +213,7 @@ func TestVICSpritePriority(t *testing.T) {
 
 	v.control1 = 0x1B
 	v.control2 = 0x08
-	for v.rasterLine != 56 || v.dot != 48 {
+	for v.rasterLine != 56 || v.slot != 6 {
 		v.StepCycle()
 	}
 
@@ -238,8 +238,8 @@ func TestVICSpritePriority(t *testing.T) {
 	// this the test reads whatever palette the previous test left behind,
 	// and passes or fails on the order the suite happens to run in.
 	v.refreshGraphicsPalette()
-	v.dot = 48
-	v.paintGraphicsPixel(v.dot)
+	v.slot = 6
+	v.paintGraphicsPixel(v.Dot())
 	if got := [4]byte(frameBufferPixelRGBA(48, 56)); got != red {
 		t.Errorf("priority=0 sprite pixel over foreground = %v, want Red %v", got, red)
 	}
@@ -253,8 +253,8 @@ func TestVICSpritePriority(t *testing.T) {
 	// this the test reads whatever palette the previous test left behind,
 	// and passes or fails on the order the suite happens to run in.
 	v.refreshGraphicsPalette()
-	v.dot = 48
-	v.paintGraphicsPixel(v.dot)
+	v.slot = 6
+	v.paintGraphicsPixel(v.Dot())
 	if got := [4]byte(frameBufferPixelRGBA(48, 56)); got != white {
 		t.Errorf("priority=1 sprite pixel under foreground = %v, want White %v", got, white)
 	}
@@ -262,8 +262,8 @@ func TestVICSpritePriority(t *testing.T) {
 	// Test 3: Priority = 1 (sprite behind graphics). Over background graphics (gdSequencer=0), sprite (Red) shows.
 	v.WriteRegister(0xD01B, 0x01)
 	v.gdSequencer = 0x00 // background graphics pixel
-	v.dot = 48
-	v.paintGraphicsPixel(v.dot)
+	v.slot = 6
+	v.paintGraphicsPixel(v.Dot())
 	if got := [4]byte(frameBufferPixelRGBA(48, 56)); got != red {
 		t.Errorf("priority=1 sprite pixel over background = %v, want Red %v", got, red)
 	}
@@ -291,11 +291,11 @@ func TestVICSpriteSpriteCollision(t *testing.T) {
 
 	v.control1 = 0x1B
 	v.control2 = 0x08
-	for v.rasterLine != 56 || v.dot != 48 {
+	for v.rasterLine != 56 || v.slot != 6 {
 		v.StepCycle()
 	}
-	v.dot = 48
-	v.paintGraphicsPixel(v.dot)
+	v.slot = 6
+	v.paintGraphicsPixel(v.Dot())
 
 	// Check IRQ fired
 	if !v.IRQ {
@@ -328,7 +328,7 @@ func TestVICSpriteDataCollision(t *testing.T) {
 
 	v.control1 = 0x1B
 	v.control2 = 0x08
-	for v.rasterLine != 56 || v.dot != 48 {
+	for v.rasterLine != 56 || v.slot != 6 {
 		v.StepCycle()
 	}
 
@@ -341,8 +341,8 @@ func TestVICSpriteDataCollision(t *testing.T) {
 	v.gdSequencer = 0x4000 // foreground graphics pixel, two bits a dot
 	v.videoBuffer = 0x0100
 	v.refreshGraphicsPalette()
-	v.dot = 48
-	v.paintGraphicsPixel(v.dot)
+	v.slot = 6
+	v.paintGraphicsPixel(v.Dot())
 
 	if !v.IRQ {
 		t.Errorf("v.IRQ = false after sprite-data collision, want true")
@@ -381,13 +381,14 @@ func TestVICSpriteXMSBForSprites1To7(t *testing.T) {
 	v.control1 = 0x1B
 	v.control2 = 0x08
 
-	for v.rasterLine != 56 || v.dot != 280 {
+	for v.rasterLine != 56 || v.slot != 35 {
 		v.StepCycle()
 	}
 
-	for range 8 {
-		v.paintGraphicsPixel(v.dot)
-		v.dot++
+	// The beam does not move: this paints the cycle's eight dots by
+	// naming them, which is what the dot path itself does now.
+	for dot := v.Dot(); dot < v.Dot()+DotsPerCycle; dot++ {
+		v.paintGraphicsPixel(dot)
 	}
 
 	buf := FrameBufferRGBA()
@@ -408,7 +409,7 @@ func TestVICWrappedSpritesFillLeftBorderBlock(t *testing.T) {
 	// from it rather than asserted alongside it - see the comment in
 	// TestVICSideBorderWriteAtRightCompareDot.
 	v := &VICII{
-		dot:           0,
+		slot:          0,
 		rasterLine:    56,
 		spriteDisplay: 3,
 		// Sprite 0: X=480, which wraps to dots 0-23. Sprite 1: X=0,
@@ -426,9 +427,9 @@ func TestVICWrappedSpritesFillLeftBorderBlock(t *testing.T) {
 	// rather than reached through WriteRegister or a line's latch.
 	v.rebuildSpriteCoverage()
 
-	for range 32 {
-		v.paintGraphicsPixel(v.dot)
-		v.dot++
+	// Four cycles' worth of dots, named rather than stepped.
+	for dot := v.Dot(); dot < v.Dot()+4*DotsPerCycle; dot++ {
+		v.paintGraphicsPixel(dot)
 	}
 
 	for dot := uint16(0); dot < 24; dot++ {
@@ -548,7 +549,7 @@ func TestVICSpriteShapeIsLatchedPerLine(t *testing.T) {
 	v.control1 = 0x1B
 	v.control2 = 0x08
 
-	for v.rasterLine != 56 || v.dot != 48 {
+	for v.rasterLine != 56 || v.slot != 6 {
 		v.StepCycle()
 	}
 
@@ -571,7 +572,7 @@ func TestVICSpriteShapeIsLatchedPerLine(t *testing.T) {
 
 	// The latch is per line, not a one-off: line 57 fetches again during
 	// line 56 and so must pick up the new, blank shape.
-	for v.rasterLine != 57 || v.dot != 48 {
+	for v.rasterLine != 57 || v.slot != 6 {
 		v.StepCycle()
 	}
 	v.StepCycle()
@@ -645,7 +646,7 @@ func TestSpriteDMAPullsBALow(t *testing.T) {
 	// Line 56 is inside the band, so sprite 0 is under DMA for the whole
 	// of that line's fetch block. Bad Line BA is confined to slots 1-43,
 	// which leaves slots 44 and up to the sprites alone.
-	for v.rasterLine != 56 || v.dot != 0 {
+	for v.rasterLine != 56 || v.slot != 0 {
 		v.StepCycle()
 	}
 	for slot := uint16(43); slot <= 50; slot++ {
@@ -653,7 +654,7 @@ func TestSpriteDMAPullsBALow(t *testing.T) {
 		// and nothing touches it again until the next cycle's phi0low -
 		// phi0high only copies it into AEC. Sampling at the end of the
 		// slot's cycle therefore reads the value phi0low just set.
-		for v.dot != (slot+1)*DotsPerCycle {
+		for v.Dot() != (slot+1)*DotsPerCycle {
 			v.StepCycle()
 		}
 		want := slot < 44 || slot > 48 // BA high outside sprite 0's window
@@ -705,7 +706,7 @@ func TestSpriteCoverageStaysConsistentAcrossAFrame(t *testing.T) {
 			for dot := range vic.spriteCoverage {
 				if got, want := cachedCoverage[dot], vic.spriteCoverage[dot]; got != want {
 					t.Fatalf("cycle %d (raster %d dot %d): coverage of dot %d held %#02x, rebuilding from the same registers gives %#02x - something moved a sprite without rebuilding",
-						cycle, vic.rasterLine, vic.dot, dot, got, want)
+						cycle, vic.rasterLine, vic.Dot(), dot, got, want)
 				}
 			}
 		}

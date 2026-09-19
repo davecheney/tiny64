@@ -23,7 +23,7 @@ func TestPaintPlainMatchesPaintWithNoSprites(t *testing.T) {
 					plain.Reset()
 
 					for _, v := range []*VICII{general, plain} {
-						v.dot = dot
+						v.slot = dot / DotsPerCycle
 						v.beamLine = 100
 						v.mainBorder = border
 						v.borderColor = borderColor
@@ -33,12 +33,12 @@ func TestPaintPlainMatchesPaintWithNoSprites(t *testing.T) {
 					}
 
 					ClearFrameBuffer()
-					general.paintGraphicsPixel(general.dot)
+					general.paintGraphicsPixel(general.Dot())
 					want := frameBufferPixelRGBA(dot, 100)
 					wantSeq := general.gdSequencer
 
 					ClearFrameBuffer()
-					plain.paintGraphicsPixelPlain(plain.dot)
+					plain.paintGraphicsPixelPlain(plain.Dot())
 					got := frameBufferPixelRGBA(dot, 100)
 
 					if got != want || plain.gdSequencer != wantSeq {

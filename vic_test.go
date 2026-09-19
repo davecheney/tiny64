@@ -108,7 +108,7 @@ func TestVICBadLineEntersDisplayState(t *testing.T) {
 	// has been stepped.
 	stepLine := func() {
 		startLine := v.rasterLine
-		for v.rasterLine == startLine || v.dot < DotsPerCycle {
+		for v.rasterLine == startLine || v.Dot() < DotsPerCycle {
 			v.StepCycle()
 		}
 	}
@@ -116,7 +116,7 @@ func TestVICBadLineEntersDisplayState(t *testing.T) {
 	// Run up to (but not including) raster line $33, the first line whose
 	// low 3 bits match YSCROLL=3 once allowBadLine has latched (which
 	// happens at the end of raster line $30, per section 3.5).
-	for v.rasterLine != 0x32 || v.dot != 0 {
+	for v.rasterLine != 0x32 || v.slot != 0 {
 		v.StepCycle()
 	}
 	if !v.idle {
@@ -169,7 +169,7 @@ func TestVICGAccessCountPerRow(t *testing.T) {
 	v.control1 = 0x1B // DEN=1, RSEL=1, YSCROLL=3
 
 	// Run to the start of the first Bad Line's row ($33).
-	for v.rasterLine != 0x33 || v.dot != 0 {
+	for v.rasterLine != 0x33 || v.slot != 0 {
 		v.StepCycle()
 	}
 	vcBefore := v.VC
@@ -281,7 +281,7 @@ func TestVICRasterIRQTriggersWhenCompareIsWrittenOnCurrentLine(t *testing.T) {
 		v.WriteRegister(0xD012, 2)
 		// The raster counter increments on VINC, so run the beam up to
 		// that bus cycle rather than to the beam wrap 80 dots later.
-		for v.dot <= vincSlot*DotsPerCycle {
+		for v.Dot() <= vincSlot*DotsPerCycle {
 			v.StepCycle()
 		}
 		if !v.IRQ {
@@ -312,7 +312,7 @@ func TestVICRasterLineZeroIRQTriggersInCycleTwo(t *testing.T) {
 	// Parked so that the cycle stepped below is the VINC cycle, where the
 	// raster counter wraps to line 0. That is 80 dots before the beam
 	// reaches dot 0, not at the beam wrap.
-	v.dot = vincSlot * DotsPerCycle
+	v.slot = vincSlot
 
 	v.StepCycle()
 	if v.rasterLine != 0 {
@@ -426,7 +426,7 @@ func TestVICLinecrunchKeepsCountersInRange(t *testing.T) {
 	for cycle := range CyclesPerFrame {
 		switch {
 		case vic.rasterLine < crunchUntilLine:
-			switch vic.dot / DotsPerCycle {
+			switch vic.slot {
 			case 0:
 				// Open the line with DEN set and YSCROLL matching the
 				// beam, so this line's first phi0low sees a Bad Line

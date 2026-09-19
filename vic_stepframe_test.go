@@ -15,15 +15,15 @@ func TestStepFrameNeedsALineBoundary(t *testing.T) {
 	// where StepFrame needs it however many go by.
 	for range 3 {
 		v.StepFrame()
-		if v.dot != 0 {
-			t.Fatalf("a whole frame left the beam at dot %d, not a line boundary", v.dot)
+		if v.slot != 0 {
+			t.Fatalf("a whole frame left the beam at dot %d, not a line boundary", v.Dot())
 		}
 	}
 
 	// Part-way through a line it refuses, rather than quietly walking the
 	// frame with every line cut in the wrong place.
 	v.StepCycle()
-	if v.dot == 0 {
+	if v.slot == 0 {
 		t.Fatal("one bus cycle should have moved the beam off the line boundary")
 	}
 	func() {
@@ -54,8 +54,8 @@ func TestStepFrameKeepsItsRasterLine(t *testing.T) {
 
 	v.StepFrame()
 
-	if v.rasterLine != startLine || v.beamLine != startBeam || v.dot != 0 {
+	if v.rasterLine != startLine || v.beamLine != startBeam || v.slot != 0 {
 		t.Fatalf("a frame from line %d/beam %d ended at line %d/beam %d dot %d",
-			startLine, startBeam, v.rasterLine, v.beamLine, v.dot)
+			startLine, startBeam, v.rasterLine, v.beamLine, v.Dot())
 	}
 }

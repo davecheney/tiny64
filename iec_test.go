@@ -232,7 +232,7 @@ func TestBusIsClockedOnEveryFramePath(t *testing.T) {
 			m.run(tc.startCycles)
 			// Not an IEC property, but a whole frame has to have gone by
 			// for the tick count below to mean what it says.
-			startDot, startLine := vic.dot, vic.rasterLine
+			startDot, startLine := vic.Dot(), vic.rasterLine
 			dev := &countingPeripheral{
 				addr:      9,
 				startPhi2: armPhi2Counter(),
@@ -240,8 +240,8 @@ func TestBusIsClockedOnEveryFramePath(t *testing.T) {
 			attachIEC(dev)
 			tc.run()
 
-			if vic.dot != startDot || vic.rasterLine != startLine {
-				t.Errorf("frame ended at dot %d line %d, want dot %d line %d", vic.dot, vic.rasterLine, startDot, startLine)
+			if vic.Dot() != startDot || vic.rasterLine != startLine {
+				t.Errorf("frame ended at dot %d line %d, want dot %d line %d", vic.Dot(), vic.rasterLine, startDot, startLine)
 			}
 			if dev.ticks != CyclesPerFrame {
 				t.Errorf("IEC ticks = %d, want %d", dev.ticks, CyclesPerFrame)
