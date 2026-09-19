@@ -726,13 +726,47 @@ func (v *VICII) paintGraphicsPixelPlain(dot uint16) {
 	writePixelToBuffer(dot, v.beamLine, graphicsColor&0x0F)
 }
 
-// dotclockPlain is dotclock for dots no sprite covers, in a slot the border
-// comparator cannot match. See dotclock.
-func (v *VICII) dotclockPlain(dot, reload uint16) {
-	if dot == reload {
+// dotclockPlain4 is dotclock4 for dots no sprite covers: the four dots of
+// one Phi0 half-phase, with the reload asked once for the group instead of
+// once a dot. See dotclock4 for why reload-dot decides it, and
+// paintGraphicsPixelPlain for what the caller has to know before using
+// this path at all.
+//
+// There is no border half here. The three slots the comparator can match
+// in are not inside the display window, so a dot on this path is never one
+// of them.
+func (v *VICII) dotclockPlain4(dot, reload uint16) {
+	switch reload - dot {
+	case 0:
 		v.loadGraphicsData()
+		v.paintGraphicsPixelPlain(dot)
+		v.paintGraphicsPixelPlain(dot + 1)
+		v.paintGraphicsPixelPlain(dot + 2)
+		v.paintGraphicsPixelPlain(dot + 3)
+	case 1:
+		v.paintGraphicsPixelPlain(dot)
+		v.loadGraphicsData()
+		v.paintGraphicsPixelPlain(dot + 1)
+		v.paintGraphicsPixelPlain(dot + 2)
+		v.paintGraphicsPixelPlain(dot + 3)
+	case 2:
+		v.paintGraphicsPixelPlain(dot)
+		v.paintGraphicsPixelPlain(dot + 1)
+		v.loadGraphicsData()
+		v.paintGraphicsPixelPlain(dot + 2)
+		v.paintGraphicsPixelPlain(dot + 3)
+	case 3:
+		v.paintGraphicsPixelPlain(dot)
+		v.paintGraphicsPixelPlain(dot + 1)
+		v.paintGraphicsPixelPlain(dot + 2)
+		v.loadGraphicsData()
+		v.paintGraphicsPixelPlain(dot + 3)
+	default:
+		v.paintGraphicsPixelPlain(dot)
+		v.paintGraphicsPixelPlain(dot + 1)
+		v.paintGraphicsPixelPlain(dot + 2)
+		v.paintGraphicsPixelPlain(dot + 3)
 	}
-	v.paintGraphicsPixelPlain(dot)
 }
 
 // paintGraphicsPixel emits one pixel through the border unit and sprite compositor.
@@ -1068,10 +1102,7 @@ func (v *VICII) cycleDrawDisplay(dot uint16) {
 	// Asked once for the half-phase, not once a dot: see
 	// paintGraphicsPixelPlain for why four dots can share the answer.
 	if v.spriteDisplay == 0 {
-		v.dotclockPlain(dot, reload)
-		v.dotclockPlain(dot+1, reload)
-		v.dotclockPlain(dot+2, reload)
-		v.dotclockPlain(dot+3, reload)
+		v.dotclockPlain4(dot, reload)
 	} else {
 		v.dotclock4(dot, reload, false)
 	}
@@ -1083,10 +1114,7 @@ func (v *VICII) cycleDrawDisplay(dot uint16) {
 	iecTick()
 
 	if v.spriteDisplay == 0 {
-		v.dotclockPlain(dot+4, reload)
-		v.dotclockPlain(dot+5, reload)
-		v.dotclockPlain(dot+6, reload)
-		v.dotclockPlain(dot+7, reload)
+		v.dotclockPlain4(dot+4, reload)
 	} else {
 		v.dotclock4(dot+4, reload, false)
 	}
