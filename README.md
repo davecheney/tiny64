@@ -122,6 +122,46 @@ disk: `cmd/c64` and `cmd/c64cli` both take a `-disk FILE` flag naming a
 address, so `InsertDisk` leaves address 8 alone if something is already
 there.
 
+### Autostart
+
+`-autostart FILE` inserts a D64 or a PRG and runs it, the way VICE's
+`x64sc -autostart` does. It replaces `-disk` and `-prg` rather than
+modifying them, so name at most one of the three:
+
+    go run ./cmd/c64 -autostart demo.d64
+    go run ./cmd/c64 -autostart demo.prg
+    go run ./cmd/c64cli -autostart demo.prg
+
+Nothing is patched and no ROM is added. It is a prelude that runs before
+the front end's frame loop: fast-forward through the KERNAL's boot,
+confirm `READY.` is on screen, and put `LOAD"*",8,1` and `RUN` into the
+KERNAL's own ten-character type-ahead buffer at `$0277`. The screen
+editor, BASIC and the KERNAL then handle them exactly as they would
+characters someone typed, and the load happens over the emulated IEC bus
+with all its normal messages. Once the prelude returns, the machine is
+running the same loop a normal boot runs — nothing stays hooked or armed.
+
+Both commands go into the buffer up front. The `RUN` waits behind the
+carriage return that starts the load for as long as the load takes,
+because the editor's queue read at `$E5B4` shifts the buffer down one
+character at a time and never clears it. That is why there is only one
+prompt to find.
+
+`"*"` is CBM DOS's first-file wildcard, so no filename is needed: a PRG
+is written as the only file on a fresh disk image, and on a real D64 the
+first directory entry is what a demo wants anyway. Two consequences
+worth knowing, both shared with the wedge's `↑NAME` shortcut:
+
+- It runs BASIC programs. A machine-code PRG that loads outside `$0801`
+  ends up in memory, but `RUN` finds nothing at `$0801` and returns to
+  `READY.`; it needs a `SYS`.
+- `RUN` is committed before the load finishes, so a failed load is still
+  followed by `RUN`, which runs whatever was already in memory.
+
+Autostart happens once, at startup. A reset from inside the emulated
+machine does not repeat it — there is no hook to notice with. To
+autostart something else, run the program again.
+
 The desktop and headless front ends also have an opt-in `-wedge` flag. It plugs
 an 8K autostart cartridge into the expansion port before reset, the way a
 fastload or utility cartridge of the period arrived: the KERNAL finds the
