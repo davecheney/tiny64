@@ -17,6 +17,7 @@ import (
 func main() {
 	disk := flag.String("disk", "", "insert this D64 disk image or PRG file into drive 8")
 	prg := flag.String("prg", "", "insert this PRG file into drive 8 (formatted on a virtual disk)")
+	autostart := flag.String("autostart", "", `insert this D64 or PRG and run it: LOAD"*",8,1 then RUN`)
 	wedge := flag.Bool("wedge", false, "enable the resident DOS wedge at the BASIC prompt")
 	profileDir := flag.String("pprof", "", "write a CPU profile of each interval into this directory")
 	profileEvery := flag.Duration("pprof-every", 5*time.Second, "how much of the run each -pprof profile covers")
@@ -26,9 +27,19 @@ func main() {
 		go profileIntervals(*profileDir, *profileEvery)
 	}
 
-	targetFile := *disk
-	if targetFile == "" {
-		targetFile = *prg
+	// -disk, -prg and -autostart all name one image for drive 8; they
+	// differ only in what happens once it is in there, so exactly one of
+	// them may be given and whichever it is names the file.
+	var targetFile string
+	named := 0
+	for _, f := range []string{*disk, *prg, *autostart} {
+		if f != "" {
+			targetFile = f
+			named++
+		}
+	}
+	if named > 1 {
+		log.Fatal("specify at most one of -disk, -prg or -autostart")
 	}
 
 	// Read the disk before opening a window, so a bad path is an error on
@@ -39,6 +50,13 @@ func main() {
 		if image, err = tiny64.ReadDiskOrPRG(os.DirFS(filepath.Dir(targetFile)), filepath.Base(targetFile)); err != nil {
 			log.Fatal(err)
 		}
+	}
+	// The prelude runs the machine to the BASIC prompt and types the load
+	// itself, so it has to happen after reset and before the window's
+	// frame loop takes over.
+	var prelude func()
+	if *autostart != "" {
+		prelude = tiny64.Autostart
 	}
 	if err := desktop.Run("c64", func() {
 		if *wedge {
@@ -51,7 +69,7 @@ func main() {
 			// 1541 under -tags drive1541.
 			tiny64.InsertDisk(image)
 		}
-	}); err != nil {
+	}, prelude); err != nil {
 		log.Fatal(err)
 	}
 }

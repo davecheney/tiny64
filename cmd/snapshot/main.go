@@ -239,10 +239,8 @@ func resetMachine(disk []byte) {
 func waitForReady(limit int) error {
 	for range limit {
 		tiny64.StepFrame()
-		for row := range 25 {
-			if strings.HasPrefix(screenLine(row), "READY.") {
-				return nil
-			}
+		if tiny64.BASICReady() {
+			return nil
 		}
 	}
 	var visible []string
@@ -284,6 +282,13 @@ func setBASICProgram(start, end uint16) {
 	}
 }
 
+// typeRUN starts the program the way a person would, by pressing the
+// keys. It deliberately does not use tiny64.Type, which seeds the
+// KERNAL's buffer directly: this runs before the capture loop, which
+// counts its frames from here, so the fourteen frames the key presses
+// take are part of what every reference PNG was captured against.
+// Shortening it would not shift the images, it would redefine which
+// frame of the demo each one is.
 func typeRUN() {
 	for _, key := range []tiny64.Key{tiny64.KeyR, tiny64.KeyU, tiny64.KeyN, tiny64.KeyReturn} {
 		tiny64.Keys().Press(key)
