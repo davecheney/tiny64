@@ -1,6 +1,7 @@
-//go:build tinygo
+//go:build tufty2040
 
-// Command tufty2040 runs the emulator on the Pimoroni Tufty 2040.
+// Command tufty2040 runs the emulator on the Pimoroni Tufty 2040. It is
+// behind the tufty2040 build tag that TinyGo sets for that target.
 package main
 
 import (

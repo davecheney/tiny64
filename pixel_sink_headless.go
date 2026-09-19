@@ -1,4 +1,4 @@
-//go:build !tinygo && headless
+//go:build !baremetal && headless
 
 package tiny64
 

@@ -1,4 +1,4 @@
-//go:build !tinygo && !headless && pixelsink_func
+//go:build !baremetal && !headless && pixelsink_func
 
 package tiny64
 

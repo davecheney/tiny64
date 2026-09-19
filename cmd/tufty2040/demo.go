@@ -1,4 +1,4 @@
-//go:build tinygo
+//go:build tufty2040
 
 package main
 

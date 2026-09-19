@@ -1,7 +1,8 @@
-//go:build tinygo
+//go:build gopher_badge
 
-// Command tiny64 runs the emulator on a TinyGo board with an ST7789
-// panel. It imports machine, so it only builds under TinyGo.
+// Command tiny64 runs the emulator on the Gopher Badge, a TinyGo board
+// with an ST7789 panel. It imports machine and the badge's own pins, so it
+// is behind the gopher_badge build tag that TinyGo sets for that target.
 package main
 
 import (
