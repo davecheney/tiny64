@@ -1002,14 +1002,14 @@ func (v *VICII) cycleDraw(slot uint16, borderSlot, mayReload bool) {
 // where phi0lowDisplay stands in for phi0low. The body is spelled out
 // rather than shared with cycleDraw for the reason cycleDraw gives: nothing
 // in this path inlines, so a shared helper would be real calls.
-func (v *VICII) cycleDrawDisplay(slot uint16) {
+func (v *VICII) cycleDrawDisplay() {
 	reload := v.reloadDot(true)
 
 	v.dotclock(reload, false)
 	v.dotclock(reload, false)
 	v.dotclock(reload, false)
 	v.dotclock(reload, false)
-	v.phi0lowDisplay(slot)
+	v.phi0lowDisplay()
 
 	cpu.TickPhi2()
 	ciaTick()
@@ -1019,7 +1019,7 @@ func (v *VICII) cycleDrawDisplay(slot uint16) {
 	v.dotclock(reload, false)
 	v.dotclock(reload, false)
 	v.dotclock(reload, false)
-	v.phi0high(slot)
+	v.phi0highDisplay()
 
 	if v.dot >= DotsPerLine {
 		v.dot = 0
@@ -1098,8 +1098,8 @@ func (v *VICII) stepLine() {
 	// has to ask.
 	v.drawRun(0, borderSlotLeft, false)
 	v.cycleDraw(borderSlotLeft, true, true)
-	for slot := uint16(displayFirstSlot); slot < displaySlotAfter; slot++ {
-		v.cycleDrawDisplay(slot)
+	for range displaySlotAfter - displayFirstSlot {
+		v.cycleDrawDisplay()
 	}
 	v.cycleDraw(borderSlotRight38, true, true)
 	v.drawRun(borderSlotRight38+1, borderSlotRight40, true)
@@ -1239,9 +1239,12 @@ func (v *VICII) borderCompare() {
 // all cover it whole. So the run's phase is this, with the answers built
 // in rather than asked 37 times a line.
 //
+// It takes no slot: with every test answered, nothing in it depends on
+// which of the 37 cycles this is.
+//
 // It must stay in step with phi0low; TestPhi0LowDisplayMatchesPhi0Low walks
 // the run both ways and compares.
-func (v *VICII) phi0lowDisplay(slot uint16) {
+func (v *VICII) phi0lowDisplay() {
 	// Bad Line state is not hoistable even here: YSCROLL is writable
 	// mid-line, so a $D011 store moves the condition between one cycle and
 	// the next.
@@ -1257,7 +1260,10 @@ func (v *VICII) phi0lowDisplay(slot uint16) {
 		v.idle = false
 	}
 
-	ba := !badLine && !v.spriteDMAStall(slot)
+	// No sprite can pull BA low here: spriteBASlotMask is zero below slot
+	// 44, because the sprite fetch block runs at the end of the line and
+	// feeds the next one. TestDisplayRunHasNoSpriteBA holds that.
+	ba := !badLine
 	v.BA = ba
 	if ba {
 		v.baLowCycles = 0
@@ -1705,6 +1711,14 @@ func (v *VICII) cycleBorderComp() {
 // phi0high runs after the eighth dot of every 8-dot cycle: it performs a Bad
 // Line's c-access (article cycles 15-54) and hands the bus to the CPU for
 // Phi2.
+// phi0highDisplay is phi0high for the display run, where the c-access
+// range covers every slot, so only the Bad Line question is left.
+func (v *VICII) phi0highDisplay() {
+	if v.badLine {
+		v.cycleCAccess()
+	}
+}
+
 func (v *VICII) phi0high(slot uint16) {
 	if slot >= 4 && slot <= 43 && v.badLine {
 		v.cycleCAccess()
