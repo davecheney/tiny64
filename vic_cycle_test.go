@@ -10,7 +10,7 @@ func TestVICStepCycleStalledReadClocksCIAs(t *testing.T) {
 	cpu.PC = 0x0200
 	ram[0x0200] = 0xEA // NOP
 	vic.rasterLine = 0x33
-	vic.dot = DotsPerCycle
+	vic.slot = 1
 	vic.control1 = 0x13
 	vic.allowBadLine = true
 	vic.syncLineVisibility()
@@ -54,7 +54,7 @@ func TestVICStepCycleCPUWriteLandsMidSlot(t *testing.T) {
 	cpu.A = 5
 	copy(ram[0x0200:], []byte{0x8D, 0x20, 0xD0, 0xEA}) // STA $D020; NOP
 	vic.rasterLine = 100
-	vic.dot = 16
+	vic.slot = 2
 	vic.borderColor = 2
 	vic.syncLineVisibility()
 
@@ -68,8 +68,8 @@ func TestVICStepCycleCPUWriteLandsMidSlot(t *testing.T) {
 			t.Fatalf("cycle %d: border color=%d, want %d", cycle, vic.borderColor, want)
 		}
 	}
-	if vic.dot != 48 || bus.RW || bus.Address != 0xD020 || bus.Data != 5 {
-		t.Fatalf("store did not complete in the slot ending at dot 48: dot=%d bus=%+v", vic.dot, bus)
+	if vic.slot != 6 || bus.RW || bus.Address != 0xD020 || bus.Data != 5 {
+		t.Fatalf("store did not complete in the slot ending at dot 48: dot=%d bus=%+v", vic.Dot(), bus)
 	}
 	for dot := uint16(40); dot <= 43; dot++ {
 		if !frameBufferPixelIs(dot, 100, 2) {

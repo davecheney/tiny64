@@ -46,16 +46,16 @@ func TestStepLineMatchesStepCycle(t *testing.T) {
 		for slot := uint16(0); slot < CyclesPerLine; slot++ {
 			byCycle.stepCycle(slot)
 		}
-		if byLine.dot != byCycle.dot || byLine.beamLine != byCycle.beamLine ||
+		if byLine.slot != byCycle.slot || byLine.beamLine != byCycle.beamLine ||
 			byLine.rasterLine != byCycle.rasterLine ||
 			byLine.mainBorder != byCycle.mainBorder ||
 			byLine.verticalBorder != byCycle.verticalBorder {
 			t.Fatalf("line %d: stepLine left dot=%d beam=%d raster=%d "+
 				"border=%v/%v, stepCycle left dot=%d beam=%d raster=%d "+
 				"border=%v/%v",
-				line, byLine.dot, byLine.beamLine, byLine.rasterLine,
+				line, byLine.Dot(), byLine.beamLine, byLine.rasterLine,
 				byLine.mainBorder, byLine.verticalBorder,
-				byCycle.dot, byCycle.beamLine, byCycle.rasterLine,
+				byCycle.Dot(), byCycle.beamLine, byCycle.rasterLine,
 				byCycle.mainBorder, byCycle.verticalBorder)
 		}
 	}

@@ -14,21 +14,21 @@ func TestBeamLineAgreesWithRasterWherePainted(t *testing.T) {
 
 	apart := 0
 	for range CyclesPerFrame * 2 {
-		// The cycle about to run paints dots v.dot through v.dot+7. When
+		// The cycle about to run paints dots v.Dot() through v.Dot()+7. When
 		// every one of them reaches the screen, the two counters have to
 		// agree on both sides of the cycle, since the row each painted dot
 		// lands in is read from beamLine and named by $D012.
-		visible := v.dot+DotsPerCycle <= VisibleDotsPerLine
+		visible := v.Dot()+DotsPerCycle <= VisibleDotsPerLine
 		if visible && v.beamLine != v.rasterLine {
 			t.Fatalf("before cycle at dot %d: beamLine=%d, $D012=%d",
-				v.dot, v.beamLine, v.rasterLine)
+				v.Dot(), v.beamLine, v.rasterLine)
 		}
 
 		v.StepCycle()
 
 		if visible && v.beamLine != v.rasterLine {
 			t.Fatalf("after cycle ending at dot %d: beamLine=%d, $D012=%d",
-				v.dot, v.beamLine, v.rasterLine)
+				v.Dot(), v.beamLine, v.rasterLine)
 		}
 		if v.beamLine != v.rasterLine {
 			apart++

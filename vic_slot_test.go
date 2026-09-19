@@ -2,32 +2,57 @@ package tiny64
 
 import "testing"
 
-// TestSlotTracksTheBeamAcrossAFrame pins the invariant StepFrame's loop
-// rests on. It counts the slot itself rather than recovering it from the
-// beam, which is only sound while the two stay in lockstep - so if anything
-// in a bus cycle ever moves the beam by other than DotsPerCycle, or wraps
-// it somewhere other than the end of a line, this is what notices.
-func TestSlotTracksTheBeamAcrossAFrame(t *testing.T) {
+// TestDotIsAlwaysABusCycleBoundary pins what makes the beam position
+// derivable rather than stored. The machine counts bus cycles; a caller can
+// only look between them, so every horizontal position anything outside it
+// can observe is a multiple of DotsPerCycle.
+//
+// If that ever stops holding - if some path leaves the machine part-way
+// through a cycle - then Dot is lying rather than computing, and a stored
+// dot would be needed again.
+func TestDotIsAlwaysABusCycleBoundary(t *testing.T) {
 	parkMachine(t)
 	v := &VICII{}
 	v.Reset()
 
-	slot := v.dot / DotsPerCycle
 	for cycle := range CyclesPerFrame {
-		if got := v.dot / DotsPerCycle; got != slot {
-			t.Fatalf("cycle %d: beam is in slot %d but the loop counted %d",
-				cycle, got, slot)
+		if got := v.Dot(); got%DotsPerCycle != 0 {
+			t.Fatalf("cycle %d: Dot reported %d, not a bus-cycle boundary", cycle, got)
+		}
+		if got, want := v.Dot(), v.Slot()*DotsPerCycle; got != want {
+			t.Fatalf("cycle %d: Dot reported %d but slot %d means %d",
+				cycle, got, v.Slot(), want)
+		}
+		if v.Slot() >= CyclesPerLine {
+			t.Fatalf("cycle %d: slot %d is past the end of a line", cycle, v.Slot())
 		}
 		v.StepCycle()
-		slot++
-		if slot >= CyclesPerLine {
-			slot = 0
-		}
 	}
 
-	// A frame is a whole number of lines, so the beam ends where it began.
-	if v.dot/DotsPerCycle != slot {
-		t.Fatalf("after a frame the beam is in slot %d, want %d",
-			v.dot/DotsPerCycle, slot)
+	// A frame is a whole number of lines, so it ends where it began.
+	if v.Slot() != 0 {
+		t.Fatalf("a frame ended in slot %d, not at the start of a line", v.Slot())
+	}
+}
+
+// TestSlotAdvancesOncePerBusCycle is the other half: the counter moves by
+// one per cycle and wraps at the end of a line, which is what lets the dot
+// path add a constant offset instead of counting.
+func TestSlotAdvancesOncePerBusCycle(t *testing.T) {
+	parkMachine(t)
+	v := &VICII{}
+	v.Reset()
+
+	for cycle := range 3 * CyclesPerLine {
+		before := v.Slot()
+		v.StepCycle()
+		want := before + 1
+		if want >= CyclesPerLine {
+			want = 0
+		}
+		if v.Slot() != want {
+			t.Fatalf("cycle %d: slot went %d -> %d, want %d",
+				cycle, before, v.Slot(), want)
+		}
 	}
 }
