@@ -60,6 +60,21 @@ func frameBufferPixelRGBA(x, y uint16) [4]byte {
 	return C64Palette[FrameBufferIndexed()[idx]&0x0f]
 }
 
+// setVICBank drives CIA2's port A to select one of the VIC-II's four 16K
+// fetch windows, and moves the window with it.
+//
+// Both halves matter. The two bank-select lines are inverted by the board
+// logic, and the window the VIC fetches through is worked out where a
+// write to this port lands, so a test that assigns the port fields alone
+// gets an uninverted bank and a window still describing the previous one.
+// Bank 0 hides that: it is what a zeroed VICII already holds, so poking
+// the fields for bank 0 passes whether the window tracks the port or not.
+func (c *CIA) setVICBank(bank uint8) {
+	c.cia2.DDRA |= 0x03
+	c.cia2.PRA = c.cia2.PRA&^0x03 | ^bank&0x03
+	vic.setBank()
+}
+
 func frameBufferPixelIs(x, y uint16, colorIndex byte) bool {
 	return frameBufferPixelRGBA(x, y) == C64Palette[colorIndex&0x0f]
 }
