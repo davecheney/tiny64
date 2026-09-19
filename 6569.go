@@ -131,6 +131,12 @@ type VICII struct {
 	// storing dots would be storing this scaled by eight.
 	slot uint16 // 0 to 62
 
+	// bank is the base of the 16K window the VIC-II fetches through,
+	// selected by CIA2's port A. It is stored rather than derived because
+	// the port moves a handful of times a frame at most, while every g-,
+	// c- and sprite access reads through it. setBank is the only writer.
+	bank uint16
+
 	// beamLine is the raster line the beam is on, and so which framebuffer
 	// row a painted dot lands in. Dot 0 is the leftmost pixel of the line
 	// and beamLine steps there, when the beam wraps. That is the whole of
@@ -325,6 +331,7 @@ func (v *VICII) RasterLine() uint16 {
 // hardware doesn't clear them on RESET, KERNAL's IOINIT does that.
 func (v *VICII) Reset() {
 	v.slot = 0
+	v.setBank()
 	v.rasterLine = 0
 	v.beamLine = 0
 	v.BA = true
@@ -387,6 +394,18 @@ func (v *VICII) setIRQ(asserted bool) {
 	if v == &vic {
 		cpu.setInterrupt(sourceVIC, asserted)
 	}
+}
+
+// setBank works out the base of the VIC-II's 16K fetch window from CIA2's
+// port A. Reset establishes it, and the PLA calls it when a write lands on
+// that port.
+//
+// The two bank-select lines are inverted, and the port pins float high when
+// configured as inputs, just as the real pull-ups do. They are bits 0 and 1;
+// the serial bus drives bits 3 to 5 of the same port, so iec.go can move
+// those without disturbing the window.
+func (v *VICII) setBank() {
+	v.bank = uint16(^effective(cia.cia2.PRA, cia.cia2.DDRA)&0x03) << 14
 }
 
 // syncLineVisibility recomputes the cached line visibility flags, and puts

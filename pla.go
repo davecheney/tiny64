@@ -65,9 +65,10 @@ func plaStore(addr uint16, val uint8) {
 	}
 }
 
-// This costs exactly 80 against the inliner's budget of 80, and has no
-// headroom: a statement more and it stops being inlined into the dot path,
-// which is worth far more than whatever the statement does. Check with
+// This is inlined into the dot path, which is worth more than anything a
+// statement added here is likely to do. It costs 58 against the inliner's
+// budget of 80, so there is room - but it was 90 and a real call until
+// two changes brought it under, and going back over is silent. Check with
 // -gcflags=github.com/davecheney/tiny64=-m=2.
 //
 // plaVICLoad reads addr through the VIC-II's own view of memory (used for
@@ -83,10 +84,7 @@ func plaStore(addr uint16, val uint8) {
 // 13 address pins, so the offset it presents is always addr&0x1FFF,
 // regardless of which window asserted its chip-select.
 func plaVICLoad(addr uint16) uint8 {
-	// CIA2's two bank-select lines are inverted. The port pins float high
-	// when configured as inputs, just as the real pull-ups do.
-	bank := uint16(^effective(cia.cia2.PRA, cia.cia2.DDRA)&0x03) << 14
-	addr = bank | addr&0x3FFF
+	addr = vic.bank | addr&0x3FFF
 	if cartridge.ultimax() && cartridge.ROMH && addr&0x3000 == 0x3000 {
 		return cartridge.ROM[addr&0x1FFF]
 	}
@@ -107,8 +105,7 @@ func plaVICLoad(addr uint16) uint8 {
 // plaVICSpriteLoad reads sprite pointer and pattern data through the VIC-II's
 // memory view. Character ROM is not mapped for sprite accesses (s-accesses).
 func plaVICSpriteLoad(addr uint16) uint8 {
-	bank := uint16(^effective(cia.cia2.PRA, cia.cia2.DDRA)&0x03) << 14
-	addr = bank | addr&0x3FFF
+	addr = vic.bank | addr&0x3FFF
 	if cartridge.ultimax() && cartridge.ROMH && addr&0x3000 == 0x3000 {
 		return cartridge.ROM[addr&0x1FFF]
 	}
@@ -160,9 +157,12 @@ func ioStore(addr uint16, val uint8) {
 		cia.cia2.store(addr, val, sourceCIA2)
 		// Port A carries ATN, CLOCK OUT and DATA OUT, and its direction
 		// register gates them. This is the only place the C64 can reach
-		// the serial bus, so it is where the bus is woken.
+		// the serial bus, so it is where the bus is woken. The same two
+		// registers carry the VIC-II's bank-select lines, so this is also
+		// the only place its fetch window can move.
 		if r := addr & 0x0F; r == 0x00 || r == 0x02 {
 			iecActive = true
+			vic.setBank()
 		}
 	case addr >= dosWedgeIO && cartridge.wedgeIO():
 		if addr == dosWedgeLatch {

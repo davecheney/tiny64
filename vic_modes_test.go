@@ -40,7 +40,7 @@ func TestVICGraphicsModeColors(t *testing.T) {
 
 func TestVICGraphicsModeAddresses(t *testing.T) {
 	saveMachine(t)
-	cia.cia2.PRA, cia.cia2.DDRA = 3, 3 // VIC bank 0
+	cia.setVICBank(0)
 
 	v := &VICII{RC: 3, VC: 12, memPointers: 0x08}
 	v.videoMatrixColor[0] = 0x00C1
@@ -64,7 +64,7 @@ func TestVICGraphicsModeAddresses(t *testing.T) {
 
 func TestVICBitmapIdleAccessUsesIdleData(t *testing.T) {
 	saveMachine(t)
-	cia.cia2.PRA, cia.cia2.DDRA = 3, 3 // VIC bank 0
+	cia.setVICBank(0)
 
 	v := &VICII{
 		idle:               true,

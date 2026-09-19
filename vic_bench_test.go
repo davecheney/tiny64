@@ -116,10 +116,10 @@ func loadTestProgram() {
 // graphics pixel rather than border.
 func loadDisplayProgram() {
 	loadTestProgram()
-	cia.cia2.PRA, cia.cia2.DDRA = 3, 3 // VIC bank 0
-	vic.memPointers = 0x14             // screen $0400, chars $1000
-	vic.control1 = 0x1B                // DEN=1, RSEL=1, YSCROLL=3
-	vic.control2 = 0x08                // CSEL=1
+	cia.setVICBank(0)
+	vic.memPointers = 0x14 // screen $0400, chars $1000
+	vic.control1 = 0x1B    // DEN=1, RSEL=1, YSCROLL=3
+	vic.control2 = 0x08    // CSEL=1
 	r := Ram()
 	for i := range 1000 {
 		r[0x0400+i] = byte(1 + i%40)
