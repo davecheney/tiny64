@@ -15,10 +15,10 @@ func TestVICStepCycleStalledReadClocksCIAs(t *testing.T) {
 	vic.allowBadLine = true
 	vic.syncLineVisibility()
 
-	for _, c := range []*CIA{&cia1, &cia2} {
-		c.Store(0x04, 10)
-		c.Store(0x05, 0)
-		c.Store(0x0E, 1)
+	for _, c := range []*chip{&cia.cia1, &cia.cia2} {
+		c.store(0x04, 10, sourceCIA1)
+		c.store(0x05, 0, sourceCIA1)
+		c.store(0x0E, 1, sourceCIA1)
 	}
 	// The CIA timers are the cycle count. Both are clocked from
 	// CPU.TickPhi2 and from nowhere else, above its stall return, so a
@@ -33,8 +33,8 @@ func TestVICStepCycleStalledReadClocksCIAs(t *testing.T) {
 		if cpu.PC != 0x0200 || cpu.TState != 0 {
 			t.Fatalf("cycle %d: stalled CPU advanced to PC=%04X T=%d", n, cpu.PC, cpu.TState)
 		}
-		if cia1.timerA != 10-n || cia2.timerA != 10-n {
-			t.Fatalf("cycle %d: CIA timers=%d/%d, want %d/%d", n, cia1.timerA, cia2.timerA, 10-n, 10-n)
+		if cia.cia1.timerA != 10-n || cia.cia2.timerA != 10-n {
+			t.Fatalf("cycle %d: CIA timers=%d/%d, want %d/%d", n, cia.cia1.timerA, cia.cia2.timerA, 10-n, 10-n)
 		}
 	}
 }

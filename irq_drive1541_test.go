@@ -37,7 +37,7 @@ func newDriveIRQTestCPU(t *testing.T) driveIRQTestCPU {
 	savedBus, savedDriveBus := bus, driveBus
 	t.Cleanup(func() { bus, driveBus = savedBus, savedDriveBus })
 	cpu = CPU{PC: 0x0200, SP: 0xFF, PortDDR: 0xFF}
-	cia1, cia2 = CIA{}, CIA{}
+	cia = CIA{}
 	via1, via2 = VIA{}, VIA{}
 	keyboard = Keyboard{}
 	vic = VICII{BA: true}
@@ -413,7 +413,7 @@ func TestDriveIRQPeripheralSampling(t *testing.T) {
 		// differently, so they recognize an underflow a cycle apart.
 		//
 		// On the C64 the CIAs are clocked after the CPU within a bus
-		// cycle (see ciaTick), which is the order the chips see Phi2
+		// cycle (see CIA.Tick), which is the order the chips see Phi2
 		// fall in: the 6510 latches its IRQ input on that edge and
 		// the CIA's output only settles after it, so an underflow on
 		// cycle N is first sampled on cycle N+1.

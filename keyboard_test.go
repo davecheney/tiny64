@@ -171,26 +171,26 @@ func TestKeyboardThroughCIA1Registers(t *testing.T) {
 	keyboard.ReleaseAll()
 	defer keyboard.ReleaseAll()
 
-	cia1.Store(0xDC02, 0xFF) // DDRA: Port A all outputs
-	cia1.Store(0xDC03, 0x00) // DDRB: Port B all inputs
+	cia.cia1.store(0xDC02, 0xFF, sourceCIA1) // DDRA: Port A all outputs
+	cia.cia1.store(0xDC03, 0x00, sourceCIA1) // DDRB: Port B all inputs
 
 	keyboard.Press(KeyQ) // PA7, PB6
 
-	cia1.Store(0xDC00, 0xFF&^(1<<KeyQ.Row()))
+	cia.cia1.store(0xDC00, 0xFF&^(1<<KeyQ.Row()), sourceCIA1)
 	want := uint8(0xFF) &^ (1 << KeyQ.Col())
 	if got := ioLoad(0xDC01); got != want {
 		t.Errorf("$DC01 = %#02x, want %#02x", got, want)
 	}
 
 	// A different row must not see it.
-	cia1.Store(0xDC00, 0xFF&^0x01)
+	cia.cia1.store(0xDC00, 0xFF&^0x01, sourceCIA1)
 	if got := ioLoad(0xDC01); got != 0xFF {
 		t.Errorf("$DC01 with wrong row selected = %#02x, want 0xff", got)
 	}
 
 	// And with no key held at all, the selected row reads clean.
 	keyboard.Release(KeyQ)
-	cia1.Store(0xDC00, 0xFF&^(1<<KeyQ.Row()))
+	cia.cia1.store(0xDC00, 0xFF&^(1<<KeyQ.Row()), sourceCIA1)
 	if got := ioLoad(0xDC01); got != 0xFF {
 		t.Errorf("$DC01 with key released = %#02x, want 0xff", got)
 	}
@@ -203,9 +203,9 @@ func TestKeyboardPortAReadbackUnaffected(t *testing.T) {
 	keyboard.ReleaseAll()
 	defer keyboard.ReleaseAll()
 
-	cia1.Store(0xDC02, 0xFF)
-	cia1.Store(0xDC03, 0x00)
-	cia1.Store(0xDC00, 0xAA)
+	cia.cia1.store(0xDC02, 0xFF, sourceCIA1)
+	cia.cia1.store(0xDC03, 0x00, sourceCIA1)
+	cia.cia1.store(0xDC00, 0xAA, sourceCIA1)
 
 	if got := ioLoad(0xDC00); got != 0xAA {
 		t.Errorf("$DC00 = %#02x, want 0xaa", got)

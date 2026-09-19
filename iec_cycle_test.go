@@ -27,8 +27,8 @@ func TestIECObservesCIA2WriteOnSameCycle(t *testing.T) {
 	cpu.A = 0x08
 	cpu.PortDDR, cpu.Port = 0x07, 0x07
 	copy(ram[0x0200:], []byte{0x8D, 0x00, 0xDD}) // STA $DD00
-	cia2.Store(0xDD02, 0x08)
-	cia2.Store(0xDD00, 0x00)
+	cia.cia2.store(0xDD02, 0x08, sourceCIA2)
+	cia.cia2.store(0xDD00, 0x00, sourceCIA2)
 
 	for range 4 {
 		vic.StepCycle()

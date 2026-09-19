@@ -12,7 +12,7 @@ import "strings"
 // - asserted. That is the convention the KERNAL uses throughout: CLKLO is
 // LDA $DD00 / ORA #$10 / STA $DD00, and CLKHI is the matching AND #$EF.
 // There is no separate test-harness state: cmd/drivec (or a real CIA2)
-// both just manipulate CIA2's registers directly via CIA2().
+// both just manipulate CIA2's registers directly through cia.cia2.
 
 // iecPeripheral is a device hanging off the IEC bus. Because the bus is
 // open-collector, a peripheral only ever says whether it is *pulling* a
@@ -162,15 +162,15 @@ func DATAAsserted() bool {
 // output (DDRA=1) and written as 1, which the inverting buffer turns into
 // a low on the bus.
 func cia2AtnOut() bool {
-	return cia2.DDRA&0x08 != 0 && cia2.PRA&0x08 != 0
+	return cia.cia2.DDRA&0x08 != 0 && cia.cia2.PRA&0x08 != 0
 }
 
 func cia2ClkOut() bool {
-	return cia2.DDRA&0x10 != 0 && cia2.PRA&0x10 != 0
+	return cia.cia2.DDRA&0x10 != 0 && cia.cia2.PRA&0x10 != 0
 }
 
 func cia2DataOut() bool {
-	return cia2.DDRA&0x20 != 0 && cia2.PRA&0x20 != 0
+	return cia.cia2.DDRA&0x20 != 0 && cia.cia2.PRA&0x20 != 0
 }
 
 // SetCIA2ATN, SetCIA2CLK and SetCIA2DATA drive CIA2's Port A as if a C64
@@ -182,11 +182,11 @@ func SetCIA2CLK(asserted bool)  { setCIA2OutputBit(0x10, asserted) }
 func SetCIA2DATA(asserted bool) { setCIA2OutputBit(0x20, asserted) }
 
 func setCIA2OutputBit(bit uint8, asserted bool) {
-	cia2.DDRA |= bit
+	cia.cia2.DDRA |= bit
 	if asserted {
-		cia2.PRA |= bit
+		cia.cia2.PRA |= bit
 	} else {
-		cia2.PRA &^= bit
+		cia.cia2.PRA &^= bit
 	}
 }
 
@@ -199,7 +199,7 @@ func setCIA2OutputBit(bit uint8, asserted bool) {
 // read-modify-write sequences (LDA $DD00 / ORA #$10 / STA $DD00) rely on
 // to change one line without disturbing the others.
 func cia2ReadPRA() uint8 {
-	base := effective(cia2.PRA, cia2.DDRA) & 0x3F
+	base := effective(cia.cia2.PRA, cia.cia2.DDRA) & 0x3F
 
 	var in uint8 = 0xC0 // bits 7,6 default released (1) unless asserted
 	if DATAAsserted() {

@@ -62,19 +62,22 @@ func TestInterruptClockMatchesPolledSources(t *testing.T) {
 // RESTORE tests in 6510_nmi_test.go.
 func TestInterruptPeripheralNotifications(t *testing.T) {
 	newIRQTestCPU(t)
-	for _, c := range []*CIA{&cia1, &cia2} {
-		c.Store(4, 1)
-		c.Store(5, 0)
-		c.Store(0xD, 0x81)
-		c.Store(0xE, 0x19) // One-shot timer, started and force-loaded.
-		c.Tick()
+	for _, w := range []struct {
+		c      *chip
+		source interruptSource
+	}{{&cia.cia1, sourceCIA1}, {&cia.cia2, sourceCIA2}} {
+		w.c.store(4, 1, w.source)
+		w.c.store(5, 0, w.source)
+		w.c.store(0xD, 0x81, w.source)
+		w.c.store(0xE, 0x19, w.source) // One-shot timer, started and force-loaded.
+		w.c.tick(w.source)
 	}
 	vic.checkRasterIRQ()
 	vic.WriteRegister(0xD01A, 1)
 	if want := irqSources | nmiSources; cpu.interruptSources != want {
 		t.Fatalf("asserted sources=%03b, want %03b", cpu.interruptSources, want)
 	}
-	if status := cia1.Load(0xD); status != 0x81 {
+	if status := cia.cia1.load(0xD, sourceCIA1); status != 0x81 {
 		t.Fatalf("CIA1 ICR=%02x, want 81", status)
 	}
 	if want := sourceVIC | nmiSources; cpu.interruptSources != want {
@@ -89,7 +92,7 @@ func TestInterruptPeripheralNotifications(t *testing.T) {
 		t.Fatal("enabling a pending VIC interrupt did not reassert its source")
 	}
 	vic.WriteRegister(0xD019, 1)
-	cia2.Load(0xD)
+	cia.cia2.load(0xD, sourceCIA2)
 	if cpu.interruptSources != 0 {
 		t.Fatalf("acknowledgements left a stale source: %03b", cpu.interruptSources)
 	}
@@ -117,7 +120,7 @@ func TestInterruptCombinedNMIEdges(t *testing.T) {
 	}
 	cpu.nmiLatch = false
 
-	cia2.setIRQ(true)
+	cia.cia2.setIRQ(sourceCIA2, true)
 	c.tick()
 	if !cpu.nmiLatch || cpu.interruptSources != sourceCIA2 {
 		t.Fatal("CIA2 did not produce its own NMI edge through the source bitmask")
@@ -129,7 +132,7 @@ func TestInterruptCombinedNMIEdges(t *testing.T) {
 		t.Fatal("a held CIA2 line produced a second edge")
 	}
 
-	cia2.Load(0xD)
+	cia.cia2.load(0xD, sourceCIA2)
 	c.tick()
 	if cpu.nmiLine {
 		t.Fatal("CIA2's NMI line did not release after acknowledgement")
@@ -145,8 +148,8 @@ func TestInterruptCombinedNMIEdges(t *testing.T) {
 func TestInterruptResetRetainsPeripheralLevels(t *testing.T) {
 	newIRQTestCPU(t)
 	vic.setIRQ(true)
-	cia1.setIRQ(true)
-	cia2.setIRQ(true)
+	cia.cia1.setIRQ(sourceCIA1, true)
+	cia.cia2.setIRQ(sourceCIA2, true)
 	cpu.irq = irqState{sampled: true, pending: true, held: true}
 	cpu.nmiLine = true
 	cpu.Reset()
@@ -159,12 +162,13 @@ func TestInterruptResetRetainsPeripheralLevels(t *testing.T) {
 	}
 }
 
+// TestInterruptUnconnectedPeripherals covers the two peripherals a caller
+// can hold detached from the machine. chip is not one of them: it is
+// unexported and exists only as a field of CIA.
 func TestInterruptUnconnectedPeripherals(t *testing.T) {
 	newIRQTestCPU(t)
-	var c CIA
 	var v VICII
 	var k Keyboard
-	c.setIRQ(true)
 	v.setIRQ(true)
 	k.Restore()
 	if cpu.interruptSources != 0 || cpu.irqActive {

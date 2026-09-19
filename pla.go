@@ -80,7 +80,7 @@ func plaStore(addr uint16, val uint8) {
 func plaVICLoad(addr uint16) uint8 {
 	// CIA2's two bank-select lines are inverted. The port pins float high
 	// when configured as inputs, just as the real pull-ups do.
-	bank := uint16(^effective(cia2.PRA, cia2.DDRA)&0x03) << 14
+	bank := uint16(^effective(cia.cia2.PRA, cia.cia2.DDRA)&0x03) << 14
 	addr = bank | addr&0x3FFF
 	if cartridge.ultimax() && cartridge.ROMH && addr&0x3000 == 0x3000 {
 		return cartridge.ROM[addr&0x1FFF]
@@ -96,7 +96,7 @@ func plaVICLoad(addr uint16) uint8 {
 // plaVICSpriteLoad reads sprite pointer and pattern data through the VIC-II's
 // memory view. Character ROM is not mapped for sprite accesses (s-accesses).
 func plaVICSpriteLoad(addr uint16) uint8 {
-	bank := uint16(^effective(cia2.PRA, cia2.DDRA)&0x03) << 14
+	bank := uint16(^effective(cia.cia2.PRA, cia.cia2.DDRA)&0x03) << 14
 	addr = bank | addr&0x3FFF
 	if cartridge.ultimax() && cartridge.ROMH && addr&0x3000 == 0x3000 {
 		return cartridge.ROM[addr&0x1FFF]
@@ -123,13 +123,13 @@ func ioLoad(addr uint16) uint8 {
 		case 0x1:
 			return cia1ReadPRB()
 		}
-		return cia1.Load(addr)
+		return cia.cia1.load(addr, sourceCIA1)
 	case addr >= 0xDD00 && addr <= 0xDDFF:
 		if addr&0xF == 0x0 {
 			// PRA has IEC-specific semantics, see iec.go.
 			return cia2ReadPRA()
 		}
-		return cia2.Load(addr)
+		return cia.cia2.load(addr, sourceCIA2)
 	case addr >= dosWedgeIO && cartridge.wedgeIO():
 		return cartridge.ROM[dosWedgeIOBank+int(addr-dosWedgeIO)]
 	default:
@@ -144,9 +144,9 @@ func ioStore(addr uint16, val uint8) {
 	case addr >= 0xD800 && addr <= 0xDBFF:
 		colorRAM[addr-0xD800] = val & 0x0F
 	case addr >= 0xDC00 && addr <= 0xDCFF:
-		cia1.Store(addr, val)
+		cia.cia1.store(addr, val, sourceCIA1)
 	case addr >= 0xDD00 && addr <= 0xDDFF:
-		cia2.Store(addr, val)
+		cia.cia2.store(addr, val, sourceCIA2)
 		// Port A carries ATN, CLOCK OUT and DATA OUT, and its direction
 		// register gates them. This is the only place the C64 can reach
 		// the serial bus, so it is where the bus is woken.

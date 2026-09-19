@@ -220,11 +220,11 @@ func (k *Keyboard) scan(pa, pb uint8) (uint8, uint8) {
 // to be resolved as a pair, since the keyboard couples the two ports
 // together: reading either one depends on what the other is driving.
 func cia1ReadPRA() uint8 {
-	pa, _ := keyboard.scan(effective(cia1.PRA, cia1.DDRA), effective(cia1.PRB, cia1.DDRB))
+	pa, _ := keyboard.scan(effective(cia.cia1.PRA, cia.cia1.DDRA), effective(cia.cia1.PRB, cia.cia1.DDRB))
 	return pa
 }
 
 func cia1ReadPRB() uint8 {
-	_, pb := keyboard.scan(effective(cia1.PRA, cia1.DDRA), effective(cia1.PRB, cia1.DDRB))
+	_, pb := keyboard.scan(effective(cia.cia1.PRA, cia.cia1.DDRA), effective(cia.cia1.PRB, cia.cia1.DDRB))
 	return pb
 }

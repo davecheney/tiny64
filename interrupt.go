@@ -35,8 +35,8 @@ func (c *CPU) syncInterruptSources() {
 	c.interruptSources = 0
 	c.irqActive = false
 	c.setInterrupt(sourceVIC, vic.IRQ)
-	c.setInterrupt(sourceCIA1, cia1.IRQ)
-	c.setInterrupt(sourceCIA2, cia2.IRQ)
+	c.setInterrupt(sourceCIA1, cia.cia1.IRQ)
+	c.setInterrupt(sourceCIA2, cia.cia2.IRQ)
 }
 
 func (c *CPU) clockIRQ(i uint8, poll, stalled bool) {

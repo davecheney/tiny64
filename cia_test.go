@@ -7,13 +7,15 @@ import "testing"
 // ICR, and (in continuous/non-one-shot mode) reloads from the latch and
 // keeps running.
 func TestCIATimerCountdown(t *testing.T) {
-	c := &CIA{}
-	c.Store(0x04, 3) // latch low = 3
-	c.Store(0x05, 0) // latch high = 0, timer stopped -> timerA loads from latch
-	c.Store(0x0E, 0x01)
+	saveMachine(t)
+	cia = CIA{}
+	c := &cia.cia1
+	c.store(0x04, 3, sourceCIA1) // latch low = 3
+	c.store(0x05, 0, sourceCIA1) // latch high = 0, timer stopped -> timerA loads from latch
+	c.store(0x0E, 0x01, sourceCIA1)
 
 	for i := 0; i < 2; i++ {
-		c.Tick()
+		c.tick(sourceCIA1)
 	}
 	if c.timerA != 1 {
 		t.Fatalf("timerA = %d after 2 ticks, want 1", c.timerA)
@@ -22,36 +24,38 @@ func TestCIATimerCountdown(t *testing.T) {
 		t.Fatalf("icr = %#x after 2 ticks, want 0 (no underflow yet)", c.icr)
 	}
 
-	c.Tick() // timerA: 1 -> 0, underflow
+	c.tick(sourceCIA1) // timerA: 1 -> 0, underflow
 	if c.timerA != 3 {
 		t.Errorf("timerA = %d after underflow, want 3 (reloaded from latch)", c.timerA)
 	}
 	if c.icr&0x01 == 0 {
 		t.Errorf("icr bit0 not set after Timer A underflow")
 	}
-	if !c.runningA {
-		t.Errorf("runningA = false after underflow, want true (continuous mode)")
+	if c.running&startA == 0 {
+		t.Errorf("Timer A stopped after underflow, want still running (continuous mode)")
 	}
 }
 
 // TestCIATimerOneShot checks that one-shot mode (CRA bit 3) stops the timer
 // after a single underflow instead of reloading and continuing.
 func TestCIATimerOneShot(t *testing.T) {
-	c := &CIA{}
-	c.Store(0x04, 1)
-	c.Store(0x05, 0)
-	c.Store(0x0E, 0x01|0x08) // start, one-shot
+	saveMachine(t)
+	cia = CIA{}
+	c := &cia.cia1
+	c.store(0x04, 1, sourceCIA1)
+	c.store(0x05, 0, sourceCIA1)
+	c.store(0x0E, 0x01|0x08, sourceCIA1) // start, one-shot
 
-	c.Tick() // timerA: 1 -> 0, underflow
-	if c.runningA {
-		t.Errorf("runningA = true after one-shot underflow, want false")
+	c.tick(sourceCIA1) // timerA: 1 -> 0, underflow
+	if c.running&startA != 0 {
+		t.Errorf("Timer A still running after a one-shot underflow, want stopped")
 	}
 	if c.icr&0x01 == 0 {
 		t.Errorf("icr bit0 not set after one-shot underflow")
 	}
 
 	prevTimerA := c.timerA
-	c.Tick() // stopped: must not decrement or re-fire
+	c.tick(sourceCIA1) // stopped: must not decrement or re-fire
 	if c.timerA != prevTimerA {
 		t.Errorf("timerA changed from %d to %d while stopped", prevTimerA, c.timerA)
 	}
@@ -61,26 +65,28 @@ func TestCIATimerOneShot(t *testing.T) {
 // underflowing timer's flag is unmasked in the IMR, and that reading the
 // ICR clears both the latched flags and the IRQ line.
 func TestCIAIRQAssertedWhenUnmasked(t *testing.T) {
-	c := &CIA{}
-	c.Store(0x04, 1)
-	c.Store(0x05, 0)
-	c.Store(0x0E, 0x01)
+	saveMachine(t)
+	cia = CIA{}
+	c := &cia.cia1
+	c.store(0x04, 1, sourceCIA1)
+	c.store(0x05, 0, sourceCIA1)
+	c.store(0x0E, 0x01, sourceCIA1)
 
-	c.Tick() // underflow, but IMR is still all-zero: masked
+	c.tick(sourceCIA1) // underflow, but IMR is still all-zero: masked
 	if c.IRQ {
 		t.Fatalf("IRQ = true with an empty IMR, want false (masked)")
 	}
 
-	c.Store(0x0D, 0x81) // set bit 7: enable Timer A's IRQ in the mask
-	c.Store(0x04, 1)
-	c.Store(0x0E, 0x1F) // force load + start
+	c.store(0x0D, 0x81, sourceCIA1) // set bit 7: enable Timer A's IRQ in the mask
+	c.store(0x04, 1, sourceCIA1)
+	c.store(0x0E, 0x1F, sourceCIA1) // force load + start
 
-	c.Tick() // underflow, now unmasked
+	c.tick(sourceCIA1) // underflow, now unmasked
 	if !c.IRQ {
 		t.Fatalf("IRQ = false after an unmasked underflow, want true")
 	}
 
-	icr := c.Load(0x0D)
+	icr := c.load(0x0D, sourceCIA1)
 	if icr&0x80 == 0 || icr&0x01 == 0 {
 		t.Errorf("ICR read = %#x, want bit7 and bit0 set", icr)
 	}
@@ -98,13 +104,15 @@ func TestCIAIRQAssertedWhenUnmasked(t *testing.T) {
 // would flood the CPU with IRQs and make it look like boot has stalled.
 // A zero timer must still take one full Phi2 cycle per "underflow".
 func TestCIAZeroLatchDoesNotFloodIRQ(t *testing.T) {
-	c := &CIA{}
-	c.Store(0x04, 0)
-	c.Store(0x05, 0)
-	c.Store(0x0D, 0x81)
-	c.Store(0x0E, 0x1F) // force load + start, latch=0
+	saveMachine(t)
+	cia = CIA{}
+	c := &cia.cia1
+	c.store(0x04, 0, sourceCIA1)
+	c.store(0x05, 0, sourceCIA1)
+	c.store(0x0D, 0x81, sourceCIA1)
+	c.store(0x0E, 0x1F, sourceCIA1) // force load + start, latch=0
 
-	c.Tick()
+	c.tick(sourceCIA1)
 	if c.icr&0x01 == 0 {
 		t.Fatalf("icr bit0 not set after the first tick with a zero latch")
 	}
@@ -114,13 +122,13 @@ func TestCIAZeroLatchDoesNotFloodIRQ(t *testing.T) {
 	// how many further underflows happen over the next 10 ticks: with a
 	// zero latch that reloads to zero every time, a buggy implementation
 	// fires on every single tick.
-	c.Load(0x0D)
+	c.load(0x0D, sourceCIA1)
 	fires := 0
 	for range 10 {
-		c.Tick()
+		c.tick(sourceCIA1)
 		if c.icr&0x01 != 0 {
 			fires++
-			c.Load(0x0D)
+			c.load(0x0D, sourceCIA1)
 		}
 	}
 	if fires != 10 {
@@ -134,15 +142,17 @@ func TestCIAZeroLatchDoesNotFloodIRQ(t *testing.T) {
 // running, it updates the latch (used on the next natural reload) without
 // disturbing the currently-counting value.
 func TestCIAWriteTimerHighByte(t *testing.T) {
-	c := &CIA{}
-	c.Store(0x04, 0x34)
-	c.Store(0x05, 0x12) // stopped: timerA loads immediately
+	saveMachine(t)
+	cia = CIA{}
+	c := &cia.cia1
+	c.store(0x04, 0x34, sourceCIA1)
+	c.store(0x05, 0x12, sourceCIA1) // stopped: timerA loads immediately
 	if c.timerA != 0x1234 {
 		t.Fatalf("timerA = %#x after loading latch while stopped, want 0x1234", c.timerA)
 	}
 
-	c.Store(0x0E, 0x01) // start
-	c.Store(0x05, 0x56) // running: must not disturb the live counter
+	c.store(0x0E, 0x01, sourceCIA1) // start
+	c.store(0x05, 0x56, sourceCIA1) // running: must not disturb the live counter
 	if c.timerA != 0x1234 {
 		t.Errorf("timerA = %#x after writing high byte while running, want unchanged 0x1234", c.timerA)
 	}

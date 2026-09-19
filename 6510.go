@@ -176,7 +176,7 @@ func (c *CPU) triggerNMI() {
 
 // TickPhi2 executes exactly one high-clock phase of the CPU. It clocks the
 // CPU and nothing else: the CIAs share the same Phi2 but are clocked from
-// the VIC-II's cycle scheduler alongside it (see ciaTick), since that is
+// the VIC-II's cycle scheduler alongside it (see CIA.Tick), since that is
 // where the clock comes from and since they keep counting whether or not
 // this function decides the CPU is stalled by BA/AEC.
 func (c *CPU) TickPhi2() {
