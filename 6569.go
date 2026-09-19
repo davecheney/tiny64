@@ -645,14 +645,24 @@ func (v *VICII) refreshGraphicsPalette() {
 }
 
 // nextGraphicsColor shifts one pixel out of the graphics sequencer and
-// reports its colour and whether it is foreground. The shift is the only
+// reports its colour and the index it came from. The shift is the only
 // part of this that is genuinely per dot: the colour it lands on was
 // decided for the whole cycle by refreshGraphicsPalette, and the pixel
 // width by expandGraphicsData when the sequencer last reloaded.
-func (v *VICII) nextGraphicsColor() (byte, bool) {
+// The index is returned rather than the foreground bit because only the
+// sprite compositor reads that, and most dots have no sprite over them -
+// paintGraphicsPixel's early-out returns before it would be used. So the
+// bit is worked out after that branch instead, where it is read.
+//
+// Measured null on desktop, twice, on two shapes of paintGraphicsPixel
+// two days and one rewrite apart: -0.31% [-0.95, +0.34] when first tried, and +0.15% against
+// a 0.73% drift floor on the current dot path. A wide out-of-order core
+// issues the discarded ALU work in slots that were idle anyway. It is here
+// because per-dot work should be what is read per dot, not for a win.
+func (v *VICII) nextGraphicsColor() (byte, uint8) {
 	index := uint8(v.gdSequencer >> 14)
 	v.gdSequencer <<= 2
-	return v.gdColor[index], v.gdForeground&(1<<index) != 0
+	return v.gdColor[index], index
 }
 
 // paintGraphicsPixel emits one pixel through the border unit and sprite compositor.
@@ -669,7 +679,7 @@ func (v *VICII) nextGraphicsColor() (byte, bool) {
 // keeps shifting behind a closed border exactly as the hardware does, and
 // only the colour that is written is replaced.
 func (v *VICII) paintGraphicsPixel() {
-	graphicsColor, isForeground := v.nextGraphicsColor()
+	graphicsColor, gdIndex := v.nextGraphicsColor()
 	// Which sprites cover this dot, decided when the line's windows were
 	// last settled rather than by asking all eight here. The mask keeps
 	// the index provably inside the table; see spriteCoverage.
@@ -682,6 +692,10 @@ func (v *VICII) paintGraphicsPixel() {
 		writePixelToBuffer(v.dot, v.beamLine, graphicsColor&0x0F)
 		return
 	}
+
+	// Past the early-out, so this is only worked out for the dots a sprite
+	// actually covers. See nextGraphicsColor.
+	isForeground := v.gdForeground&(1<<gdIndex) != 0
 
 	d := v.dot
 	r := v.beamLine
