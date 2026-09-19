@@ -392,7 +392,7 @@ go run ./cmd/snapshot -prg demo.prg -frames 120 -border -o frame-000120.png
 go run ./cmd/snapshot -prg demo.prg -start '$2000' -frames 120 -crop -o cropped.png
 go test ./cmd/snapshot
 go test ./cmd/snapshot -run '^TestSnapshotFixtures$' -count=1
-go test ./cmd/snapshot -run '^TestSnapshotFixtures$/^colour-bars$/^frame-000002$' -count=1
+go test ./cmd/snapshot -run '^TestSnapshotFixtures$/^the-passengers$/^frame-000120$' -count=1
 ```
 
 Fixture regression tests run offline as part of the ordinary unit-test suite.
@@ -449,9 +449,9 @@ changed pixels magenta and unchanged pixels black (decode/size failures
 produce an empty diff). Without this setting the test uses a temporary
 directory that Go removes after the test.
 
-The included `colour-bars` program is original test code. Before adding an
-external demo, establish permission to redistribute both the PRG and its
-captures, and record author, source URL, version, licence or permission,
+Every fixture here is an external demo carrying redistribution permission.
+Before adding another, establish permission to redistribute both the PRG and
+its captures, and record author, source URL, version, licence or permission,
 and any transformations in the fixture README. Public availability alone
 does not grant redistribution permission. Tests must never download assets.
 
