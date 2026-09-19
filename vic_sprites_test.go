@@ -424,8 +424,11 @@ func TestVICWrappedSpritesFillLeftBorderBlock(t *testing.T) {
 	v.syncLineVisibility()
 	// Which dots a sprite covers is cached the same way the line state
 	// above is, and for the same reason: the registers were set by hand
-	// rather than reached through WriteRegister or a line's latch.
+	// rather than reached through WriteRegister or a line's latch. What
+	// each of those dots paints is cached too, and latchSpriteShape is
+	// what normally works it out from the bytes assigned above.
 	v.rebuildSpriteCoverage()
+	v.decodeSpriteRows()
 
 	// Four cycles' worth of dots, named rather than stepped.
 	for dot := v.Dot(); dot < v.Dot()+4*DotsPerCycle; dot++ {
@@ -713,6 +716,56 @@ func TestSpriteCoverageStaysConsistentAcrossAFrame(t *testing.T) {
 		if vic.spriteStart != cachedStart {
 			t.Fatalf("cycle %d (raster %d): sprite start dots held %v, rebuilding gives %v",
 				cycle, vic.rasterLine, cachedStart, vic.spriteStart)
+		}
+	}
+}
+
+// TestVICSpriteMulticolorWriteMidLineRedecodesRow covers the case the
+// decoded row can get wrong: $D01C changes what a shape byte means -
+// eight hires pixels or four multicolour pairs - without changing the
+// bytes themselves, so a row worked out before the write describes the
+// wrong mode after it.
+//
+// The shape is all ones, which is every dot in the sprite's own colour
+// read as hires, and four pairs of 11 - $D026 - read as multicolour. So
+// the dots either side of the write are two different colours, and a row
+// that failed to be worked out again would paint them the same.
+func TestVICSpriteMulticolorWriteMidLineRedecodesRow(t *testing.T) {
+	ClearFrameBuffer()
+
+	// Hand-built for the same reason the wrapped sprite test above is,
+	// and cached state derived rather than asserted for the same reason.
+	v := &VICII{
+		slot:          0,
+		rasterLine:    56,
+		spriteDisplay: 1,
+		spriteX:       [8]uint16{0}, // dots 24 to 47
+		spriteColor:   [8]uint8{2},
+		spriteMC1:     5,
+		spriteShape:   [8][3]uint8{{0xFF, 0xFF, 0xFF}},
+	}
+	v.syncLineVisibility()
+	v.rebuildSpriteCoverage()
+	v.decodeSpriteRows()
+
+	for dot := uint16(24); dot < 32; dot++ {
+		v.paintGraphicsPixel(dot)
+	}
+	v.WriteRegister(0xD01C, 0x01)
+	for dot := uint16(32); dot < 48; dot++ {
+		v.paintGraphicsPixel(dot)
+	}
+
+	for dot := uint16(24); dot < 32; dot++ {
+		if !frameBufferPixelIs(dot, 56, 2) {
+			t.Errorf("dot %d painted before the $D01C write is %v, want %v (hires, the sprite's own colour)",
+				dot, frameBufferPixelRGBA(dot, 56), C64Palette[2])
+		}
+	}
+	for dot := uint16(32); dot < 48; dot++ {
+		if !frameBufferPixelIs(dot, 56, 5) {
+			t.Errorf("dot %d painted after the $D01C write is %v, want %v (multicolour pair 11, $D026)",
+				dot, frameBufferPixelRGBA(dot, 56), C64Palette[5])
 		}
 	}
 }
