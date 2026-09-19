@@ -1370,6 +1370,28 @@ normal hardware gate.
 
 ## Flashing and Monitoring Workflow (Tufty 2040)
 
+## VIC dotclock grouping
+
+Commit `3399435` groups the first four drawable dots in `stepCycle`, preserving
+the phase-specific `dotclock6` and `dotclock7` transitions. Commit `59a1151`
+extends the same approach to drawable phases four and five; phases six and
+seven remain separate because they own border, line-wrap and frame-wrap
+transitions.
+
+The phase 4/5 candidate was measured from a fresh `3399435` build with a
+Tufty A/B/A run. Baseline A averaged 60.978899 ms/frame, candidate B averaged
+59.390526 ms/frame, and restored A averaged 60.978752 ms/frame. The candidate
+improved frame time by 1.588373 ms (2.6048%) with baseline drift of
+-0.000294 ms. In valid pre-counter-wrap windows, XIP misses fell from
+83,300-89,913 to 68,923-75,649 per 50-frame sample; the displayed hit rate
+remained 99.97%. The exact candidate UF2 was
+`47f947b9595f7e9b98c269d5c809e63600d7eb0f78196fb24ba6da3e4593ae1b`.
+
+The candidate passed host tests, vet, and Tufty and Gopher Badge firmware
+builds before the hardware gate. The device was restored to the accepted
+phase 4/5 image after the A/B/A run and serial telemetry confirmed the
+candidate's labeled XIP counters and approximately 59.35 ms/frame operation.
+
 - **Build & Flash**: `tinygo flash -target=tufty2040 -opt=2 -scheduler=none ./cmd/tufty2040` (compiles and flashes in a single step).
 - **Bootloader Reset**: Opening USB CDC port at 1200 baud resets the RP2040 into bootloader mode (`/Volumes/RPI-RP2`).
 - **Serial Telemetry Monitoring**: Use `tinygo monitor` or read USB serial port (`/dev/cu.usbmodem1201` on macOS) at 115200 baud. Average `emulate=...ms` over 50-frame windows. Baseline is ~73-74ms/frame at `-opt=2 -scheduler=none`.
