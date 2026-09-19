@@ -1,9 +1,21 @@
-// Package desktop provides the shared Ebitengine-based GUI frontend used
-// by tiny64's desktop commands (cmd/c64, cmd/destestmax, cmd/deadtest).
-// It is deliberately isolated from the core tiny64 package: the long-term
-// goal is to run tiny64 on a Raspberry Pi Pico 2 under TinyGo, which won't
-// use Ebitengine at all, so nothing in this package should be depended on
+// Package desktop provides the shared GUI frontend used by tiny64's
+// desktop commands (cmd/c64, cmd/destestmax, cmd/deadtest).
+//
+// It has two backends, chosen by build tag. The default is Ebitengine,
+// which expands palette indices into colours on the GPU. Under -tags sdl
+// it is SDL2 through a small cgo shim, which is what TinyGo can compile:
+// Ebitengine reaches TinyGo through purego, whose func.go needs
+// reflect.Value.SetPointer, and TinyGo's reflect does not have it.
+//
+// The package is deliberately isolated from the core tiny64 package: the
+// long-term goal is to run tiny64 on a Raspberry Pi Pico 2 under TinyGo,
+// which won't use either backend, so nothing here should be depended on
 // by anything outside cmd/*.
+//
+// A backend supplies two verbs, openDisplay and runLoop, and calls step
+// once per frame. Everything else - the power-on noise, the reset
+// sequence, the frame count - lives here, so the two backends cannot
+// drift on the parts that are not about drawing.
 package desktop
 
 import (
@@ -11,7 +23,6 @@ import (
 	"math/rand/v2"
 
 	"github.com/davecheney/tiny64"
-	"github.com/hajimehoshi/ebiten/v2"
 )
 
 const (
@@ -22,80 +33,14 @@ const (
 	Scale        = 2
 )
 
-// resizeSettleFrames is how long the window size must sit still before the
-// aspect ratio is corrected. Snapping while the user is still dragging means
-// fighting the window manager for control of the size, which looks awful, so
-// wait for the drag to finish the way VICE does.
-const resizeSettleFrames = 12 // ~200ms
+// frames counts the PAL frames the emulator has run, reported on exit as
+// a rough check that the machine was actually executing.
+var frames int
 
-type emulator struct {
-	frames int
-
-	// display hands the GPU palette indices to expand into colours.
-	display
-
-	// winW, winH are the window's dimensions as of the previous frame;
-	// dragW, dragH are what they were before the current drag started,
-	// and settled counts the frames since the size last changed.
-	winW, winH   int
-	dragW, dragH int
-	settled      int
-}
-
-// snapWindowToPicture waits for a resize to finish, then squares the window
-// up with the picture's proportions so it fills the window exactly and the
-// letterbox disappears. Ebitengine exposes neither GLFW's aspect ratio hint
-// nor a resize-finished event, hence the settle timer.
-func (e *emulator) snapWindowToPicture() {
-	// A fullscreen or maximized window belongs to the window manager, not
-	// to us; Ebitengine letterboxes those instead. A minimized one
-	// reports a size we have no business acting on.
-	if ebiten.IsFullscreen() || ebiten.IsWindowMaximized() || ebiten.IsWindowMinimized() {
-		return
-	}
-
-	w, h := ebiten.WindowSize()
-	if w != e.winW || h != e.winH {
-		if e.settled > resizeSettleFrames {
-			// The window was at rest, so this is the start of a
-			// new drag: remember the size it is moving away from.
-			e.dragW, e.dragH = e.winW, e.winH
-		}
-		e.winW, e.winH = w, h
-		e.settled = 0
-		return
-	}
-	if e.settled > resizeSettleFrames {
-		return // this resize has already been dealt with
-	}
-	if e.settled++; e.settled < resizeSettleFrames {
-		return // still moving, or only just stopped
-	}
-
-	// Whichever edge the drag moved furthest is the one the user meant to
-	// set, so derive the other from it rather than undoing their work.
-	dw, dh := w-e.dragW, h-e.dragH
-	if max(dw, -dw) >= max(dh, -dh) {
-		h = (w*ScreenHeight + ScreenWidth/2) / ScreenWidth
-	} else {
-		w = (h*ScreenWidth + ScreenHeight/2) / ScreenHeight
-	}
-	e.settled = resizeSettleFrames + 1
-	if w == e.winW && h == e.winH {
-		return // already square with the picture
-	}
-	ebiten.SetWindowSize(w, h)
-
-	// Read back rather than assume: a window manager may hand back a size
-	// other than the one asked for, and remembering what we actually got
-	// stops us asking again every frame, forever.
-	e.winW, e.winH = ebiten.WindowSize()
-}
-
-// Update is called once per frame.
-func (e *emulator) Update() error {
-	e.snapWindowToPicture()
-
+// step advances the machine by one frame. Both backends call it once per
+// iteration of their loop, so the emulated cadence does not depend on
+// which one is built.
+func step() {
 	// Sample the host keyboard once per frame. The matrix itself is
 	// combinational, so the guest sees whatever is held at the instant it
 	// scans; this only bounds how often that state can change. At 50Hz
@@ -103,37 +48,16 @@ func (e *emulator) Update() error {
 	pollKeyboard(tiny64.Keys())
 
 	tiny64.StepFrame()
-	e.frames++
-
-	return nil
+	frames++
 }
 
-// Draw puts the frame the VIC-II just finished onto the screen.
-func (e *emulator) Draw(screen *ebiten.Image) {
-	e.display.blit(screen)
-}
-
-func (e *emulator) Layout(outsideWidth, outsideHeight int) (int, int) {
-	// Tells Ebitengine the logical native canvas size, whatever size the
-	// window happens to be. It scales the picture up to fit, keeping its
-	// proportions and centring what is left over.
-	return ScreenWidth, ScreenHeight
-}
-
-// Run wires the VIC-II's pixel output to an Ebitengine window, randomizes
-// RAM to simulate power-on noise, calls setup (if non-nil) so the caller
-// can plug in a cartridge or a disk drive before reset, resets the
-// machine, and blocks running the game loop until the window is closed.
+// Run wires the VIC-II's pixel output to a window, randomizes RAM to
+// simulate power-on noise, calls setup (if non-nil) so the caller can plug
+// in a cartridge or a disk drive before reset, resets the machine, and
+// blocks running the frame loop until the window is closed.
 func Run(title string, setup func()) error {
-	emu := emulator{
-		winW:    ScreenWidth * Scale,
-		winH:    ScreenHeight * Scale,
-		dragW:   ScreenWidth * Scale,
-		dragH:   ScreenHeight * Scale,
-		settled: resizeSettleFrames + 1, // the opening size needs no correction
-	}
 	defer func() {
-		fmt.Println("emulated frames:", emu.frames)
+		fmt.Println("emulated frames:", frames)
 	}()
 
 	ram := tiny64.Ram()
@@ -145,9 +69,11 @@ func Run(title string, setup func()) error {
 		colorRAM[i] = byte(rand.Uint() & 0x0F)
 	}
 
-	if err := emu.display.init(); err != nil {
+	closeDisplay, err := openDisplay(title)
+	if err != nil {
 		return err
 	}
+	defer closeDisplay()
 
 	if setup != nil {
 		setup()
@@ -155,12 +81,5 @@ func Run(title string, setup func()) error {
 
 	tiny64.Reset()
 
-	ebiten.SetWindowSize(emu.winW, emu.winH)
-	ebiten.SetWindowTitle(title)
-	ebiten.SetWindowResizingMode(ebiten.WindowResizingModeEnabled)
-	// Don't let the window shrink below the native picture, where the
-	// scaling would start throwing away scanlines.
-	ebiten.SetWindowSizeLimits(ScreenWidth, ScreenHeight, -1, -1)
-
-	return ebiten.RunGame(&emu)
+	return runLoop()
 }
