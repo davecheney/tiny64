@@ -1,3 +1,5 @@
+//go:build !sdl
+
 package desktop
 
 import (
