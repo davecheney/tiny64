@@ -285,6 +285,15 @@ type VICII struct {
 	spriteRow   [8]uint8
 	spriteShape [8][3]uint8
 
+	// spritePixels holds each sprite's row already decoded to one entry
+	// per dot it covers, so the dot path indexes it rather than pulling
+	// bits out of spriteShape once for every dot. decodeSpriteRow fills
+	// it; see there for the encoding and for what invalidates it.
+	//
+	// 48 entries because X expansion doubles a sprite's 24 dots. Only the
+	// first 24 are written when it is not expanded.
+	spritePixels [8][48]uint8
+
 	// spriteCoverage answers, for one dot, which sprites' display windows
 	// cover it, and spriteStart holds the dot each of those windows opens
 	// on. rebuildSpriteCoverage fills both; see its comment for why the
@@ -369,6 +378,7 @@ func (v *VICII) Reset() {
 	v.spriteExpFF = 0
 	v.spriteRow = [8]uint8{}
 	v.spriteShape = [8][3]uint8{}
+	v.spritePixels = [8][48]uint8{}
 	v.spriteStart = [8]uint16{}
 	clear(v.spriteCoverage[:])
 	v.syncLineVisibility()
@@ -467,13 +477,19 @@ func (v *VICII) WriteRegister(addr uint16, value uint8) {
 	case reg == 0x1B:
 		v.spritePriority = value
 	case reg == 0x1C:
+		// Whether a shape byte is eight hires pixels or four multicolour
+		// ones. That is the shape of a decoded row rather than its
+		// colours, so the rows have to be worked out again.
 		v.spriteMulticolor = value
+		v.decodeSpriteRows()
 	case reg == 0x1D:
-		// X expansion doubles a sprite's width, so it changes which dots
-		// its window covers. $D01B and $D01C, named above, change how a
-		// covered dot is painted but not which dots those are.
+		// X expansion doubles a sprite's width, so it changes both which
+		// dots its window covers and how the row is laid out across
+		// them. $D01B, named above, changes how a covered dot is painted
+		// but neither of those.
 		v.spriteExpandX = value
 		v.rebuildSpriteCoverage()
+		v.decodeSpriteRows()
 	case reg == 0x1E, reg == 0x1F:
 		// Collision registers are read-cleared and ignore writes.
 	case reg == regBorderColor:
@@ -801,10 +817,42 @@ func (v *VICII) paintGraphicsPixel(dot uint16) {
 	// actually covers. See nextGraphicsColor.
 	isForeground := v.gdForeground&(1<<gdIndex) != 0
 
+	// One sprite over the dot is the common case, and it does not need
+	// any of the machinery the general path carries. Nothing can win the
+	// pixel ahead of it, so there is no first-hit bookkeeping; nothing
+	// can share the dot with it, so there is no sprite-sprite collision.
+	// What is left is the dot's own value, one collision register and the
+	// priority bit.
+	if display&(display-1) == 0 {
+		i := uint8(bits.TrailingZeros8(display))
+		val := v.spritePixels[i][dot-v.spriteStart[i]]
+		if val == spriteDotNone {
+			if v.mainBorder {
+				graphicsColor = v.borderColor
+			}
+			writePixelToBuffer(dot, v.beamLine, graphicsColor&0x0F)
+			return
+		}
+
+		mask := uint8(1 << i)
+		if isForeground && mask&^v.spriteDataCollision != 0 {
+			v.spriteDataCollision |= mask
+			v.interruptStatus |= 0x08
+			v.updateIRQ()
+		}
+
+		finalColor := graphicsColor
+		if v.mainBorder {
+			finalColor = v.borderColor
+		} else if v.spritePriority&mask == 0 || !isForeground {
+			finalColor = spriteDotColor(v, val, i)
+		}
+		writePixelToBuffer(dot, v.beamLine, finalColor&0x0F)
+		return
+	}
+
 	d := dot
 	r := v.beamLine
-	expandXReg := v.spriteExpandX
-	multicolorReg := v.spriteMulticolor
 	priorityReg := v.spritePriority
 
 	var (
@@ -822,40 +870,16 @@ func (v *VICII) paintGraphicsPixel(dot uint16) {
 		mask := uint8(1 << i)
 
 		// The dot is inside this sprite's window - that is what coverage
-		// means - so the only thing left to work out is how far into it,
-		// which decides the pixel the shift register hands over.
-		var px uint8
-		if expandXReg&mask == 0 {
-			px = uint8(d - v.spriteStart[i])
-		} else {
-			px = uint8((d - v.spriteStart[i]) / 2)
+		// means - so how far into it says which of the row's dots this
+		// is, and decodeSpriteRow has already worked out what that dot
+		// paints. Expansion is folded into the row, so this is a plain
+		// offset either way.
+		val := v.spritePixels[i][d-v.spriteStart[i]]
+		if val == spriteDotNone {
+			continue
 		}
 
-		shape := &v.spriteShape[i]
-
-		multicolor := (multicolorReg & mask) != 0
-		var color byte
-		if !multicolor {
-			b := shape[px/8]
-			if (b>>(7-(px%8)))&1 == 0 {
-				continue
-			}
-			color = v.spriteColor[i] & 0x0F
-		} else {
-			pairIdx := px / 2
-			shift := (3 - (pairIdx % 4)) * 2
-			pairVal := (shape[pairIdx/4] >> shift) & 0x03
-			switch pairVal {
-			case 0:
-				continue
-			case 1:
-				color = v.spriteMC0 & 0x0F
-			case 2:
-				color = v.spriteColor[i] & 0x0F
-			case 3:
-				color = v.spriteMC1 & 0x0F
-			}
-		}
+		color := spriteDotColor(v, val, i)
 
 		hitCount++
 		currentHitMask |= mask
@@ -865,22 +889,21 @@ func (v *VICII) paintGraphicsPixel(dot uint16) {
 		}
 	}
 
-	if hitCount > 1 {
-		newCollisions := currentHitMask &^ v.spriteSpriteCollision
+	// Both registers are latched until read, so once a sprite's bit is in
+	// one every later dot leaves it exactly as it was. Testing before
+	// storing keeps a read-modify-write off VICII state on every covered
+	// dot, which is what the common case is - a collision is news once and
+	// then background.
+	if hitCount > 1 && currentHitMask&^v.spriteSpriteCollision != 0 {
 		v.spriteSpriteCollision |= currentHitMask
-		if newCollisions != 0 {
-			v.interruptStatus |= 0x04
-			v.updateIRQ()
-		}
+		v.interruptStatus |= 0x04
+		v.updateIRQ()
 	}
 
-	if hitCount > 0 && isForeground {
-		newCollisions := currentHitMask &^ v.spriteDataCollision
+	if hitCount > 0 && isForeground && currentHitMask&^v.spriteDataCollision != 0 {
 		v.spriteDataCollision |= currentHitMask
-		if newCollisions != 0 {
-			v.interruptStatus |= 0x08
-			v.updateIRQ()
-		}
+		v.interruptStatus |= 0x08
+		v.updateIRQ()
 	}
 
 	finalColor := graphicsColor
@@ -1699,6 +1722,119 @@ func (v *VICII) rebuildSpriteCoverage() {
 // place that mapping is written down.
 func spriteBit(i uint8) uint8 { return 1 << i }
 
+// spriteHiresDots and spriteMulticolorDots turn one byte of a sprite's
+// shape into the dots it paints, in the encoding decodeSpriteRow uses.
+// Both are eight dots wide, because a byte is eight hires pixels or four
+// multicolour pixels and a multicolour pixel is two dots.
+//
+// Tables rather than shifting per dot: a row is three bytes, so decoding
+// it is three copies of eight bytes instead of twenty-four bit
+// extractions.
+var (
+	spriteHiresDots      = buildSpriteHiresDots()
+	spriteMulticolorDots = buildSpriteMulticolorDots()
+)
+
+func buildSpriteHiresDots() [256][8]uint8 {
+	var table [256][8]uint8
+	for b := range table {
+		for i := range table[b] {
+			if b&(0x80>>i) != 0 {
+				table[b][i] = spriteDotOwn
+			}
+		}
+	}
+	return table
+}
+
+func buildSpriteMulticolorDots() [256][8]uint8 {
+	var table [256][8]uint8
+	for b := range table {
+		for pair := range 4 {
+			// Pairs run high bits first, and each paints two dots.
+			val := uint8(b>>(6-2*pair)) & 0x03
+			table[b][pair*2] = val
+			table[b][pair*2+1] = val
+		}
+	}
+	return table
+}
+
+// The dot values decodeSpriteRow emits. They are the multicolour bit pair
+// verbatim, which is what lets the multicolour table be the pairs
+// themselves: 00 is transparent, 01 is $D025, 10 is the sprite's own
+// colour and 11 is $D026. A hires pixel is transparent or the sprite's
+// own colour, so it uses the same two values.
+const (
+	spriteDotNone = 0
+	spriteDotMC0  = 1
+	spriteDotOwn  = 2
+	spriteDotMC1  = 3
+)
+
+// spriteDotColor turns a decoded dot value into the colour it paints.
+//
+// The value names one of the four colour registers rather than holding a
+// colour, which is what lets decodeSpriteRow run once a line while a
+// mid-line write to $D025, $D026 or $D027-$D02E still lands on the dots
+// after it.
+func spriteDotColor(v *VICII, val, i uint8) byte {
+	switch val {
+	case spriteDotMC0:
+		return v.spriteMC0 & 0x0F
+	case spriteDotOwn:
+		return v.spriteColor[i] & 0x0F
+	default:
+		return v.spriteMC1 & 0x0F
+	}
+}
+
+// decodeSpriteRow works out the dots sprite i paints, once for the line,
+// so that paintGraphicsPixel can index the answer instead of deriving it
+// for every dot the sprite covers.
+//
+// What it does not bake in is colour. The values are which of the four
+// colour registers a dot takes, not the colour itself, so a mid-line
+// write to $D025, $D026 or $D027-$D02E still lands - those registers are
+// read where the dot is painted. Only the two registers that change the
+// shape of the row rather than its colours have to invalidate this:
+// $D01C, which decides whether a byte is eight pixels or four, and
+// $D01D, which doubles their width.
+func (v *VICII) decodeSpriteRow(i uint8) {
+	mask := spriteBit(i)
+	table := &spriteHiresDots
+	if v.spriteMulticolor&mask != 0 {
+		table = &spriteMulticolorDots
+	}
+	row := v.spritePixels[i][:]
+	if v.spriteExpandX&mask == 0 {
+		for b, shape := range v.spriteShape[i] {
+			copy(row[b*8:b*8+8], table[shape][:])
+		}
+		return
+	}
+	// Expanded, so every dot is painted twice and the row is 48 long.
+	for b, shape := range v.spriteShape[i] {
+		dots := &table[shape]
+		for j, val := range dots {
+			row[b*16+j*2] = val
+			row[b*16+j*2+1] = val
+		}
+	}
+}
+
+// decodeSpriteRows redecodes every sprite under DMA, for the two register
+// writes that change how a row is laid out without changing the bytes it
+// came from. Redecoding a whole row mid-line is right: the dots already
+// painted are in the frame buffer, and only later lookups see the change.
+func (v *VICII) decodeSpriteRows() {
+	for i := uint8(0); i < 8; i++ {
+		if v.spriteUnderDMA(i) {
+			v.decodeSpriteRow(i)
+		}
+	}
+}
+
 // spriteXMSBRegister reassembles $D010 from the ninth bit of each sprite's
 // X. The register has no storage of its own; this and setSpriteXMSB are the
 // only places the two representations meet, and both run only when the CPU
@@ -1794,6 +1930,7 @@ func (v *VICII) latchSpriteShape(i uint8) {
 	v.spriteShape[i][0] = plaVICSpriteLoad(addr)
 	v.spriteShape[i][1] = plaVICSpriteLoad(addr + 1)
 	v.spriteShape[i][2] = plaVICSpriteLoad(addr + 2)
+	v.decodeSpriteRow(i)
 }
 
 // cycleSetVicCounter loads VC from VCBase and resets VMLI (and RC on a Bad
