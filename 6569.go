@@ -564,14 +564,14 @@ const noReloadDot = 0xFFFF
 // The phase cannot be hoisted any further than this. XSCROLL is writable
 // mid-line, so a $D016 store in one cycle moves the next cycle's reload
 // dot, which is what TestVICXScrollWriteReloadsAtCurrentDot pins.
-func (v *VICII) reloadDot(mayReload bool) uint16 {
+func (v *VICII) reloadDot(dot uint16, mayReload bool) uint16 {
 	if !mayReload {
 		return noReloadDot
 	}
 	// The dotclocks act on dots v.dot through v.dot+DotsPerCycle-1, so the
 	// phase is matched against those. Exactly one of them is congruent to
 	// the reload phase; this is it.
-	return v.dot + ((graphicsReloadPhase(v.control2) - v.dot) & 7)
+	return dot + ((graphicsReloadPhase(v.control2) - dot) & 7)
 }
 
 // refreshGraphicsPalette works out the colours the graphics sequencer can
@@ -677,22 +677,21 @@ func (v *VICII) nextGraphicsColor() (byte, uint8) {
 // one. So it is asked once per four dots instead of once per dot.
 //
 // TestPaintPlainMatchesPaintWithNoSprites holds it to paintGraphicsPixel.
-func (v *VICII) paintGraphicsPixelPlain() {
+func (v *VICII) paintGraphicsPixelPlain(dot uint16) {
 	graphicsColor, _ := v.nextGraphicsColor()
 	if v.mainBorder {
 		graphicsColor = v.borderColor
 	}
-	writePixelToBuffer(v.dot, v.beamLine, graphicsColor&0x0F)
+	writePixelToBuffer(dot, v.beamLine, graphicsColor&0x0F)
 }
 
 // dotclockPlain is dotclock for dots no sprite covers, in a slot the border
 // comparator cannot match. See dotclock.
-func (v *VICII) dotclockPlain(reload uint16) {
-	if v.dot == reload {
+func (v *VICII) dotclockPlain(dot, reload uint16) {
+	if dot == reload {
 		v.loadGraphicsData()
 	}
-	v.paintGraphicsPixelPlain()
-	v.dot++
+	v.paintGraphicsPixelPlain(dot)
 }
 
 // paintGraphicsPixel emits one pixel through the border unit and sprite compositor.
@@ -708,18 +707,18 @@ func (v *VICII) dotclockPlain(reload uint16) {
 // nextGraphicsColor is therefore called unconditionally: the sequencer
 // keeps shifting behind a closed border exactly as the hardware does, and
 // only the colour that is written is replaced.
-func (v *VICII) paintGraphicsPixel() {
+func (v *VICII) paintGraphicsPixel(dot uint16) {
 	graphicsColor, gdIndex := v.nextGraphicsColor()
 	// Which sprites cover this dot, decided when the line's windows were
 	// last settled rather than by asking all eight here. The mask keeps
 	// the index provably inside the table; see spriteCoverage.
-	display := v.spriteCoverage[v.dot&511]
+	display := v.spriteCoverage[dot&511]
 
 	if display == 0 {
 		if v.mainBorder {
 			graphicsColor = v.borderColor
 		}
-		writePixelToBuffer(v.dot, v.beamLine, graphicsColor&0x0F)
+		writePixelToBuffer(dot, v.beamLine, graphicsColor&0x0F)
 		return
 	}
 
@@ -727,7 +726,7 @@ func (v *VICII) paintGraphicsPixel() {
 	// actually covers. See nextGraphicsColor.
 	isForeground := v.gdForeground&(1<<gdIndex) != 0
 
-	d := v.dot
+	d := dot
 	r := v.beamLine
 	expandXReg := v.spriteExpandX
 	multicolorReg := v.spriteMulticolor
@@ -990,15 +989,21 @@ const (
 // The two halves are written out rather than shared, because nothing in
 // this path inlines: a helper holding them would be two more real calls per
 // bus cycle, 39,312 a frame, to save eight lines here.
-func (v *VICII) cycleDraw(slot uint16, borderSlot, mayReload bool) {
+func (v *VICII) cycleDraw(slot, dot uint16, borderSlot, mayReload bool) {
 	// The sequencer's reload dot is fixed for the cycle, for the reason
 	// reloadDot gives.
-	reload := v.reloadDot(mayReload)
+	reload := v.reloadDot(dot, mayReload)
 
-	v.dotclock(reload, borderSlot)
-	v.dotclock(reload, borderSlot)
-	v.dotclock(reload, borderSlot)
-	v.dotclock(reload, borderSlot)
+	v.dotclock(dot, reload, borderSlot)
+	v.dotclock(dot+1, reload, borderSlot)
+	v.dotclock(dot+2, reload, borderSlot)
+	v.dotclock(dot+3, reload, borderSlot)
+	// v.dot is stored rather than counted: the dot path works in slots
+	// and adds the offset, so this only has to be right where something
+	// outside can see it. That is here, where a register write lands
+	// inside the CPU's Phi2, and at the bus-cycle boundary below. See
+	// Dot and sampleGraphicsAtWrite.
+	v.dot = dot + DotsPerCycle/2
 	v.phi0low(slot)
 
 	// The CPU runs first, since the VIC has just handed it the bus.
@@ -1012,46 +1017,36 @@ func (v *VICII) cycleDraw(slot uint16, borderSlot, mayReload bool) {
 	// whatever CIA2 has just driven onto it.
 	iecTick()
 
-	v.dotclock(reload, borderSlot)
-	v.dotclock(reload, borderSlot)
-	v.dotclock(reload, borderSlot)
-	v.dotclock(reload, borderSlot)
+	v.dotclock(dot+4, reload, borderSlot)
+	v.dotclock(dot+5, reload, borderSlot)
+	v.dotclock(dot+6, reload, borderSlot)
+	v.dotclock(dot+7, reload, borderSlot)
+	v.dot = dot + DotsPerCycle
 	v.phi0high(slot)
 
-	// The beam has just stepped off the line's last dot, so it moves to
-	// the next row here. Wrapping both here keeps (dot, beamLine) a pixel
-	// coordinate a caller can read at every bus-cycle boundary, and leaves
-	// the dotclocks ignorant of where they sit in the frame. $D012 does
-	// not move with it: that happened on VINC, 80 dots earlier.
-	if v.dot >= DotsPerLine {
-		v.dot = 0
-		v.beamLine++
-		if v.beamLine >= RasterLinesPerFrame {
-			v.beamLine = 0
-		}
-	}
 }
 
 // cycleDrawDisplay is cycleDraw for the interior of the display window,
 // where phi0lowDisplay stands in for phi0low. The body is spelled out
 // rather than shared with cycleDraw for the reason cycleDraw gives: nothing
 // in this path inlines, so a shared helper would be real calls.
-func (v *VICII) cycleDrawDisplay() {
-	reload := v.reloadDot(true)
+func (v *VICII) cycleDrawDisplay(dot uint16) {
+	reload := v.reloadDot(dot, true)
 
 	// Asked once for the half-phase, not once a dot: see
 	// paintGraphicsPixelPlain for why four dots can share the answer.
 	if v.spriteDisplay == 0 {
-		v.dotclockPlain(reload)
-		v.dotclockPlain(reload)
-		v.dotclockPlain(reload)
-		v.dotclockPlain(reload)
+		v.dotclockPlain(dot, reload)
+		v.dotclockPlain(dot+1, reload)
+		v.dotclockPlain(dot+2, reload)
+		v.dotclockPlain(dot+3, reload)
 	} else {
-		v.dotclock(reload, false)
-		v.dotclock(reload, false)
-		v.dotclock(reload, false)
-		v.dotclock(reload, false)
+		v.dotclock(dot, reload, false)
+		v.dotclock(dot+1, reload, false)
+		v.dotclock(dot+2, reload, false)
+		v.dotclock(dot+3, reload, false)
 	}
+	v.dot = dot + DotsPerCycle/2
 	v.phi0lowDisplay()
 
 	cpu.TickPhi2()
@@ -1059,65 +1054,47 @@ func (v *VICII) cycleDrawDisplay() {
 	iecTick()
 
 	if v.spriteDisplay == 0 {
-		v.dotclockPlain(reload)
-		v.dotclockPlain(reload)
-		v.dotclockPlain(reload)
-		v.dotclockPlain(reload)
+		v.dotclockPlain(dot+4, reload)
+		v.dotclockPlain(dot+5, reload)
+		v.dotclockPlain(dot+6, reload)
+		v.dotclockPlain(dot+7, reload)
 	} else {
-		v.dotclock(reload, false)
-		v.dotclock(reload, false)
-		v.dotclock(reload, false)
-		v.dotclock(reload, false)
+		v.dotclock(dot+4, reload, false)
+		v.dotclock(dot+5, reload, false)
+		v.dotclock(dot+6, reload, false)
+		v.dotclock(dot+7, reload, false)
 	}
+	v.dot = dot + DotsPerCycle
 	v.phi0highDisplay()
 
-	if v.dot >= DotsPerLine {
-		v.dot = 0
-		v.beamLine++
-		if v.beamLine >= RasterLinesPerFrame {
-			v.beamLine = 0
-		}
-	}
 }
 
 // cycleBlank runs one bus cycle whose dots reach nothing: the same
 // sequence, with the beam stepping over the dots instead of shifting them
 // out. Everything the VIC-II and the CPU do in a cycle still happens.
-func (v *VICII) cycleBlank(slot uint16) {
-	v.dot += DotsPerCycle / 2
+func (v *VICII) cycleBlank(slot, dot uint16) {
+	v.dot = dot + DotsPerCycle/2
 	v.phi0low(slot)
 	cpu.TickPhi2()
 	ciaTick()
 	iecTick()
-	v.dot += DotsPerCycle / 2
+	v.dot = dot + DotsPerCycle
 	v.phi0high(slot)
 
-	// The beam has just stepped off the line's last dot, so it moves to
-	// the next row here. Wrapping both here keeps (dot, beamLine) a pixel
-	// coordinate a caller can read at every bus-cycle boundary, and leaves
-	// the dotclocks ignorant of where they sit in the frame. $D012 does
-	// not move with it: that happened on VINC, 80 dots earlier.
-	if v.dot >= DotsPerLine {
-		v.dot = 0
-		v.beamLine++
-		if v.beamLine >= RasterLinesPerFrame {
-			v.beamLine = 0
-		}
-	}
 }
 
 // drawRun paints the bus cycles from slot through to-1. None of them is a
 // slot the border comparator can match, which is what makes it a run.
 func (v *VICII) drawRun(from, to uint16, mayReload bool) {
 	for slot := from; slot < to; slot++ {
-		v.cycleDraw(slot, false, mayReload)
+		v.cycleDraw(slot, slot*DotsPerCycle, false, mayReload)
 	}
 }
 
 // blankRun runs the bus cycles from slot through to-1 without painting.
 func (v *VICII) blankRun(from, to uint16) {
 	for slot := from; slot < to; slot++ {
-		v.cycleBlank(slot)
+		v.cycleBlank(slot, slot*DotsPerCycle)
 	}
 }
 
@@ -1136,9 +1113,21 @@ func (v *VICII) blankRun(from, to uint16) {
 // counter moves and the flag is recomputed - is at slot 53, above it. So
 // no line ever changes its mind about painting while it still has painting
 // left to do. TestLineDrawabilityIsSettledBeforeAnythingPaints pins it.
+// endLine moves the beam to the next row. This used to be a test in every
+// bus cycle asking whether the beam had run off the end of the line;
+// counting in slots makes it a fact about where the loop stopped.
+func (v *VICII) endLine() {
+	v.dot = 0
+	v.beamLine++
+	if v.beamLine >= RasterLinesPerFrame {
+		v.beamLine = 0
+	}
+}
+
 func (v *VICII) stepLine() {
 	if !v.lineDrawable {
 		v.blankRun(0, CyclesPerLine)
+		v.endLine()
 		return
 	}
 
@@ -1147,15 +1136,16 @@ func (v *VICII) stepLine() {
 	// the comparator's last. So the runs already divide on it, and no run
 	// has to ask.
 	v.drawRun(0, borderSlotLeft, false)
-	v.cycleDraw(borderSlotLeft, true, true)
-	for range displaySlotAfter - displayFirstSlot {
-		v.cycleDrawDisplay()
+	v.cycleDraw(borderSlotLeft, borderSlotLeft*DotsPerCycle, true, true)
+	for dot := uint16(displayFirstSlot * DotsPerCycle); dot < displaySlotAfter*DotsPerCycle; dot += DotsPerCycle {
+		v.cycleDrawDisplay(dot)
 	}
-	v.cycleDraw(borderSlotRight38, true, true)
+	v.cycleDraw(borderSlotRight38, borderSlotRight38*DotsPerCycle, true, true)
 	v.drawRun(borderSlotRight38+1, borderSlotRight40, true)
-	v.cycleDraw(borderSlotRight40, true, false)
+	v.cycleDraw(borderSlotRight40, borderSlotRight40*DotsPerCycle, true, false)
 	v.drawRun(borderSlotRight40+1, renderSlotAfter, false)
 	v.blankRun(renderSlotAfter, CyclesPerLine)
+	v.endLine()
 }
 
 // stepCycle advances the machine by one bus cycle, whichever slot it is
@@ -1173,12 +1163,23 @@ func (v *VICII) stepCycle(slot uint16) {
 	// eight dots of a cycle are inside it or all eight are outside.
 	onScreen := slot >= renderFirstSlot && slot < renderSlotAfter &&
 		slot < visibleSlots
+	dot := slot * DotsPerCycle
 	if v.lineDrawable && onScreen {
-		v.cycleDraw(slot, borderSlot,
+		v.cycleDraw(slot, dot, borderSlot,
 			slot >= reloadFirstSlot && slot < reloadSlotAfter)
-		return
+	} else {
+		v.cycleBlank(slot, dot)
 	}
-	v.cycleBlank(slot)
+
+	// stepLine wraps the line when its run of slots ends. Stepping one
+	// cycle at a time, the last slot is where that falls.
+	if slot == CyclesPerLine-1 {
+		v.dot = 0
+		v.beamLine++
+		if v.beamLine >= RasterLinesPerFrame {
+			v.beamLine = 0
+		}
+	}
 }
 
 // StepCycle advances the VIC-II, and therefore the rest of the machine it
@@ -1213,18 +1214,17 @@ func StepFrame() {
 // the rest. They no longer do: a shift register clocked at 8MHz does not
 // run comparators, and once those moved out the eight bodies were
 // byte-identical with nothing to tell them apart.
-func (v *VICII) dotclock(reload uint16, borderSlot bool) {
-	if v.dot == reload {
+func (v *VICII) dotclock(dot, reload uint16, borderSlot bool) {
+	if dot == reload {
 		v.loadGraphicsData()
 	}
 
 	// The comparator runs before the paint: the dot a comparison fires on
 	// is painted with the state it just set, not the one before.
 	if borderSlot {
-		v.borderCompare()
+		v.borderCompare(dot)
 	}
-	v.paintGraphicsPixel()
-	v.dot++
+	v.paintGraphicsPixel(dot)
 }
 
 // phi0low runs after the first four dots of every 8-dot cycle: while the VIC-II is
@@ -1263,21 +1263,21 @@ func (v *VICII) resolveVerticalBorder() {
 // carries. Narrowing pulls both ends in by a cell and then back by a dot,
 // which is why the picture loses 7 dots on the left and 9 on the right
 // rather than 8 and 8.
-func (v *VICII) borderCompare() {
+func (v *VICII) borderCompare(dot uint16) {
 	if !v.lineVisible {
 		return
 	}
 	if v.control2&csel != 0 {
-		if v.dot == rightEdge40 {
+		if dot == rightEdge40 {
 			v.mainBorder = true
-		} else if v.dot == leftComp40 {
+		} else if dot == leftComp40 {
 			v.resolveVerticalBorder()
 		}
 		return
 	}
-	if v.dot == rightEdge38 {
+	if dot == rightEdge38 {
 		v.mainBorder = true
-	} else if v.dot == leftComp38 {
+	} else if dot == leftComp38 {
 		v.resolveVerticalBorder()
 	}
 }

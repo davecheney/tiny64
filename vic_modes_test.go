@@ -116,7 +116,7 @@ func TestVICReloadDotMatchesPerDotRule(t *testing.T) {
 			matches := 0
 			// The caller decides whether the cycle can reload; the old
 			// rule's slot range is that decision, so it is made here.
-			got := v.reloadDot(mayReload(&v))
+			got := v.reloadDot(v.dot, mayReload(&v))
 			for offset := uint16(0); offset < DotsPerCycle; offset++ {
 				// The cycle beginning at start acts on these dots.
 				dot := start + offset
@@ -149,23 +149,23 @@ func TestVICXScrollDelaysGraphicsReload(t *testing.T) {
 	// dot, and dot 48's cycle is the one that begins there.
 	unscrolled := &VICII{}
 	unscrolled.dot = 48
-	if got := unscrolled.reloadDot(mayReload(unscrolled)); got != 48 {
+	if got := unscrolled.reloadDot(unscrolled.dot, mayReload(unscrolled)); got != 48 {
 		t.Fatalf("unscrolled reload dot = %d, want the cell boundary at 48", got)
 	}
 
 	// XSCROLL=3 moves the reload three dots into the cell, to 51.
 	v := &VICII{control2: 3, gdPending: 0xFF, videoBufferPending: 0x0100}
 	v.dot = 48
-	if got := v.reloadDot(mayReload(v)); got == 48 {
+	if got := v.reloadDot(v.dot, mayReload(v)); got == 48 {
 		t.Fatal("sequencer reloaded on the cell boundary with XSCROLL=3")
 	}
-	if got := v.reloadDot(mayReload(v)); got != 51 {
+	if got := v.reloadDot(v.dot, mayReload(v)); got != 51 {
 		t.Fatalf("reload dot = %d with XSCROLL=3, want 51", got)
 	}
 
 	// And the data is actually taken up there.
 	v.dot = 51
-	v.dotclock(51, false)
+	v.dotclock(51, 51, false)
 	// The sequencer holds two bits per dot, so the pending $FF is 0x5555
 	// once widened - see expandGraphicsData. dotclock reloads and then
 	// paints the same dot, which shifts the first pixel out of it, so what
@@ -186,16 +186,16 @@ func TestVICMulticolorXScrollSevenReloadsAtPairBoundary(t *testing.T) {
 		videoBufferPending: 0x0100,
 	}
 	v.dot = 48 // the cycle covering dots 48 to 55
-	if got := v.reloadDot(mayReload(v)); got == 55 {
+	if got := v.reloadDot(v.dot, mayReload(v)); got == 55 {
 		t.Fatal("sequencer reloaded at dot 55 in multicolor mode with XSCROLL=7")
 	}
 	v.dot = 56
-	if got := v.reloadDot(mayReload(v)); got != 56 {
+	if got := v.reloadDot(v.dot, mayReload(v)); got != 56 {
 		t.Fatalf("multicolor XSCROLL=7 reload dot = %d, want 56", got)
 	}
 
 	v.dot = 56
-	v.dotclock(56, false)
+	v.dotclock(56, 56, false)
 	// $FF widened two bits to the dot. This character is not multicolor
 	// itself - bit 11 of the video buffer is clear - so it widens as a
 	// standard one even though MCM is set. As above, the dot that reloads
@@ -209,11 +209,11 @@ func TestVICMulticolorXScrollSevenReloadsAtPairBoundary(t *testing.T) {
 	// earlier, because there is no pair to finish.
 	v = &VICII{control2: 7, gdPending: 0xA5}
 	v.dot = 48
-	if got := v.reloadDot(mayReload(v)); got != 55 {
+	if got := v.reloadDot(v.dot, mayReload(v)); got != 55 {
 		t.Fatalf("standard-resolution XSCROLL=7 reload dot = %d, want 55", got)
 	}
 	v.dot = 55
-	v.dotclock(55, false)
+	v.dotclock(55, 55, false)
 	// $A5 widened two bits to the dot is 0x4411, less the one pixel the
 	// same dotclock call paints.
 	if v.gdSequencer != 0x1044 {
@@ -396,7 +396,7 @@ func TestVICSideBorderWriteAtCompareDot(t *testing.T) {
 	// borderCompare owns the left comparison, so run just that rather than
 	// a whole cycle around it.
 	v.dot = leftComp40
-	v.borderCompare()
+	v.borderCompare(v.dot)
 	if v.mainBorder {
 		t.Fatal("mainBorder=true: the left comparison missed a CSEL write made one dot earlier")
 	}

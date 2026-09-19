@@ -33,12 +33,12 @@ func TestPaintPlainMatchesPaintWithNoSprites(t *testing.T) {
 					}
 
 					ClearFrameBuffer()
-					general.paintGraphicsPixel()
+					general.paintGraphicsPixel(general.dot)
 					want := frameBufferPixelRGBA(dot, 100)
 					wantSeq := general.gdSequencer
 
 					ClearFrameBuffer()
-					plain.paintGraphicsPixelPlain()
+					plain.paintGraphicsPixelPlain(plain.dot)
 					got := frameBufferPixelRGBA(dot, 100)
 
 					if got != want || plain.gdSequencer != wantSeq {
