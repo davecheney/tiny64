@@ -16,7 +16,7 @@ import (
 // when the test finishes, so a test is free to clobber whatever it needs
 // to without having to know who runs next.
 func saveMachine(t *testing.T) {
-	savedCPU, savedCIA1, savedCIA2 := cpu, cia1, cia2
+	savedCPU, savedCIA := cpu, cia
 	savedKeyboard, savedVIC, savedCartridge := keyboard, vic, cartridge
 	savedRAM, savedColorRAM := ram, colorRAM
 	savedDisk := diskImage
@@ -31,7 +31,7 @@ func saveMachine(t *testing.T) {
 	// slice header and its contents, since a test may replace an entry.
 	savedBus := append([]iecPeripheral(nil), iecBus...)
 	t.Cleanup(func() {
-		cpu, cia1, cia2 = savedCPU, savedCIA1, savedCIA2
+		cpu, cia = savedCPU, savedCIA
 		keyboard, vic, cartridge = savedKeyboard, savedVIC, savedCartridge
 		ram, colorRAM = savedRAM, savedColorRAM
 		restoreDrive(savedDisk)
@@ -92,8 +92,7 @@ type machine struct{ t *testing.T }
 // simply call newMachine.
 func coldStart() {
 	cpu = CPU{} // Port and PortDDR zero: all port pins float high, which is the default banking
-	cia1 = CIA{}
-	cia2 = CIA{}
+	cia = CIA{}
 	keyboard = Keyboard{}
 	bus.Remove() // no cartridge, so the KERNAL gets the reset vector
 	vic = VICII{}

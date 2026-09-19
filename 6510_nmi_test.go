@@ -23,8 +23,7 @@ func newNMIFixture(t *testing.T) {
 	bus = Bus{}
 	cpu = CPU{}
 	cpu.PortDDR = 0xFF // LORAM/HIRAM/CHAREN driven low: plain RAM everywhere, so the vectors are writable
-	cia1 = CIA{}
-	cia2 = CIA{}
+	cia = CIA{}
 	keyboard = Keyboard{}
 	vic = VICII{}
 	vic.BA = true
@@ -60,8 +59,8 @@ func TestNMIIgnoresInterruptDisable(t *testing.T) {
 	newNMIFixture(t)
 	cpu.regP = P_INTERRUPT
 
-	cia1.setIRQ(true)
-	cia2.setIRQ(true)
+	cia.cia1.setIRQ(sourceCIA1, true)
+	cia.cia2.setIRQ(sourceCIA2, true)
 	runCycles(100)
 
 	if ram[0x0010] != 1 {
@@ -78,8 +77,8 @@ func TestNMIIgnoresInterruptDisable(t *testing.T) {
 func TestNMIHasPriorityOverIRQ(t *testing.T) {
 	newNMIFixture(t)
 
-	cia1.setIRQ(true)
-	cia2.setIRQ(true)
+	cia.cia1.setIRQ(sourceCIA1, true)
+	cia.cia2.setIRQ(sourceCIA2, true)
 	runCycles(200)
 
 	if ram[0x0010] != 1 {
@@ -101,15 +100,15 @@ func TestNMIHasPriorityOverIRQ(t *testing.T) {
 func TestNMIIsEdgeTriggered(t *testing.T) {
 	newNMIFixture(t)
 
-	cia2.setIRQ(true)
+	cia.cia2.setIRQ(sourceCIA2, true)
 	runCycles(2000)
 	if ram[0x0010] != 1 {
 		t.Fatalf("NMIs taken while the line was held asserted = %d, want 1", ram[0x0010])
 	}
 
-	cia2.setIRQ(false)
+	cia.cia2.setIRQ(sourceCIA2, false)
 	runCycles(20)
-	cia2.setIRQ(true)
+	cia.cia2.setIRQ(sourceCIA2, true)
 	runCycles(100)
 	if ram[0x0010] != 2 {
 		t.Errorf("NMIs taken after a second edge = %d, want 2", ram[0x0010])
@@ -127,7 +126,7 @@ func TestRestoreDeliversNMI(t *testing.T) {
 	if ram[0x0010] != 1 {
 		t.Errorf("NMIs taken after RESTORE = %d, want 1", ram[0x0010])
 	}
-	if cia2.IRQ {
+	if cia.cia2.IRQ {
 		t.Error("CIA2 asserted its interrupt line, so this test did not exercise RESTORE in isolation")
 	}
 }
@@ -187,7 +186,7 @@ func nmiEligibleAfter(t *testing.T, trigger func()) int {
 // altogether, so the first TickPhi2 after the press retires one of the two
 // and it becomes eligible on the second.
 func TestNMISynchronizationDelay(t *testing.T) {
-	if got := nmiEligibleAfter(t, func() { cia2.setIRQ(true) }); got != 3 {
+	if got := nmiEligibleAfter(t, func() { cia.cia2.setIRQ(sourceCIA2, true) }); got != 3 {
 		t.Errorf("CIA2's NMI edge was serviced after %d Phi2 cycles, want 3", got)
 	}
 	if got := nmiEligibleAfter(t, func() { keyboard.Restore() }); got != 2 {

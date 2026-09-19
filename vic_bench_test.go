@@ -48,8 +48,7 @@ const (
 // ever gets. loadDisplayProgram and loadSpriteProgram below turn the
 // screen and the sprites on for benchmarks that need to see that work.
 func loadTestProgram() {
-	cia1 = CIA{}
-	cia2 = CIA{}
+	cia = CIA{}
 	vic.control1 = 0 // DEN=0: no bad lines/sprite DMA, AEC stays true
 
 	// These survive CPU.Reset, so a benchmark run after a test that banked
@@ -98,10 +97,10 @@ func loadTestProgram() {
 
 	// CIA1 Timer A free-running off Phi2 with the jiffy latch and its
 	// interrupt unmasked, which is exactly how the KERNAL leaves it.
-	cia1.Store(0xDC04, byte(jiffyLatch&0xFF))
-	cia1.Store(0xDC05, byte(jiffyLatch>>8))
-	cia1.Store(0xDC0D, 0x81) // set mask, Timer A
-	cia1.Store(0xDC0E, 0x11) // LOAD | START, continuous
+	cia.cia1.store(0xDC04, byte(jiffyLatch&0xFF), sourceCIA1)
+	cia.cia1.store(0xDC05, byte(jiffyLatch>>8), sourceCIA1)
+	cia.cia1.store(0xDC0D, 0x81, sourceCIA1) // set mask, Timer A
+	cia.cia1.store(0xDC0E, 0x11, sourceCIA1) // LOAD | START, continuous
 
 	// One raster IRQ a frame, on a line inside the display window so it
 	// lands among the Bad Lines rather than in the border.
@@ -117,10 +116,10 @@ func loadTestProgram() {
 // graphics pixel rather than border.
 func loadDisplayProgram() {
 	loadTestProgram()
-	cia2.PRA, cia2.DDRA = 3, 3 // VIC bank 0
-	vic.memPointers = 0x14     // screen $0400, chars $1000
-	vic.control1 = 0x1B        // DEN=1, RSEL=1, YSCROLL=3
-	vic.control2 = 0x08        // CSEL=1
+	cia.cia2.PRA, cia.cia2.DDRA = 3, 3 // VIC bank 0
+	vic.memPointers = 0x14             // screen $0400, chars $1000
+	vic.control1 = 0x1B                // DEN=1, RSEL=1, YSCROLL=3
+	vic.control2 = 0x08                // CSEL=1
 	r := Ram()
 	for i := range 1000 {
 		r[0x0400+i] = byte(1 + i%40)
@@ -267,7 +266,7 @@ func TestBenchmarkProgramRunsALiveMachine(t *testing.T) {
 			}
 
 			background := vic.background[0]
-			timerBefore := cia1.timerA
+			timerBefore := cia.cia1.timerA
 			var handlerCycles, backgroundWrites int
 			for range CyclesPerFrame {
 				vic.StepCycle()
@@ -280,10 +279,10 @@ func TestBenchmarkProgramRunsALiveMachine(t *testing.T) {
 				}
 			}
 
-			if !cia1.runningA {
+			if cia.cia1.running&startA == 0 {
 				t.Error("CIA1 Timer A is stopped; a CIA tick does nothing and any change to the CIA path measures against a chip that is switched off")
 			}
-			if cia1.timerA == timerBefore {
+			if cia.cia1.timerA == timerBefore {
 				t.Error("CIA1 Timer A did not advance over a frame")
 			}
 			if handlerCycles == 0 {

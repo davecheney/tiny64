@@ -14,7 +14,7 @@ func TestVICSpriteSingleColorRendering(t *testing.T) {
 	v.Reset()
 
 	// Enable VIC bank 0
-	cia2.PRA, cia2.DDRA = 3, 3
+	cia.cia2.PRA, cia.cia2.DDRA = 3, 3
 
 	// Setup screen at $0400 (memPointers = 0x14)
 	v.memPointers = 0x14
@@ -74,7 +74,7 @@ func TestVICSpriteMulticolorRendering(t *testing.T) {
 	v := &VICII{}
 	v.Reset()
 
-	cia2.PRA, cia2.DDRA = 3, 3
+	cia.cia2.PRA, cia.cia2.DDRA = 3, 3
 	v.memPointers = 0x14
 	ram[0x0400+0x03F8] = 64
 
@@ -135,7 +135,7 @@ func TestVICSpriteExpansionXY(t *testing.T) {
 	parkMachine(t)
 	v := &VICII{}
 	v.Reset()
-	cia2.PRA, cia2.DDRA = 3, 3
+	cia.cia2.PRA, cia.cia2.DDRA = 3, 3
 	v.memPointers = 0x14
 	ram[0x0400+0x03F8] = 64
 	ram[0x1000] = 0x80 // row 0, 1 bit set at px=0
@@ -201,7 +201,7 @@ func TestVICSpritePriority(t *testing.T) {
 	parkMachine(t)
 	v := &VICII{}
 	v.Reset()
-	cia2.PRA, cia2.DDRA = 3, 3
+	cia.cia2.PRA, cia.cia2.DDRA = 3, 3
 	v.memPointers = 0x14
 	ram[0x0400+0x03F8] = 64
 	ram[0x1000] = 0xFF
@@ -274,7 +274,7 @@ func TestVICSpriteSpriteCollision(t *testing.T) {
 	parkMachine(t)
 	v := &VICII{}
 	v.Reset()
-	cia2.PRA, cia2.DDRA = 3, 3
+	cia.cia2.PRA, cia.cia2.DDRA = 3, 3
 	v.memPointers = 0x14
 	ram[0x0400+0x03F8] = 64 // Sprite 0 pointer
 	ram[0x0400+0x03F9] = 64 // Sprite 1 pointer
@@ -316,7 +316,7 @@ func TestVICSpriteDataCollision(t *testing.T) {
 	parkMachine(t)
 	v := &VICII{}
 	v.Reset()
-	cia2.PRA, cia2.DDRA = 3, 3
+	cia.cia2.PRA, cia.cia2.DDRA = 3, 3
 	v.memPointers = 0x14
 	ram[0x0400+0x03F8] = 64
 	ram[0x1000] = 0x80
@@ -364,7 +364,7 @@ func TestVICSpriteXMSBForSprites1To7(t *testing.T) {
 
 	v := &VICII{}
 	v.Reset()
-	cia2.PRA, cia2.DDRA = 3, 3
+	cia.cia2.PRA, cia.cia2.DDRA = 3, 3
 	v.memPointers = 0x14
 
 	// Sprite 1 pointer at $03F9 set to 64 -> sprite data at $1000
@@ -535,7 +535,7 @@ func TestVICSpriteShapeIsLatchedPerLine(t *testing.T) {
 
 	v := &VICII{}
 	v.Reset()
-	cia2.PRA, cia2.DDRA = 3, 3
+	cia.cia2.PRA, cia.cia2.DDRA = 3, 3
 	v.memPointers = 0x14
 
 	ram[0x0400+0x03F8] = 64 // sprite 0 data at $1000
@@ -636,7 +636,7 @@ func TestSpriteDMAPullsBALow(t *testing.T) {
 	parkMachine(t)
 	v := &VICII{}
 	v.Reset()
-	cia2.PRA, cia2.DDRA = 3, 3
+	cia.cia2.PRA, cia.cia2.DDRA = 3, 3
 	v.memPointers = 0x14
 	v.WriteRegister(0xD001, 55)
 	v.WriteRegister(0xD015, 0x01)

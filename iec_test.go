@@ -158,7 +158,7 @@ func TestAttachIECDoesNotWriteThroughSnapshots(t *testing.T) {
 // clocked it once on each.
 //
 // CIA2's timer A tells those apart. armPhi2Counter leaves it free-running
-// on Phi2, and stepCycle calls ciaTick once per bus cycle, after the CPU
+// on Phi2, and stepCycle ticks both CIAs once per bus cycle, after the CPU
 // and ahead of the IEC devices - which is the clock tree this test exists
 // to pin. So at the head of the nth iecTick the timer must have counted
 // down exactly n+1 times: one more and some cycle clocked this device
@@ -179,7 +179,7 @@ func (*countingPeripheral) iecCLKOut() bool  { return false }
 func (*countingPeripheral) iecDATAOut() bool { return false }
 
 func (c *countingPeripheral) iecTick() {
-	if cia2.timerA != c.startPhi2-uint16(c.ticks)-1 {
+	if cia.cia2.timerA != c.startPhi2-uint16(c.ticks)-1 {
 		c.wrongPhi2++
 	}
 	c.ticks++
@@ -193,11 +193,11 @@ func (c *countingPeripheral) iecAddress() uint8 { return c.addr }
 // PAL frames of headroom, so it counts straight down without underflowing
 // and reloading, and without ever raising the NMI it is wired to.
 func armPhi2Counter() uint16 {
-	cia2.Store(0x0E, 0x00) // stop, so the high byte write loads the counter
-	cia2.Store(0x04, 0xFF)
-	cia2.Store(0x05, 0xFF)
-	cia2.Store(0x0E, 0x01) // start, continuous, counting Phi2
-	return cia2.timerA
+	cia.cia2.store(0x0E, 0x00, sourceCIA2) // stop, so the high byte write loads the counter
+	cia.cia2.store(0x04, 0xFF, sourceCIA2)
+	cia.cia2.store(0x05, 0xFF, sourceCIA2)
+	cia.cia2.store(0x0E, 0x01, sourceCIA2) // start, continuous, counting Phi2
+	return cia.cia2.timerA
 }
 
 // Both public stepping APIs must clock IEC once per cycle, after the CPU,
@@ -246,10 +246,10 @@ func TestBusIsClockedOnEveryFramePath(t *testing.T) {
 			if dev.ticks != CyclesPerFrame {
 				t.Errorf("IEC ticks = %d, want %d", dev.ticks, CyclesPerFrame)
 			}
-			if !cia2.runningA || cia2.latchA != 0xFFFF {
+			if cia.cia2.running&startA == 0 || cia.cia2.latchA != 0xFFFF {
 				t.Fatal("the emulated program reprogrammed CIA2 timer A, which this test is using as its Phi2 count")
 			}
-			if got := dev.startPhi2 - cia2.timerA; got != CyclesPerFrame {
+			if got := dev.startPhi2 - cia.cia2.timerA; got != CyclesPerFrame {
 				t.Errorf("CPU Phi2 cycles = %d, want %d", got, CyclesPerFrame)
 			}
 			if dev.wrongPhi2 != 0 {

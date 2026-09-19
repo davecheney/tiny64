@@ -85,10 +85,10 @@ func TestPLAVICLoadRespectsCIA2VideoBank(t *testing.T) {
 		ram[bank<<14] = byte(0xA0 + bank)
 	}
 
-	cia2.DDRA = 0x03
+	cia.cia2.DDRA = 0x03
 	for bank := uint8(0); bank < 4; bank++ {
 		// CIA2's two video-bank outputs are inverted by the board logic.
-		cia2.PRA = ^bank & 0x03
+		cia.cia2.PRA = ^bank & 0x03
 		if got, want := plaVICLoad(0), byte(0xA0+bank); got != want {
 			t.Errorf("VIC bank %d load = %#02x, want %#02x", bank, got, want)
 		}
@@ -96,7 +96,7 @@ func TestPLAVICLoadRespectsCIA2VideoBank(t *testing.T) {
 
 	// The character ROM is physically decoded only in banks 0 and 2.
 	ram[0x5000] = 0x5A
-	cia2.PRA = 0x02 // inverted bank selection: bank 1
+	cia.cia2.PRA = 0x02 // inverted bank selection: bank 1
 	if got := plaVICLoad(0x1000); got != 0x5A {
 		t.Errorf("bank 1 character window = %#02x, want RAM %#02x", got, 0x5A)
 	}

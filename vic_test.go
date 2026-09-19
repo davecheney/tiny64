@@ -336,8 +336,7 @@ func TestVICRasterIRQReachesCPU(t *testing.T) {
 	cpu = CPU{}
 	cpu.PortDDR = 0xFF // plain RAM everywhere, so IRQ vector is test-controlled
 	cpu.SP = 0xFF
-	cia1 = CIA{}
-	cia2 = CIA{}
+	cia = CIA{}
 	keyboard = Keyboard{}
 	vic = VICII{}
 	vic.Reset()
@@ -416,7 +415,7 @@ func TestVICLinecrunchKeepsCountersInRange(t *testing.T) {
 	iecBus = nil
 
 	vic.memPointers = 0x14 // screen $0400, chars $1000
-	cia2.PRA, cia2.DDRA = 3, 3
+	cia.cia2.PRA, cia.cia2.DDRA = 3, 3
 
 	// Crunch the top half of the display window ($30-$F7) and leave the
 	// rest to run normally.
@@ -481,7 +480,7 @@ func TestVICCAccessReadsTheInvisibleTailOfTheMatrix(t *testing.T) {
 	newMachine(t)
 
 	vic.memPointers = 0x14 // video matrix at $0400
-	cia2.PRA, cia2.DDRA = 3, 3
+	cia.cia2.PRA, cia.cia2.DDRA = 3, 3
 
 	// Offset 1000 is the first byte past the visible 40x25, and 1016 is
 	// where sprite 0's data pointer lives.

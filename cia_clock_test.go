@@ -32,14 +32,14 @@ func TestCIATicksEveryBusCycle(t *testing.T) {
 
 	// CIA1 Timer A free-running off Phi2, with the longest latch available
 	// so it cannot underflow and reload mid-probe.
-	cia1.Store(0xDC0E, 0x00)
-	cia1.Store(0xDC04, 0xFF)
-	cia1.Store(0xDC05, 0xFF)
-	cia1.Store(0xDC0E, 0x11) // LOAD | START
-	cia1.Store(0xDC0E, 0x01) // START, continuous
+	cia.cia1.store(0xDC0E, 0x00, sourceCIA1)
+	cia.cia1.store(0xDC04, 0xFF, sourceCIA1)
+	cia.cia1.store(0xDC05, 0xFF, sourceCIA1)
+	cia.cia1.store(0xDC0E, 0x11, sourceCIA1) // LOAD | START
+	cia.cia1.store(0xDC0E, 0x01, sourceCIA1) // START, continuous
 
 	read := func() int {
-		return int(cia1.Load(0xDC04)) | int(cia1.Load(0xDC05))<<8
+		return int(cia.cia1.load(0xDC04, sourceCIA1)) | int(cia.cia1.load(0xDC05, sourceCIA1))<<8
 	}
 	before := read()
 

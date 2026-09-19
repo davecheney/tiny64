@@ -26,7 +26,7 @@ func newIRQTestCPU(t *testing.T) irqTestCPU {
 	savedBus := bus
 	t.Cleanup(func() { bus = savedBus })
 	cpu = CPU{PC: 0x0200, SP: 0xFF, PortDDR: 0xFF}
-	cia1, cia2 = CIA{}, CIA{}
+	cia = CIA{}
 	keyboard = Keyboard{}
 	vic = VICII{BA: true}
 	cartridge = Cartridge{}
@@ -39,16 +39,17 @@ func newIRQTestCPU(t *testing.T) irqTestCPU {
 		tick: func() {
 			// One whole bus cycle, not just the CPU's share of it.
 			// The C64's CIAs hang off the VIC-II's Phi2 rather than
-			// off the CPU (see ciaTick), so a harness that called
+			// off the CPU (see CIA.Tick), so a harness that called
 			// only TickPhi2 would leave their timers frozen and the
 			// peripheral-sourced subtests below would assert nothing.
 			cpu.TickPhi2()
-			ciaTick()
+			cia.cia1.tick(sourceCIA1)
+			cia.cia2.tick(sourceCIA2)
 		},
 		reset: cpu.Reset,
 		pin: func(a, b bool) {
 			vic.setIRQ(a)
-			cia1.setIRQ(b)
+			cia.cia1.setIRQ(sourceCIA1, b)
 		},
 		put:  func(addr uint16, b byte) { ram[addr] = b },
 		read: func(addr uint16) byte { return ram[addr] },
@@ -375,7 +376,7 @@ func TestIRQAcceptedAlongsideNMI(t *testing.T) {
 	c.program(0x0500, 0x40)
 	c.put(0xFFFA, 0x00)
 	c.put(0xFFFB, 0x05)
-	cia2.setIRQ(true)
+	cia.cia2.setIRQ(sourceCIA2, true)
 	c.cycles(2)
 	c.pin(true, false)
 	c.tick()
@@ -467,17 +468,17 @@ func TestIRQUndocumentedInstructions(t *testing.T) {
 // effect.
 func TestIRQMaskWriteUnmasksLatchedFlag(t *testing.T) {
 	c := newIRQTestCPU(t)
-	cpu.Port = 6          // Expose I/O so the store reaches CIA1.
-	cpu.A = 0x81          // Set (not clear) mask bit 0, Timer A.
-	cia1 = CIA{icr: 0x01} // Timer A fired earlier while masked off.
+	cpu.Port = 6               // Expose I/O so the store reaches CIA1.
+	cpu.A = 0x81               // Set (not clear) mask bit 0, Timer A.
+	cia.cia1 = chip{icr: 0x01} // Timer A fired earlier while masked off.
 	c.program(0x0200, 0x8D, 0x0D, 0xDC, 0xEA)
 
 	c.cycles(4) // STA $DC0D: the write lands on the fourth cycle.
-	if !cia1.IRQ {
+	if !cia.cia1.IRQ {
 		t.Fatal("unmasking an already latched flag did not assert IRQ")
 	}
-	if cia1.icr&0x80 == 0 {
-		t.Fatalf("icr = %#02x after unmasking, want bit 7 set", cia1.icr)
+	if cia.cia1.icr&0x80 == 0 {
+		t.Fatalf("icr = %#02x after unmasking, want bit 7 set", cia.cia1.icr)
 	}
 	c.cycles(2)
 	c.checkEntry(t, true, 0x0204)
@@ -490,7 +491,7 @@ func TestIRQPeripheralSampling(t *testing.T) {
 		// differently, so they recognize an underflow a cycle apart.
 		//
 		// On the C64 the CIAs are clocked after the CPU within a bus
-		// cycle (see ciaTick), which is the order the chips see Phi2
+		// cycle (see CIA.Tick), which is the order the chips see Phi2
 		// fall in: the 6510 latches its IRQ input on that edge and
 		// the CIA's output only settles after it, so an underflow on
 		// cycle N is first sampled on cycle N+1.
@@ -504,7 +505,7 @@ func TestIRQPeripheralSampling(t *testing.T) {
 		// The 1541 has no VIC-II to hang a clock tree off, so its
 		// VIAs are still clocked at the top of DriveCPU.TickPhi2 and
 		// an underflow is sampled in the cycle it happens.
-		cia1 = CIA{timerA: 1, latchA: 0xFFFF, runningA: true, imr: 1}
+		cia.cia1 = chip{timerA: 1, latchA: 0xFFFF, running: startA, imr: 1}
 		cycles, entry := 4, uint16(0x0202)
 		c.cycles(cycles)
 		c.checkEntry(t, true, entry)
@@ -512,11 +513,11 @@ func TestIRQPeripheralSampling(t *testing.T) {
 	t.Run("final-read-acknowledgement", func(t *testing.T) {
 		c := newIRQTestCPU(t)
 		cpu.Port = 6 // Expose I/O; the test stops before reading ROM vectors.
-		cia1 = CIA{icr: 0x81, imr: 1, IRQ: true}
-		cia1.setIRQ(true)
+		cia.cia1 = chip{icr: 0x81, imr: 1, IRQ: true}
+		cia.cia1.setIRQ(sourceCIA1, true)
 		c.program(0x0200, 0xAD, 0x0D, 0xDC)
 		c.cycles(4)
-		if cia1.IRQ {
+		if cia.cia1.IRQ {
 			t.Fatal("final read did not acknowledge IRQ")
 		}
 		c.checkEntry(t, true, 0x0203)
@@ -648,7 +649,7 @@ func TestIRQHeldPollNMIArbitration(t *testing.T) {
 	vic.BA = false
 	c.pin(false, false)
 	c.tick() // IRQ qualifies in the held NOP poll.
-	cia2.setIRQ(true)
+	cia.cia2.setIRQ(sourceCIA2, true)
 	c.cycles(3)
 	vic.BA = true
 	c.tick()

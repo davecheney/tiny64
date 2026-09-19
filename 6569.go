@@ -1027,7 +1027,8 @@ func (v *VICII) cycleDraw(slot, dot uint16, borderSlot, mayReload bool) {
 
 	// The CIAs clock on that Phi2's falling edge, so they run after the
 	// CPU and see whatever its bus cycle wrote.
-	ciaTick()
+	cia.cia1.tick(sourceCIA1)
+	cia.cia2.tick(sourceCIA2)
 
 	// The IEC devices run last, because what they find on the bus is
 	// whatever CIA2 has just driven onto it.
@@ -1067,7 +1068,8 @@ func (v *VICII) cycleDrawDisplay(dot uint16) {
 	v.phi0lowDisplay()
 
 	cpu.TickPhi2()
-	ciaTick()
+	cia.cia1.tick(sourceCIA1)
+	cia.cia2.tick(sourceCIA2)
 	iecTick()
 
 	if v.spriteDisplay == 0 {
@@ -1092,7 +1094,8 @@ func (v *VICII) cycleDrawDisplay(dot uint16) {
 func (v *VICII) cycleBlank(slot, dot uint16) {
 	v.phi0low(slot)
 	cpu.TickPhi2()
-	ciaTick()
+	cia.cia1.tick(sourceCIA1)
+	cia.cia2.tick(sourceCIA2)
 	iecTick()
 	// The bus cycle is over. This is the machine's only beam counter, and
 	// it moves once here rather than eight times through the dot path.
