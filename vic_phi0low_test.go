@@ -36,7 +36,7 @@ func TestPhi0LowDisplayMatchesPhi0Low(t *testing.T) {
 						}
 
 						general.phi0low(slot)
-						special.phi0lowDisplay(slot)
+						special.phi0lowDisplay()
 
 						if general.badLine != special.badLine ||
 							general.BA != special.BA ||
@@ -59,6 +59,47 @@ func TestPhi0LowDisplayMatchesPhi0Low(t *testing.T) {
 						}
 					}
 				}
+			}
+		}
+	}
+}
+
+// TestDisplayRunHasNoSpriteBA is what lets phi0lowDisplay drop the sprite
+// DMA test and with it the slot it needed. The sprite fetch block runs from
+// slot 44 to the end of the line and feeds the next line's display, so no
+// slot below that can have a sprite pulling BA low.
+func TestDisplayRunHasNoSpriteBA(t *testing.T) {
+	for slot := uint16(displayFirstSlot); slot < displaySlotAfter; slot++ {
+		if spriteBASlotMask[slot] != 0 {
+			t.Errorf("slot %d has sprite BA mask %#02x; phi0lowDisplay assumes none",
+				slot, spriteBASlotMask[slot])
+		}
+	}
+}
+
+// TestPhi0HighDisplayMatchesPhi0High holds the Phi0 high half to the same
+// standard: across the run, the c-access range covers every slot, so only
+// the Bad Line question should be left.
+func TestPhi0HighDisplayMatchesPhi0High(t *testing.T) {
+	parkMachine(t)
+	for _, badLine := range []bool{false, true} {
+		for slot := uint16(displayFirstSlot); slot < displaySlotAfter; slot++ {
+			general := &VICII{}
+			general.Reset()
+			special := &VICII{}
+			special.Reset()
+			for _, v := range []*VICII{general, special} {
+				v.badLine = badLine
+				v.dot = slot * DotsPerCycle
+			}
+			general.phi0high(slot)
+			special.phi0highDisplay()
+			if general.VC != special.VC || general.VMLI != special.VMLI ||
+				general.videoBuffer != special.videoBuffer {
+				t.Fatalf("slot %d badLine=%v: general VC=%d VMLI=%d buf=%#04x, "+
+					"special VC=%d VMLI=%d buf=%#04x", slot, badLine,
+					general.VC, general.VMLI, general.videoBuffer,
+					special.VC, special.VMLI, special.videoBuffer)
 			}
 		}
 	}
