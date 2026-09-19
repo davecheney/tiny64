@@ -318,8 +318,7 @@ func (v *VICII) stepCycle() {
 	}
 	v.phi0low()
 	if v.lineDrawable {
-		v.dotclock4()
-		v.dotclock5()
+		v.dotclockSecond2()
 		v.dotclock6()
 	} else if v.lineVisible {
 		v.dot += 2
@@ -337,6 +336,39 @@ func (v *VICII) stepCycle() {
 	cpu.TickPhi2()
 	ciaTick()
 	iecTick()
+}
+
+// dotclockSecond2 advances and paints phases 4 and 5 together. Border
+// comparisons and line wrapping belong to phases 6 and 7, so this pair has
+// no phase-specific state transition that needs to remain between pixels.
+func (v *VICII) dotclockSecond2() {
+	v.dot++
+	if v.dot < VisibleDotsPerLine && v.dot >= renderFirstDot && v.dot < renderDotAfter {
+		if v.verticalBorder {
+			writePixelToBuffer(v.dot, v.rasterLine, v.borderColor&0x0F)
+		} else {
+			graphicsColor := v.gdColor[v.gdSequencer>>7]
+			v.gdSequencer <<= 1
+			if v.mainBorder {
+				graphicsColor = v.borderColor
+			}
+			writePixelToBuffer(v.dot, v.rasterLine, graphicsColor&0x0F)
+		}
+	}
+
+	v.dot++
+	if v.dot < VisibleDotsPerLine && v.dot >= renderFirstDot && v.dot < renderDotAfter {
+		if v.verticalBorder {
+			writePixelToBuffer(v.dot, v.rasterLine, v.borderColor&0x0F)
+		} else {
+			graphicsColor := v.gdColor[v.gdSequencer>>7]
+			v.gdSequencer <<= 1
+			if v.mainBorder {
+				graphicsColor = v.borderColor
+			}
+			writePixelToBuffer(v.dot, v.rasterLine, graphicsColor&0x0F)
+		}
+	}
 }
 
 // dotclockFirst4 advances and paints the four dots in the first Phi0
