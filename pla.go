@@ -15,30 +15,73 @@ import "github.com/davecheney/tiny64/rom"
 // that separation is modeled here as separate functions rather than a
 // single AEC-gated access path.
 
+// What the PLA selects for a CPU access never varies within a 4K block:
+// every boundary in the map ($8000, $A000, $C000, $D000, $E000) is 4K
+// aligned. So the decode is a sixteen-entry lookup rather than a chain of
+// range tests re-evaluated on every bus cycle - and, since only five bits
+// feed it (the CPU port's three bank-switching lines, plus the cartridge's
+// two chip-selects as the /GAME and /EXROM wiring qualifies them), it is
+// re-derived when those move rather than precomputed for every state they
+// could take. Cartridge.blocks holds the map for the state the machine is
+// in; Cartridge.blockSel says which state that is.
+const (
+	// The only two kinds a write does not land in RAM under come first, so
+	// that plaStore can separate them from the rest with one comparison.
+	blockCharROM uint8 = iota
+	blockIO
+
+	blockBasic
+	blockKernal
+	blockCartROML
+	blockCartROMH
+
+	// blockRAM comes last, and plaLoad answers it from the default arm of
+	// its switch rather than a case of its own: the bounds check the
+	// compiler emits ahead of the jump table for the banked kinds then
+	// doubles as the test for the commonest kind of all, which is worth
+	// having on a core with no branch predictor.
+	blockRAM
+)
+
+// plaDecode re-derives the block decode for the bank-switching lines sel
+// describes. It runs when those lines or the cartridge's wiring move, and
+// never otherwise, so it is kept out of line: plaLoad and plaStore check
+// the selector themselves, and TinyGo will not inline a caller that
+// carries this with it.
+//
+//go:noinline
+func plaDecode(sel uint8) {
+	cartridge.decodeBlocks(sel)
+}
+
 // plaLoad reads addr through the memory map currently selected by the
 // CPU's bank-switching lines.
+//
+// The map says what kind of memory a block holds, never where it is, so
+// the ROM images stay where they are addressed rather than being reached
+// through stored pointers - which would move 20K of embedded ROM out of
+// flash and into RAM on the microcontroller targets.
 func plaLoad(addr uint16) uint8 {
-	loram, hiram, charen := cpu.bankBits()
-
-	switch {
-	case addr >= 0x8000 && addr <= 0x9FFF && cartridge.eightK() && cartridge.ROML && loram && hiram:
-		// An 8K cartridge's /ROML image. The PLA only asserts /ROML when
-		// both LORAM and HIRAM are high and the cartridge asserts /EXROM.
-		return cartridge.ROM[addr-0x8000]
-	case addr >= 0xA000 && addr <= 0xBFFF && loram && hiram:
-		return rom.Basic[addr-0xA000]
-	case addr >= 0xD000 && addr <= 0xDFFF && (loram || hiram):
-		if charen {
-			return ioLoad(addr)
-		}
-		return rom.Character[addr-0xD000]
-	case addr >= 0xE000 && cartridge.ultimax() && cartridge.ROMH:
-		// A cartridge wired for MAX mode overrides the KERNAL entirely,
-		// regardless of hiram.
-		return cartridge.ROM[addr-0xE000]
-	case addr >= 0xE000 && hiram:
+	sel := cpu.bankSelect()
+	if cartridge.blockSel != sel+1 { // biased by one; see Cartridge.blocks
+		plaDecode(sel)
+	}
+	switch cartridge.blocks[addr>>12] {
+	case blockKernal:
 		return rom.Kernal[addr-0xE000]
+	case blockBasic:
+		return rom.Basic[addr-0xA000]
+	case blockIO:
+		return ioLoad(addr)
+	case blockCharROM:
+		return rom.Character[addr-0xD000]
+	case blockCartROML:
+		return cartridge.ROM[addr-0x8000]
+	case blockCartROMH:
+		return cartridge.ROM[addr-0xE000]
 	default:
+		// blockRAM - and if a new kind ever reached here, reading RAM is
+		// the answer that fails safe.
 		return ram[addr]
 	}
 }
@@ -52,17 +95,20 @@ func plaLoad(addr uint16) uint8 {
 // KERNAL's RAMTAS find a cartridge - it writes $55, reads the ROM byte
 // back instead, and stops its memory walk there.
 func plaStore(addr uint16, val uint8) {
-	loram, hiram, charen := cpu.bankBits()
-
-	switch {
-	case addr >= 0xD000 && addr <= 0xDFFF && (loram || hiram):
-		if charen {
-			ioStore(addr, val)
-		}
-		// else: character ROM selected, read-only; RAM is disabled here.
-	default:
-		ram[addr] = val
+	sel := cpu.bankSelect()
+	if cartridge.blockSel != sel+1 { // biased by one; see Cartridge.blocks
+		plaDecode(sel)
 	}
+	kind := cartridge.blocks[addr>>12]
+	if kind > blockIO {
+		// RAM, or the RAM underneath BASIC, the KERNAL or cartridge ROM.
+		ram[addr] = val
+		return
+	}
+	if kind == blockIO {
+		ioStore(addr, val)
+	}
+	// blockCharROM: read-only, and RAM is disabled behind it.
 }
 
 // This is inlined into the dot path, which is worth more than anything a
