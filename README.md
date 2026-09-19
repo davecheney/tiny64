@@ -239,9 +239,11 @@ which are printed with a leading `*`.
 
 It is deliberately small: the core package has no dependency on any
 graphics library, so it can run headless (for testing) or under
-[Ebitengine](https://ebitengine.org/) for a desktop GUI. There is also a
-build target for TinyGo, with the long-term aim of running tiny64 on a
-Raspberry Pi Pico.
+[Ebitengine](https://ebitengine.org/) for a desktop GUI. It also builds
+under TinyGo, with the long-term aim of running tiny64 on a Raspberry Pi
+Pico. TinyGo is a compiler choice, not a target: what selects the embedded
+frame buffer is the `baremetal` build tag, which TinyGo sets for board
+targets and not for the host. A host TinyGo build is a desktop build.
 
 ## Layout
 
@@ -252,9 +254,10 @@ Raspberry Pi Pico.
   commands
 - `cmd/c64` is the desktop C64 emulator
 - `cmd/c64cli` runs the emulator headless, for testing and debugging
-- `cmd/gopher-badge64` is the TinyGo build target for the Gopher Badge
-- `cmd/tufty2040` is the TinyGo build target for the Pimoroni Tufty 2040,
-  using its parallel ST7789 display through PIO/DMA
+- `cmd/gopher-badge64` is the Gopher Badge build target, behind
+  `-tags gopher_badge`, which TinyGo sets for that board
+- `cmd/tufty2040` is the Pimoroni Tufty 2040 build target, using its
+  parallel ST7789 display through PIO/DMA, behind `-tags tufty2040`
 - `cmd/drivec` is a standalone 1541 drive/IEC bus test harness, and so is
   built only under `-tags drive1541`
 - `cmd/prg` inspects `.prg` files: header, BASIC listing, disassembly
@@ -310,9 +313,10 @@ It returns shared storage: emulation does not update it, but the next call
 overwrites it. Copy the result to retain a snapshot across calls.
 `FrameBufferIndexed`, in contrast, is a live view of the emulated frame.
 
-TinyGo targets retain their cropped 320x240 RGB565BE frame buffer and
-`FrameBufferRGB565BE` API; they do not use the desktop palette shader.
-The `headless` sink stores no pixels.
+Bare-metal targets -- those TinyGo sets `baremetal` for -- retain their
+cropped 320x240 RGB565BE frame buffer and `FrameBufferRGB565BE` API; they
+do not use the desktop palette shader. The `headless` sink stores no
+pixels.
 
 The shader readback tests require a graphics session and run separately
 from the ordinary unit tests:

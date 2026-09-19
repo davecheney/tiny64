@@ -1,4 +1,10 @@
-//go:build tinygo
+//go:build baremetal
+
+// The bare-metal sink writes the picture straight out as big-endian RGB565
+// cropped to 320x240, the format and size an ST7789 panel wants, because a
+// board has neither the RAM for the full 408x293 indexed frame nor a shader
+// to expand it. It is keyed on baremetal, not tinygo: TinyGo compiling for
+// the host is still a desktop, and should get the desktop frame buffer.
 
 package tiny64
 
