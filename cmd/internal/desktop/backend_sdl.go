@@ -239,13 +239,23 @@ func maskedChannel(pixel, mask uint32) byte {
 
 // present uploads the frame the VIC-II just finished and puts it on screen.
 func present() error {
-	// The expanded buffer lives in a package-level array in tiny64, not
-	// on the heap, so its address is stable and there is nothing for the
-	// collector to move out from under SDL while the upload runs.
-	pixels := tiny64.FrameBufferRGBA()
-	if C.SDL_UpdateTexture(sdl.frame, nil, unsafe.Pointer(&pixels[0]), ScreenWidth*4) != 0 {
-		return sdlError("SDL_UpdateTexture")
+	// The texture is STREAMING, so SDL will hand over its own staging
+	// buffer rather than take a copy of ours. Expanding the frame
+	// directly into that writes every pixel once, where SDL_UpdateTexture
+	// would have us write them into storage of our own and then have SDL
+	// copy them again.
+	//
+	// SDL owns this pointer until SDL_UnlockTexture, and it is not Go
+	// memory, so nothing here can be moved by the collector. The slice is
+	// built over it only for the length of the expansion.
+	var raw unsafe.Pointer
+	var pitch C.int
+	if C.SDL_LockTexture(sdl.frame, nil, &raw, &pitch) != 0 {
+		return sdlError("SDL_LockTexture")
 	}
+	tiny64.ExpandFrameBufferRGBA(
+		unsafe.Slice((*byte)(raw), int(pitch)*ScreenHeight), int(pitch))
+	C.SDL_UnlockTexture(sdl.frame)
 	// The letterbox around the picture is SDL's to paint, and it is the
 	// only thing the clear is for.
 	if C.SDL_RenderClear(sdl.renderer) != 0 {
