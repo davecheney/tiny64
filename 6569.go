@@ -1035,10 +1035,7 @@ func (v *VICII) cycleDraw(slot, dot uint16, borderSlot, mayReload bool) {
 	// reloadDot gives.
 	reload := v.reloadDot(dot, mayReload)
 
-	v.dotclock(dot, reload, borderSlot)
-	v.dotclock(dot+1, reload, borderSlot)
-	v.dotclock(dot+2, reload, borderSlot)
-	v.dotclock(dot+3, reload, borderSlot)
+	v.dotclock4(dot, reload, borderSlot)
 	v.phi0low(slot)
 
 	// The CPU runs first, since the VIC has just handed it the bus.
@@ -1053,10 +1050,7 @@ func (v *VICII) cycleDraw(slot, dot uint16, borderSlot, mayReload bool) {
 	// whatever CIA2 has just driven onto it.
 	iecTick()
 
-	v.dotclock(dot+4, reload, borderSlot)
-	v.dotclock(dot+5, reload, borderSlot)
-	v.dotclock(dot+6, reload, borderSlot)
-	v.dotclock(dot+7, reload, borderSlot)
+	v.dotclock4(dot+4, reload, borderSlot)
 	// The bus cycle is over. This is the machine's only beam counter, and
 	// it moves once here rather than eight times through the dot path.
 	v.slot = slot + 1
@@ -1079,10 +1073,7 @@ func (v *VICII) cycleDrawDisplay(dot uint16) {
 		v.dotclockPlain(dot+2, reload)
 		v.dotclockPlain(dot+3, reload)
 	} else {
-		v.dotclock(dot, reload, false)
-		v.dotclock(dot+1, reload, false)
-		v.dotclock(dot+2, reload, false)
-		v.dotclock(dot+3, reload, false)
+		v.dotclock4(dot, reload, false)
 	}
 	v.phi0lowDisplay()
 
@@ -1097,10 +1088,7 @@ func (v *VICII) cycleDrawDisplay(dot uint16) {
 		v.dotclockPlain(dot+6, reload)
 		v.dotclockPlain(dot+7, reload)
 	} else {
-		v.dotclock(dot+4, reload, false)
-		v.dotclock(dot+5, reload, false)
-		v.dotclock(dot+6, reload, false)
-		v.dotclock(dot+7, reload, false)
+		v.dotclock4(dot+4, reload, false)
 	}
 	v.slot = dot/DotsPerCycle + 1
 	v.phi0highDisplay()
@@ -1265,6 +1253,69 @@ func (v *VICII) dotclock(dot, reload uint16, borderSlot bool) {
 		v.borderCompare(dot)
 	}
 	v.paintGraphicsPixel(dot)
+}
+
+// dotclock4 is the four dots of one Phi0 half-phase. Every caller of
+// dotclock wants exactly four of them with the same reload dot and the
+// same borderSlot, so this is what the dot path actually asks for.
+//
+// dotclock is too big to inline - paintGraphicsPixel is a real call inside
+// it - so those four dots were four calls, and that dispatch measured
+// about 13% of the frame, near enough the same share on all six demos.
+//
+// Both of dotclock's questions are the same for all four dots, so they are
+// asked once here instead of once a dot. borderSlot is fixed for the cycle
+// and true in three slots of 63. A bus cycle reloads at most once, so at
+// most one of these four dots is the reload dot, and reload-dot says which
+// - unsigned, so a reload in the cycle's other half, or none at all, comes
+// out >= 4 rather than needing a test of its own.
+//
+// Four predictable branches are not expensive on an out-of-order core.
+// What this removes is the three extra calls and the per-dot work behind
+// them, which is why it is worth measuring rather than counting.
+func (v *VICII) dotclock4(dot, reload uint16, borderSlot bool) {
+	if borderSlot {
+		// Three slots a line. The comparator has to run between the
+		// paints, since the dot a comparison fires on is painted with
+		// the state it just set, so this half stays per-dot.
+		v.dotclock(dot, reload, true)
+		v.dotclock(dot+1, reload, true)
+		v.dotclock(dot+2, reload, true)
+		v.dotclock(dot+3, reload, true)
+		return
+	}
+
+	switch reload - dot {
+	case 0:
+		v.loadGraphicsData()
+		v.paintGraphicsPixel(dot)
+		v.paintGraphicsPixel(dot + 1)
+		v.paintGraphicsPixel(dot + 2)
+		v.paintGraphicsPixel(dot + 3)
+	case 1:
+		v.paintGraphicsPixel(dot)
+		v.loadGraphicsData()
+		v.paintGraphicsPixel(dot + 1)
+		v.paintGraphicsPixel(dot + 2)
+		v.paintGraphicsPixel(dot + 3)
+	case 2:
+		v.paintGraphicsPixel(dot)
+		v.paintGraphicsPixel(dot + 1)
+		v.loadGraphicsData()
+		v.paintGraphicsPixel(dot + 2)
+		v.paintGraphicsPixel(dot + 3)
+	case 3:
+		v.paintGraphicsPixel(dot)
+		v.paintGraphicsPixel(dot + 1)
+		v.paintGraphicsPixel(dot + 2)
+		v.loadGraphicsData()
+		v.paintGraphicsPixel(dot + 3)
+	default:
+		v.paintGraphicsPixel(dot)
+		v.paintGraphicsPixel(dot + 1)
+		v.paintGraphicsPixel(dot + 2)
+		v.paintGraphicsPixel(dot + 3)
+	}
 }
 
 // phi0low runs after the first four dots of every 8-dot cycle: while the VIC-II is
