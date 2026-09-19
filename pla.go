@@ -65,6 +65,11 @@ func plaStore(addr uint16, val uint8) {
 	}
 }
 
+// This costs exactly 80 against the inliner's budget of 80, and has no
+// headroom: a statement more and it stops being inlined into the dot path,
+// which is worth far more than whatever the statement does. Check with
+// -gcflags=github.com/davecheney/tiny64=-m=2.
+//
 // plaVICLoad reads addr through the VIC-II's own view of memory (used for
 // its c-access/g-access fetches): it ignores the CPU's LORAM/HIRAM/CHAREN
 // banking entirely. CIA2 Port A bits 0-1 select one of four 16K video
@@ -87,7 +92,13 @@ func plaVICLoad(addr uint16) uint8 {
 	}
 	// Character ROM is only mapped for VIC character generator accesses
 	// in text mode (BMM=0). In bitmap mode (BMM=1), VIC always reads RAM.
-	if vic.control1&0x20 == 0 && (addr >= 0x1000 && addr <= 0x1FFF || addr >= 0x9000 && addr <= 0x9FFF) {
+	//
+	// It appears at $1000-$1FFF of banks 0 and 2, which is $1000-$1FFF and
+	// $9000-$9FFF. Those are the same 4K block of the same half of each
+	// 16K bank, so one mask decides it: bit 14 selects the half, bits
+	// 13-12 the block within it, and bit 15 - which is what tells the two
+	// banks apart - is not consulted at all.
+	if vic.control1&0x20 == 0 && addr&0x7000 == 0x1000 {
 		return rom.Character[addr&0x0FFF]
 	}
 	return ram[addr]
