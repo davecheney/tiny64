@@ -239,7 +239,7 @@ func TestVICSpritePriority(t *testing.T) {
 	// and passes or fails on the order the suite happens to run in.
 	v.refreshGraphicsPalette()
 	v.dot = 48
-	v.paintGraphicsPixel()
+	v.paintGraphicsPixel(v.dot)
 	if got := [4]byte(frameBufferPixelRGBA(48, 56)); got != red {
 		t.Errorf("priority=0 sprite pixel over foreground = %v, want Red %v", got, red)
 	}
@@ -254,7 +254,7 @@ func TestVICSpritePriority(t *testing.T) {
 	// and passes or fails on the order the suite happens to run in.
 	v.refreshGraphicsPalette()
 	v.dot = 48
-	v.paintGraphicsPixel()
+	v.paintGraphicsPixel(v.dot)
 	if got := [4]byte(frameBufferPixelRGBA(48, 56)); got != white {
 		t.Errorf("priority=1 sprite pixel under foreground = %v, want White %v", got, white)
 	}
@@ -263,7 +263,7 @@ func TestVICSpritePriority(t *testing.T) {
 	v.WriteRegister(0xD01B, 0x01)
 	v.gdSequencer = 0x00 // background graphics pixel
 	v.dot = 48
-	v.paintGraphicsPixel()
+	v.paintGraphicsPixel(v.dot)
 	if got := [4]byte(frameBufferPixelRGBA(48, 56)); got != red {
 		t.Errorf("priority=1 sprite pixel over background = %v, want Red %v", got, red)
 	}
@@ -295,7 +295,7 @@ func TestVICSpriteSpriteCollision(t *testing.T) {
 		v.StepCycle()
 	}
 	v.dot = 48
-	v.paintGraphicsPixel()
+	v.paintGraphicsPixel(v.dot)
 
 	// Check IRQ fired
 	if !v.IRQ {
@@ -342,7 +342,7 @@ func TestVICSpriteDataCollision(t *testing.T) {
 	v.videoBuffer = 0x0100
 	v.refreshGraphicsPalette()
 	v.dot = 48
-	v.paintGraphicsPixel()
+	v.paintGraphicsPixel(v.dot)
 
 	if !v.IRQ {
 		t.Errorf("v.IRQ = false after sprite-data collision, want true")
@@ -386,7 +386,7 @@ func TestVICSpriteXMSBForSprites1To7(t *testing.T) {
 	}
 
 	for range 8 {
-		v.paintGraphicsPixel()
+		v.paintGraphicsPixel(v.dot)
 		v.dot++
 	}
 
@@ -427,7 +427,7 @@ func TestVICWrappedSpritesFillLeftBorderBlock(t *testing.T) {
 	v.rebuildSpriteCoverage()
 
 	for range 32 {
-		v.paintGraphicsPixel()
+		v.paintGraphicsPixel(v.dot)
 		v.dot++
 	}
 
