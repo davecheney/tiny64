@@ -665,6 +665,36 @@ func (v *VICII) nextGraphicsColor() (byte, uint8) {
 	return v.gdColor[index], index
 }
 
+// paintGraphicsPixelPlain emits one pixel with no sprite over it. It is
+// paintGraphicsPixel with the compositor's whole half removed rather than
+// branched around: no coverage load, no early-out, no foreground bit.
+//
+// The caller has to know no sprite covers any of the dots it hands over.
+// spriteDisplay being zero is that guarantee - rebuildSpriteCoverage
+// clears the table and returns as soon as it sees zero, so nothing can be
+// covered - and it can only change when the CPU writes a sprite register,
+// which happens between the two half-phases of a bus cycle, never inside
+// one. So it is asked once per four dots instead of once per dot.
+//
+// TestPaintPlainMatchesPaintWithNoSprites holds it to paintGraphicsPixel.
+func (v *VICII) paintGraphicsPixelPlain() {
+	graphicsColor, _ := v.nextGraphicsColor()
+	if v.mainBorder {
+		graphicsColor = v.borderColor
+	}
+	writePixelToBuffer(v.dot, v.beamLine, graphicsColor&0x0F)
+}
+
+// dotclockPlain is dotclock for dots no sprite covers, in a slot the border
+// comparator cannot match. See dotclock.
+func (v *VICII) dotclockPlain(reload uint16) {
+	if v.dot == reload {
+		v.loadGraphicsData()
+	}
+	v.paintGraphicsPixelPlain()
+	v.dot++
+}
+
 // paintGraphicsPixel emits one pixel through the border unit and sprite compositor.
 //
 // Section 3.9 of the VIC Article is explicit that the *main* border
@@ -1009,20 +1039,36 @@ func (v *VICII) cycleDraw(slot uint16, borderSlot, mayReload bool) {
 func (v *VICII) cycleDrawDisplay() {
 	reload := v.reloadDot(true)
 
-	v.dotclock(reload, false)
-	v.dotclock(reload, false)
-	v.dotclock(reload, false)
-	v.dotclock(reload, false)
+	// Asked once for the half-phase, not once a dot: see
+	// paintGraphicsPixelPlain for why four dots can share the answer.
+	if v.spriteDisplay == 0 {
+		v.dotclockPlain(reload)
+		v.dotclockPlain(reload)
+		v.dotclockPlain(reload)
+		v.dotclockPlain(reload)
+	} else {
+		v.dotclock(reload, false)
+		v.dotclock(reload, false)
+		v.dotclock(reload, false)
+		v.dotclock(reload, false)
+	}
 	v.phi0lowDisplay()
 
 	cpu.TickPhi2()
 	ciaTick()
 	iecTick()
 
-	v.dotclock(reload, false)
-	v.dotclock(reload, false)
-	v.dotclock(reload, false)
-	v.dotclock(reload, false)
+	if v.spriteDisplay == 0 {
+		v.dotclockPlain(reload)
+		v.dotclockPlain(reload)
+		v.dotclockPlain(reload)
+		v.dotclockPlain(reload)
+	} else {
+		v.dotclock(reload, false)
+		v.dotclock(reload, false)
+		v.dotclock(reload, false)
+		v.dotclock(reload, false)
+	}
 	v.phi0highDisplay()
 
 	if v.dot >= DotsPerLine {
