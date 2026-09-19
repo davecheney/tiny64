@@ -876,36 +876,26 @@ func (v *VICII) ReadRegister(addr uint16) uint8 {
 }
 
 // StepFrame advances the VIC-II, and therefore the rest of the machine it
-// clocks, by exactly one PAL frame: CyclesPerFrame bus cycles, each of
-// which is stepCycle's DotsPerCycle dots. This is a relative step: it
-// lands one frame later at whatever dot and raster position it started
-// from, rather than synchronizing to the next frame boundary.
+// clocks, by exactly one PAL frame: RasterLinesPerFrame raster lines of
+// CyclesPerLine bus cycles each.
 //
-// Reset leaves the beam on a bus-cycle boundary and stepCycle keeps it
-// there, so that position is always a multiple of DotsPerCycle unless a
-// caller has assigned to dot itself.
+// The beam must be at the start of a raster line. Reset leaves it there
+// and a frame is a whole number of lines, so a caller driving frames never
+// has to think about it; one that has stepped cycles must finish the line
+// first. This is a requirement rather than something handled, because
+// handling it meant carrying a second loop that walked the frame a cycle
+// at a time, and nothing but a test ever reached it.
 //
-// Earlier attempts at this loop regressed on the Gopher Badge and are
-// recorded in stepCycle's comment; this shape (a single flat loop calling
-// one function per dot, each with exactly one call site) is the one that
-// held up.
+// It remains a relative step in the raster line: a frame begun on line 45
+// ends on line 45. Only the position within the line is pinned.
 func (v *VICII) StepFrame() {
-	slot := v.dot / DotsPerCycle
-	if slot == 0 {
-		for range RasterLinesPerFrame {
-			v.stepLine()
-		}
-		return
+	if v.dot != 0 {
+		panic("tiny64: StepFrame needs the beam at the start of a line; " +
+			"finish the line with StepCycle first")
 	}
 
-	// Parked mid-line, so the frame cannot be walked as whole lines. This
-	// is the relative step the doc comment promises, one cycle at a time.
-	for range CyclesPerFrame {
-		v.stepCycle(slot)
-		slot++
-		if slot >= CyclesPerLine {
-			slot = 0
-		}
+	for range RasterLinesPerFrame {
+		v.stepLine()
 	}
 }
 
