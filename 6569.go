@@ -809,6 +809,78 @@ func (v *VICII) graphicsPixelPlain4(reloadOffset uint16) (byte, byte, byte, byte
 	return c0, c1, c2, c3
 }
 
+// graphicsPixelSolo4 decides the colours of all four dots of a Phi0
+// half-phase that one sprite, and one alone, covers all of. i is that
+// sprite, as spriteSoloGroup named it.
+//
+// Knowing the sprite before the first dot is what this is for. Its row,
+// its mask, its priority bit and whether its data collision is still
+// unreported are all settled once here; per dot there is a shift, a row
+// byte, and the choice between three colours. The border flip-flop is
+// the group's too, for the reason graphicsPixelPlain4 gives.
+//
+// The collision is the one piece of group state that can move under it,
+// and only in one direction: a dot of this sprite over foreground
+// graphics latches $D01F, and every later dot of the group then finds it
+// already set. Tracking that in a local is the same answer the register
+// would give, without loading it again. Nothing else can clear it inside
+// a group - only the CPU reading $D01F does, and that lands between
+// half-phases, never inside one.
+//
+// Unlike graphicsPixelPlain4 there is no shortcut behind a closed
+// border. What the sequencer shifts out is still dead, but which dots
+// this sprite paints is not: collisions are latched behind the border
+// exactly as they are in front of it, so all four dots run.
+//
+// The four dots are a loop rather than four unrolled copies. What is per
+// dot here is large enough that four of it is what made a whole-body
+// graphicsPixel4 too big to be worth having; the loop keeps one copy of
+// it and pays four predictable branches for the reload instead.
+//
+// TestSoloGroupMatchesPaintWithOneSprite holds it to four graphicsPixel
+// calls.
+func (v *VICII) graphicsPixelSolo4(dot, reloadOffset uint16, i uint8) (byte, byte, byte, byte) {
+	mask := spriteBit(i)
+	row := v.spritePixels[i][dot-v.spriteStart[i]:]
+	behindGraphics := v.spritePriority&mask != 0
+	collisionIsNews := mask&^v.spriteDataCollision != 0
+	border := v.mainBorder
+
+	var c [DotsPerCycle / 2]byte
+	for k := range c {
+		if uint16(k) == reloadOffset {
+			v.loadGraphicsData()
+		}
+		graphicsColor, gdIndex := v.nextGraphicsColor()
+
+		val := row[k]
+		if val == spriteDotNone {
+			if border {
+				c[k] = v.borderColor
+			} else {
+				c[k] = graphicsColor
+			}
+			continue
+		}
+
+		isForeground := v.gdForeground&(1<<gdIndex) != 0
+		if isForeground && collisionIsNews {
+			v.raiseSpriteDataCollision(mask)
+			collisionIsNews = false
+		}
+
+		switch {
+		case border:
+			c[k] = v.borderColor
+		case !behindGraphics || !isForeground:
+			c[k] = spriteDotColor(v, val, i)
+		default:
+			c[k] = graphicsColor
+		}
+	}
+	return c[0], c[1], c[2], c[3]
+}
+
 // graphicsPixel decides one pixel's colour, through the border unit and
 // the sprite compositor. It returns it rather than writing it: a dot's
 // colour is per dot, but the write need not be, and dotclock4 collects
@@ -1446,6 +1518,37 @@ func (v *VICII) spriteFreeGroup(dot uint16) bool {
 		v.spriteCoverage[d+2]|v.spriteCoverage[d+3] == 0
 }
 
+// spriteSoloGroup reports the one sprite covering every dot of a
+// half-phase, when exactly one sprite covers all four.
+//
+// That is the shape a covered group almost always has. A sprite is 24
+// dots wide against a group's four, so a group that meets a sprite at
+// all is six times more likely to be inside it than on either edge of
+// it, and sprites have to be placed over one another for a dot to have
+// two. What the answer buys is everything about that sprite: which one
+// it is, where its row sits, its priority bit and whether its collision
+// is still news are all the group's, not the dot's.
+//
+// The four entries have to be equal as well as single-bit. A group that
+// straddles an edge has some dots covered and some not, or two different
+// sprites over its two halves, and neither can be decided once for the
+// group - those take the per-dot path.
+//
+// Masking to a multiple of four keeps all four indices inside the table,
+// as spriteFreeGroup does.
+func (v *VICII) spriteSoloGroup(dot uint16) (uint8, bool) {
+	d := dot & (511 &^ 3)
+	c := v.spriteCoverage[d]
+	if c == 0 || c&(c-1) != 0 {
+		return 0, false
+	}
+	if v.spriteCoverage[d+1] != c || v.spriteCoverage[d+2] != c ||
+		v.spriteCoverage[d+3] != c {
+		return 0, false
+	}
+	return uint8(bits.TrailingZeros8(c)), true
+}
+
 // graphicsPixelPlain decides one dot's colour with no sprite over it: the
 // compositor's whole half removed rather than branched around, and the
 // border still asked, because the group it belongs to cannot answer that
@@ -1503,6 +1606,15 @@ func (v *VICII) dotclock4(dot, reload uint16, borderSlot bool) {
 	// inline where the compositor is not.
 	if v.spriteFreeGroup(dot) {
 		c0, c1, c2, c3 = v.graphicsPixelPlain4(reload - dot)
+		writePixels4ToBuffer(dot, v.beamLine, c0, c1, c2, c3)
+		return
+	}
+
+	// One sprite over all four dots is what a covered group almost
+	// always is, and it is decidable a group at a time for the same
+	// reason the coverage is: see spriteSoloGroup.
+	if i, ok := v.spriteSoloGroup(dot); ok {
+		c0, c1, c2, c3 = v.graphicsPixelSolo4(dot, reload-dot, i)
 		writePixels4ToBuffer(dot, v.beamLine, c0, c1, c2, c3)
 		return
 	}
