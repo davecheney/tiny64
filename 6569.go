@@ -739,9 +739,9 @@ func (v *VICII) nextGraphicsColor() (byte, uint8) {
 // which happens between the two half-phases of a bus cycle, never inside
 // one. So it is asked once per four dots instead of once per dot.
 //
-// reloadOffset is how far into the group the sequencer reloads, as
-// dotclockPlain4's reload-dot gives it: 0 to 3, or anything larger for a
-// group that does not reload.
+// reloadOffset is how far into the group the sequencer reloads, as the
+// cycle's reload dot gives it: 0 to 3, or anything larger for a group
+// that does not reload.
 //
 // The border flip-flop cannot move inside a group either. Only
 // borderCompare writes it, and the three slots it can match in are
@@ -807,22 +807,6 @@ func (v *VICII) graphicsPixelPlain4(reloadOffset uint16) (byte, byte, byte, byte
 		c3, _ = v.nextGraphicsColor()
 	}
 	return c0, c1, c2, c3
-}
-
-// dotclockPlain4 is dotclock4 for dots no sprite covers: the four dots of
-// one Phi0 half-phase, with the reload asked once for the group instead of
-// once a dot. See dotclock4 for why reload-dot decides it and for why the
-// four colours are written together, and graphicsPixelPlain4 for what is
-// left of the four dots once what they agree on is lifted out of them,
-// and for what the caller has to know before using this path at all.
-//
-// There is no border half here. The three slots the comparator can match
-// in are not inside the display window, so a dot on this path is never one
-// of them - which is also why the border flip-flop cannot move under the
-// group.
-func (v *VICII) dotclockPlain4(dot, reload uint16) {
-	c0, c1, c2, c3 := v.graphicsPixelPlain4(reload - dot)
-	writePixels4ToBuffer(dot, v.beamLine, c0, c1, c2, c3)
 }
 
 // graphicsPixel decides one pixel's colour, through the border unit and
@@ -1162,9 +1146,12 @@ func (v *VICII) cycleDrawDisplay(dot uint16) {
 	reload := v.reloadDot(dot, true)
 
 	// Asked once for the half-phase, not once a dot: see
-	// graphicsPixelPlain4 for why four dots can share the answer.
+	// graphicsPixelPlain4 for why four dots can share the answer. dotclock4
+	// asks the same question, but reaching it to be asked is a call, and
+	// this is the path that runs on every slot of the display window.
 	if v.spriteDisplay == 0 {
-		v.dotclockPlain4(dot, reload)
+		c0, c1, c2, c3 := v.graphicsPixelPlain4(reload - dot)
+		writePixels4ToBuffer(dot, v.beamLine, c0, c1, c2, c3)
 	} else {
 		v.dotclock4(dot, reload, false)
 	}
@@ -1176,7 +1163,8 @@ func (v *VICII) cycleDrawDisplay(dot uint16) {
 	iecTick()
 
 	if v.spriteDisplay == 0 {
-		v.dotclockPlain4(dot+4, reload)
+		c0, c1, c2, c3 := v.graphicsPixelPlain4(reload - (dot + 4))
+		writePixels4ToBuffer(dot+4, v.beamLine, c0, c1, c2, c3)
 	} else {
 		v.dotclock4(dot+4, reload, false)
 	}
@@ -1400,6 +1388,18 @@ func (v *VICII) dotclock4(dot, reload uint16, borderSlot bool) {
 		// Three slots a line, and the only ones whose dots are not all
 		// alike: see dotclockBorder4.
 		c0, c1, c2, c3 = v.dotclockBorder4(dot, reload)
+		writePixels4ToBuffer(dot, v.beamLine, c0, c1, c2, c3)
+		return
+	}
+
+	// Whether any sprite is displayed at all belongs to the group, for the
+	// reason graphicsPixelPlain4 gives, and a group none covers has no use
+	// for the compositor: no coverage load a dot, and no call a dot
+	// either, since what decides a plain group is small enough to inline
+	// where the compositor is not. Every painted slot outside the display
+	// window comes through here, which is where that was going to waste.
+	if v.spriteDisplay == 0 {
+		c0, c1, c2, c3 = v.graphicsPixelPlain4(reload - dot)
 		writePixels4ToBuffer(dot, v.beamLine, c0, c1, c2, c3)
 		return
 	}
