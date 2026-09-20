@@ -297,8 +297,6 @@ Tufty's 320x240 framebuffer in RP2040 RAM.
 The VIC-II decides on a four bit colour index per pixel. The default Go
 frame buffer stores each index in one byte, and that is what the desktop
 hands to the GPU: the frame is never expanded to colour on the CPU at all.
-The `pixelsink_func` build uses the same storage but calls the pixel
-writer indirectly, for benchmarking.
 
 `tiny64.C64Palette` holds Pepto's PAL values, derived from the 6569's
 colour carrier rather than eyeballed, and identical to the `pepto-pal.vpl`
