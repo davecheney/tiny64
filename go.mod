@@ -7,6 +7,12 @@ require (
 	tinygo.org/x/drivers v0.36.0
 )
 
-require github.com/google/shlex v0.0.0-20191202100458-e7afc7fbc510 // indirect
+require (
+	github.com/aclements/go-moremath v0.0.0-20210112150236-f10218a38794 // indirect
+	github.com/google/shlex v0.0.0-20191202100458-e7afc7fbc510 // indirect
+	golang.org/x/perf v0.0.0-20260908200009-22c9c6c9d4da // indirect
+)
 
 replace github.com/tinygo-org/pio => github.com/davecheney/pio v0.0.0-20260911022417-d378a39501eb
+
+tool golang.org/x/perf/cmd/benchstat
