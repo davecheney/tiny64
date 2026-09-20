@@ -1443,6 +1443,104 @@ builds before the hardware gate.
 - **Bootloader Reset**: Opening USB CDC port at 1200 baud resets the RP2040 into bootloader mode (`/Volumes/RPI-RP2`).
 - **Serial Telemetry Monitoring**: Use `tinygo monitor` or read USB serial port (`/dev/cu.usbmodem1201` on macOS) at 115200 baud. Average `emulate=...ms` over 50-frame windows. Baseline is ~73-74ms/frame at `-opt=2 -scheduler=none`.
 
+## Upstream review: 2026-09-20 (`6127934..98b1ef2`, 40 commits)
+
+Reviewed everything that landed on `main` since the 2026-09-18 seam
+reintegration. The bulk of it is one long VIC-II restructure - counting in
+slots and deriving the dot, storing the beam once a cycle, removing `v.dot`,
+walking a line as runs, and finally painting a Phi0 half-phase at a time -
+plus a desktop move from Ebitengine to SDL2/SDL3 and the removal of the DOS
+wedge.
+
+Most of it does not transfer. The desktop backends never build for the
+Tufty. The sprite work (`b7183a0`, `3e7872b`, `4035cad`) has nothing to act
+on here. The run/slot rewrite (`8848eef`, `9ed88b5`, `abd7ffa`, `f362698`)
+was already measured on this branch in the form of a cut-down line/run
+candidate and rejected: it cost +12% on hardware. Nothing in the newer
+commits changes that finding, so the restructure stays out and this branch
+keeps its flat per-cycle shape.
+
+Two commits were adapted and gated on hardware, and one further one is
+noted below as a decision for the user rather than a backport.
+
+### Adopted: paint a half-phase's four dots in one write (from `7db3949`)
+
+Upstream's `writePixels4ToIndexed` writes one Phi0 half-phase's four dots at
+once, "so one row offset and one bounds check instead of four of each".
+`dotclockFirst4` already computed those four dots together here, so the idea
+fits this branch's shape without importing the run structure it was written
+against.
+
+`writePixels4ToBuffer` was added to all four pixel sinks, and
+`dotclockFirst4` gained a fast path taken when the whole group lands inside
+the rendered window on a drawable line. That path pays the window test, the
+crop, the row offset and the bounds check once for the group. It also folds
+in `v.lineDrawable`, which the per-dot path never tested - it leaned on the
+sink's own y-bounds check to discard non-drawable lines, so every painted
+dot was range-checked twice. `verticalBorder`, `mainBorder` and
+`borderColor` cannot change between the four dots, so they are read once,
+and the sequencer's four single-bit shifts become one shift by four. Groups
+that straddle the window edge still take the original per-dot path verbatim.
+
+Output is unchanged. A 40-frame boot render hashed identically on the base
+and the candidate
+(`1a9f385df371085edd699e2a73c9b4e21bf94786b150e1bfd1816876b886bf02`).
+
+Measured in one A/B/A sequence against accepted tip `c8dc378`. Baseline
+averaged 59.352142 ms/frame before and 59.351910 ms/frame after, a drift of
+-0.000232 ms. The candidate averaged 56.142114 ms/frame: **-3.209912 ms,
+-5.4083%**, the largest single frame-time win recorded on this branch. XIP
+accesses fell from ~265.0M to ~248.1M per 50-frame window, consistent with
+simply executing less work per painted dot.
+
+XIP misses moved the other way, from ~1,159 to ~1,353 per frame, and the
+reported hit rate slipped from 99.98% to 99.97%. That is recorded rather
+than explained away: with 6.4% fewer accesses the remaining misses are less
+diluted, and as the no-display and no-pixel probes already showed, miss rate
+is not the frame-time predictor on this workload. Frame time is the
+branch's hard gate and it improved decisively, so the change was taken.
+
+The exact candidate UF2 was
+`8055a9e8a46abdaf769132b5e99f2f4820db161c34b10180ebabf5328d499ad3`. Host
+tests, vet, both target builds and the headless and pixelsink_func package
+builds all passed first. (`go build -tags headless ./...` fails in
+`cmd/internal/desktop` on this branch both before and after the change; it
+is pre-existing and unrelated.)
+
+### Rejected: one mask for the character ROM window (`6dbd209`)
+
+Upstream replaced the character-ROM range test with `addr&0x7000 == 0x1000`
+and indexed `rom.Character[addr&0x0FFF]`. Every VIC fetch address on this
+branch is bounded by $3FFF - the g-access is `(cb<<11) + (char&0xFF)<<3 +
+RC` and the c-access `(vm<<10) + VC` - so the mask is exactly equivalent
+here to the existing `addr >= 0x1000 && addr <= 0x1FFF`, and it was worth
+testing on a path taken 12,480 times a frame.
+
+It made things worse. In the same sequence it averaged 59.493362 ms/frame
+against a 59.352026 ms baseline: +0.141336 ms, **+0.2381%**, roughly 600x
+the drift. XIP misses also rose slightly. `rom.Character` is a slice here,
+not the array upstream's inliner-budget note is written against, so the
+index mask cannot retire a bounds check, and the upstream motivation - 
+keeping `plaVICLoad` under the gc inliner's budget - does not apply to a
+TinyGo/LLVM build at all. Not adopted.
+
+The companion commit `5d17bf4`, which caches the CIA2-derived fetch window
+in `vic.bank`, is moot here: this branch models bank 0 only and never
+derives a bank per access, so it is already ahead of the pre-image upstream
+was optimising.
+
+### Noted, not actioned: `413f0e2` removes the DOS wedge
+
+Upstream deleted the DOS wedge outright, after first embedding its image
+like every other ROM. This branch carries the wedge deliberately: it was
+accepted in PR #55 *with* a measured +0.624 ms/frame regression, as an
+explicit exception. The earlier boot-only probe here showed that dropping
+the wedge and the virtual drive together is worth about 3.14% and halves XIP
+misses, so there is real frame time in following upstream.
+
+That is a feature decision, not a performance backport, and it reverses an
+exception the user granted on purpose. Left for the user to call.
+
 ## Contributing back to main
 
 This branch also contributes performance fixes upstream to `main` when

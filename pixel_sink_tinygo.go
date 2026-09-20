@@ -35,3 +35,21 @@ func writePixelToBuffer(x, y uint16, colorIndex byte) {
 	}
 	frameBufferRGB565BE[int(y)*rgb565Width+int(x)] = c64PaletteRGB565BE[colorIndex&0x0f]
 }
+
+// writePixels4ToBuffer writes the four dots of one Phi0 half-phase at
+// once. They are consecutive pixels of a single line, so the crop, the
+// row offset and the bounds check are done once for the group rather
+// than once per dot.
+func writePixels4ToBuffer(x, y uint16, c0, c1, c2, c3 byte) {
+	x -= rgb565CropX
+	y -= rgb565CropY
+	if x+3 >= rgb565Width || y >= rgb565Height {
+		return
+	}
+	i := int(y)*rgb565Width + int(x)
+	row := frameBufferRGB565BE[i : i+4]
+	row[0] = c64PaletteRGB565BE[c0&0x0f]
+	row[1] = c64PaletteRGB565BE[c1&0x0f]
+	row[2] = c64PaletteRGB565BE[c2&0x0f]
+	row[3] = c64PaletteRGB565BE[c3&0x0f]
+}

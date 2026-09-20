@@ -376,6 +376,37 @@ func (v *VICII) dotclockSecond2() {
 // transitions or line wrapping, so their shared work is kept here rather
 // than paid through four dotclock calls on every bus cycle.
 func (v *VICII) dotclockFirst4() {
+	// When all four dots land inside the rendered window on a drawable
+	// line - the common case for every cycle the picture covers - the
+	// window test, the crop, the row offset and the bounds check are the
+	// same for the whole group, so they are paid once here instead of
+	// four times through writePixelToBuffer. verticalBorder, mainBorder
+	// and borderColor cannot change between these four dots either, so
+	// they are read once. The per-dot path below is kept verbatim for
+	// groups that straddle the window edge.
+	if v.lineDrawable && v.dot+1 >= renderFirstDot && v.dot+4 < renderDotAfter {
+		first := v.dot + 1
+		v.dot += 4
+		if v.verticalBorder {
+			c := v.borderColor & 0x0F
+			writePixels4ToBuffer(first, v.rasterLine, c, c, c, c)
+			return
+		}
+		// The sequencer shifts once per dot, so the four dots read bits
+		// 7 to 4; shifting by four afterwards leaves it where four
+		// single-dot shifts would.
+		c0 := v.gdColor[v.gdSequencer>>7]
+		c1 := v.gdColor[v.gdSequencer>>6&1]
+		c2 := v.gdColor[v.gdSequencer>>5&1]
+		c3 := v.gdColor[v.gdSequencer>>4&1]
+		v.gdSequencer <<= 4
+		if v.mainBorder {
+			c := v.borderColor
+			c0, c1, c2, c3 = c, c, c, c
+		}
+		writePixels4ToBuffer(first, v.rasterLine, c0&0x0F, c1&0x0F, c2&0x0F, c3&0x0F)
+		return
+	}
 	v.dot++
 	if v.dot < VisibleDotsPerLine && v.dot >= renderFirstDot && v.dot < renderDotAfter {
 		if v.verticalBorder {
