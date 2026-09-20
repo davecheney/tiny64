@@ -90,7 +90,7 @@ type buttonState struct {
 	a, b, c bool
 }
 
-func (s *buttonState) poll(demo *demoLoader) {
+func (s *buttonState) poll() {
 	a := machine.BUTTON_A.Get()
 	if a && !s.a {
 		// Button A edge: Cold Reset / Restart entire demo
@@ -104,7 +104,7 @@ func (s *buttonState) poll(demo *demoLoader) {
 		}
 		tiny64.Keys().ReleaseAll()
 		tiny64.Reset()
-		demo.reset()
+		tiny64.Autostart()
 	}
 	s.a = a
 
@@ -143,15 +143,17 @@ func main() {
 		colorRAM[i] = byte(rand.Uint() & 0x0F)
 	}
 	tiny64.AttachVirtualPRG(8, "MAZE", mazePRG)
-	tiny64.EnableDOSWedge()
 	tiny64.Reset()
 
-	var demo demoLoader
+	// Autostart types the load itself through the KERNAL's type-ahead
+	// buffer, so the 8K wedge EPROM is no longer carried to do it.
+	tiny64.Autostart()
+
 	var buttons buttonState
 	var emulateTime, waitTime, startDrawTime time.Duration
 	var prevXIPHit, prevXIPAcc uint32
 	for frame := 0; ; frame++ {
-		buttons.poll(&demo)
+		buttons.poll()
 		if frame%50 == 0 && frame > 0 {
 			hit, acc, curHit, curAcc := xipCacheDelta(prevXIPHit, prevXIPAcc)
 			prevXIPHit, prevXIPAcc = curHit, curAcc
@@ -159,15 +161,14 @@ func main() {
 			if acc > 0 {
 				hitPct = 100 * float64(hit) / float64(acc)
 			}
-			fmt.Printf("frame %d: emulate=%v wait=%v start=%v (avg over 50 frames) xip=%.2f%% hits=%d accesses=%d misses=%d\n",
-				frame, emulateTime/50, waitTime/50, startDrawTime/50, hitPct, hit, acc, acc-hit)
+			fmt.Printf("frame %d: emulate=%v wait=%v start=%v (avg over 50 frames) xip=%.2f%% hits=%d accesses=%d misses=%d maze=%v\n",
+				frame, emulateTime/50, waitTime/50, startDrawTime/50, hitPct, hit, acc, acc-hit, mazeRunning())
 			emulateTime, waitTime, startDrawTime = 0, 0, 0
 		}
 
 		start := time.Now()
 		tiny64.StepFrame()
 		emulateTime += time.Since(start)
-		demo.tick()
 
 		start = time.Now()
 		display.waitDisplay()
