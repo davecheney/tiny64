@@ -104,3 +104,65 @@ func TestZeroSpriteDisplayMeansNoCoverage(t *testing.T) {
 		}
 	}
 }
+
+// TestBorderGroupPlainRunMatchesCompositor holds dotclockBorder4's two
+// runs to each other. Which one a group takes is decided by spriteDisplay
+// alone, so with nothing actually covered the compositor run has to land
+// on the same four colours as the plain one - and, since the comparator
+// can move the border flip-flop between one dot of a border group and the
+// next, on the same flip-flop afterwards.
+//
+// The sweep puts the group on both halves of the slot the left comparison
+// falls in, with either CSEL, so a group that fires the comparison part
+// way through is covered as well as one that does not.
+func TestBorderGroupPlainRunMatchesCompositor(t *testing.T) {
+	parkMachine(t)
+
+	for _, control2 := range []uint8{0, csel} {
+		for _, border := range []bool{false, true} {
+			for _, seq := range []uint16{0x0000, 0x5555, 0x4000, 0xFFFF} {
+				for _, dot := range []uint16{48, 52} {
+					for reload := range uint16(5) {
+						plain := &VICII{}
+						plain.Reset()
+						composited := &VICII{}
+						composited.Reset()
+
+						for _, v := range []*VICII{plain, composited} {
+							v.slot = dot / DotsPerCycle
+							v.beamLine = 100
+							v.rasterLine = 100
+							v.lineVisible = true
+							v.mainBorder = border
+							v.borderColor = 9
+							v.control2 = control2
+							v.gdSequencer = seq
+							v.gdPending = 0x5A
+							clear(v.spriteCoverage[:])
+						}
+						// Nothing is covered either way; this only picks
+						// which of the two runs the group takes.
+						plain.spriteDisplay = 0
+						composited.spriteDisplay = 1
+
+						var got, want [4]byte
+						want[0], want[1], want[2], want[3] = composited.dotclockBorder4(dot, dot+reload)
+						got[0], got[1], got[2], got[3] = plain.dotclockBorder4(dot, dot+reload)
+
+						if got != want ||
+							plain.gdSequencer != composited.gdSequencer ||
+							plain.mainBorder != composited.mainBorder ||
+							plain.verticalBorder != composited.verticalBorder {
+							t.Fatalf("control2=%#02x border=%v seq=%#04x dot=%d reload=+%d: "+
+								"compositor painted %v leaving seq %#04x border %v/%v, "+
+								"plain painted %v leaving seq %#04x border %v/%v",
+								control2, border, seq, dot, reload,
+								want, composited.gdSequencer, composited.mainBorder, composited.verticalBorder,
+								got, plain.gdSequencer, plain.mainBorder, plain.verticalBorder)
+						}
+					}
+				}
+			}
+		}
+	}
+}
