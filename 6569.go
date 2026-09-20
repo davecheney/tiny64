@@ -596,6 +596,10 @@ func expandGraphicsData(data uint8, multicolor bool) uint16 {
 // which the graphics sequencer does not reload.
 const noReloadDot = 0xFFFF
 
+// noCompareDot is the same trick for the border comparator: a dot the
+// beam never reaches, so a comparison against it never fires.
+const noCompareDot = 0xFFFF
+
 // reloadDot answers, once for the whole cycle about to be stepped, which
 // dot the graphics sequencer reloads on - or noReloadDot, if it does not.
 // The sequencer takes up a g-access result XSCROLL dots into each
@@ -1316,22 +1320,51 @@ func StepFrame() {
 	vic.StepFrame()
 }
 
-// dotclockBorder is one dot of a slot the border comparator can match:
-// take up the g-access result, if this is the dot XSCROLL selects; ask the
-// comparator; decide the colour. It is all that is left of a per-dot step,
-// and only three slots a line reach it.
+// dotclockBorder4 is the four dots of a Phi0 half-phase in one of the
+// three slots a line the border comparator can match in.
 //
-// Its caller does the write, because in the dot path that write is one of
-// four - see dotclock4.
-func (v *VICII) dotclockBorder(dot, reload uint16) byte {
-	if dot == reload {
-		v.loadGraphicsData()
-	}
+// The comparison itself stays per dot, because the dot it fires on is
+// painted with the state it just set. What the comparator asks before
+// comparing does not: which pair of dots CSEL selects, and whether the
+// line can match at all, are the same for all four. The CPU only reaches
+// $D016 between half-phases and lineVisible is settled at VINC, so
+// neither can move under the group.
+// Each dot takes up the g-access result, if this is the dot XSCROLL
+// selects; asks the comparator, against the pair chosen above; and
+// decides its colour. The four are written out rather than called,
+// because a per-dot function here is a real call and this is the path
+// that has four of them. The write is dotclock4's, since it is one write
+// for the group.
+func (v *VICII) dotclockBorder4(dot, reload uint16) (byte, byte, byte, byte) {
+	left, right := v.borderComparePair()
 
 	// The comparator runs before the paint: the dot a comparison fires on
 	// is painted with the state it just set, not the one before.
-	v.borderCompare(dot)
-	return v.graphicsPixel(dot)
+	if dot == reload {
+		v.loadGraphicsData()
+	}
+	v.borderCompare(dot, left, right)
+	c0 := v.graphicsPixel(dot)
+
+	if dot+1 == reload {
+		v.loadGraphicsData()
+	}
+	v.borderCompare(dot+1, left, right)
+	c1 := v.graphicsPixel(dot + 1)
+
+	if dot+2 == reload {
+		v.loadGraphicsData()
+	}
+	v.borderCompare(dot+2, left, right)
+	c2 := v.graphicsPixel(dot + 2)
+
+	if dot+3 == reload {
+		v.loadGraphicsData()
+	}
+	v.borderCompare(dot+3, left, right)
+	c3 := v.graphicsPixel(dot + 3)
+
+	return c0, c1, c2, c3
 }
 
 // dotclock4 is the four dots of one Phi0 half-phase. Every caller wants
@@ -1364,13 +1397,9 @@ func (v *VICII) dotclockBorder(dot, reload uint16) byte {
 func (v *VICII) dotclock4(dot, reload uint16, borderSlot bool) {
 	var c0, c1, c2, c3 byte
 	if borderSlot {
-		// Three slots a line. The comparator has to run between the
-		// paints, since the dot a comparison fires on is painted with
-		// the state it just set, so this half stays per-dot.
-		c0 = v.dotclockBorder(dot, reload)
-		c1 = v.dotclockBorder(dot+1, reload)
-		c2 = v.dotclockBorder(dot+2, reload)
-		c3 = v.dotclockBorder(dot+3, reload)
+		// Three slots a line, and the only ones whose dots are not all
+		// alike: see dotclockBorder4.
+		c0, c1, c2, c3 = v.dotclockBorder4(dot, reload)
 		writePixels4ToBuffer(dot, v.beamLine, c0, c1, c2, c3)
 		return
 	}
@@ -1445,23 +1474,31 @@ func (v *VICII) resolveVerticalBorder() {
 // carries. Narrowing pulls both ends in by a cell and then back by a dot,
 // which is why the picture loses 7 dots on the left and 9 on the right
 // rather than 8 and 8.
-func (v *VICII) borderCompare(dot uint16) {
-	if !v.lineVisible {
-		return
-	}
-	if v.control2&csel != 0 {
-		if dot == rightEdge40 {
-			v.mainBorder = true
-		} else if dot == leftComp40 {
-			v.resolveVerticalBorder()
-		}
-		return
-	}
-	if dot == rightEdge38 {
+func (v *VICII) borderCompare(dot, left, right uint16) {
+	if dot == right {
 		v.mainBorder = true
-	} else if dot == leftComp38 {
+	} else if dot == left {
 		v.resolveVerticalBorder()
 	}
+}
+
+// borderComparePair is the pair of dots the comparator matches against:
+// the first displayed dot and the first border dot, with CSEL choosing
+// which width's pair that is. A line the beam cannot see matches neither,
+// which is noCompareDot's whole job - a dot no beam reaches, so the
+// per-dot comparison needs no visibility test of its own.
+//
+// Both answers belong to the cycle rather than the dot, which is why they
+// are asked here and passed down. CSEL cannot change under a group: the
+// CPU only reaches $D016 between half-phases.
+func (v *VICII) borderComparePair() (left, right uint16) {
+	if !v.lineVisible {
+		return noCompareDot, noCompareDot
+	}
+	if v.control2&csel != 0 {
+		return leftComp40, rightEdge40
+	}
+	return leftComp38, rightEdge38
 }
 
 // phi0lowDisplay is phi0low for the interior of the display window, slots
