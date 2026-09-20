@@ -63,6 +63,23 @@ const (
 	reloadFirstSlot = 6
 	reloadSlotAfter = 46
 
+	// vincSlot is the bus cycle carrying VINC, the VIC-II's own
+	// increment-vertical-counter strobe, and so the bus cycle the raster
+	// counter moves in. It is the article's cycle 1 - the start of a
+	// raster line in the article's terms - which rebases onto slot 53.
+	//
+	// VINC is not where the beam wraps. The counter moves one cycle after
+	// video is blanked and well before the beam reaches the left edge
+	// again, so the retrace that follows belongs to the new line. Dot 0 is
+	// the leftmost dot the beam paints, 80 dots after VINC.
+	vincSlot = 53
+
+	// RasterIncrementCycle is the same bus cycle counted the way a trace
+	// counts them, from 1 rather than from 0. It is exported because a
+	// trace's DOT and RASTER columns do not step together: RASTER moves on
+	// VINC, nine cycles before the beam wraps.
+	RasterIncrementCycle = vincSlot + 1
+
 	// A dot no beam reaches, so a comparison against it never fires.
 	noCompareDot = DotsPerLine + 1
 )
@@ -143,6 +160,32 @@ type VICII struct {
 	videoBuffer        uint16
 	videoBufferPending uint16
 
+	// beamLine is the raster line the beam is on, and so which
+	// framebuffer row a painted dot lands in. It steps where the beam
+	// wraps, at the end of the line. (dot, beamLine) names a pixel.
+	//
+	// rasterLine, above, is a register rather than a position: the value
+	// $D012 reads. It steps on VINC, in slot 53, because that is where the
+	// VIC-II tells the monitor to recall its beam - an artifact of driving
+	// a CRT, not a fact about where the picture starts.
+	//
+	// Every rule in this file keys off rasterLine rather than beamLine -
+	// the Bad Line condition, the border unit's top and bottom
+	// comparisons, VCBase's reload - because on the chip there is only one
+	// counter, and it is the one the CPU reads. Programs sync on it and
+	// then count cycles, which is what pins it to slot 53.
+	//
+	// The two differ only from VINC to the end of the line: slots 53 to
+	// 62, dots 424 to 503, every one of them past VisibleDotsPerLine. So
+	// they always agree wherever a pixel is written.
+	// TestBeamLineAgreesWithRasterWherePainted pins that.
+	//
+	// It sits here, at the cold end of the scalars, so that adding it left
+	// every field above at the offset it already had. Moving it up costs
+	// more in the fields it displaces than it saves on its own two reads a
+	// cycle.
+	beamLine uint16 // 0 to 311
+
 	// Keep the dynamically indexed row buffer at the cold end so it does
 	// not push fixed-offset fields out of cheap reach.
 	videoMatrixColor [40]uint16
@@ -204,10 +247,12 @@ func (v *VICII) Reset() {
 	v.syncLineVisibility()
 }
 
-// syncLineVisibility recomputes the cached line visibility flags from rasterLine.
+// syncLineVisibility recomputes the cached line visibility flags from
+// rasterLine, and puts the beam on the line the counter names.
 // It must be called whenever rasterLine is changed by anything other than
 // dotclock7's line wrap, which updates the flags itself.
 func (v *VICII) syncLineVisibility() {
+	v.beamLine = v.rasterLine
 	v.lineVisible = v.rasterLine < firstVBlankLine && v.rasterLine > lastVBlankLine
 	v.lineDrawable = v.rasterLine >= renderFirstLine && v.rasterLine < renderLineAfter
 }
@@ -304,33 +349,27 @@ func (v *VICII) StepFrame() {
 	}
 }
 
-// advance moves the beam to the next bus cycle, and off the end of the
-// line when that was the last one. It runs before phi0high and the CPU's
-// Phi2, so the line's final cycle sees the raster counter already moved -
-// which is what $D012 reads there, and so is behaviour, not bookkeeping.
+// advance moves the beam to the next bus cycle. There is no test here for
+// running off the end of the line: stepLine knows where its run of slots
+// stopped, and calls endLine once. What made that test look necessary was
+// the raster counter moving at the end of the line, so the line's last
+// cycle had to see it already moved; the counter moves on VINC now, nine
+// cycles earlier, and nothing in a cycle reads the beam's row but the
+// paint.
 func (v *VICII) advance(slot uint16) {
-	next := slot + 1
-	if next >= CyclesPerLine {
-		v.endLine()
-		return
-	}
-	v.slot = next
-	v.dot = next * DotsPerCycle
+	v.slot = slot + 1
+	v.dot = v.slot * DotsPerCycle
 }
 
-// endLine moves the beam to the next raster line. This used to be a test in
-// every bus cycle asking whether the beam had run off the end of the line;
-// counting in slots instead makes it a fact about where the loop stopped.
+// endLine wraps the beam to the start of the next row. The raster counter
+// is not touched: it moved on VINC, in slot 53.
 func (v *VICII) endLine() {
 	v.slot = 0
 	v.dot = 0
-	v.rasterLine++
-	if v.rasterLine >= RasterLinesPerFrame {
-		v.rasterLine = 0
+	v.beamLine++
+	if v.beamLine >= RasterLinesPerFrame {
+		v.beamLine = 0
 	}
-	// The only place rasterLine changes in the hot path, so the only place
-	// the cached visibility answers can go stale.
-	v.syncLineVisibility()
 }
 
 // stepLine advances the machine by one raster line: CyclesPerLine bus
@@ -349,7 +388,10 @@ func (v *VICII) endLine() {
 // gates, and the paint path gates it per group.
 func (v *VICII) stepLine() {
 	if !v.lineVisible {
-		v.blankRun(0, CyclesPerLine)
+		v.blankRun(0, vincSlot)
+		v.cycleBlankVINC(vincSlot)
+		v.blankRun(vincSlot+1, CyclesPerLine)
+		v.endLine()
 		return
 	}
 
@@ -362,7 +404,10 @@ func (v *VICII) stepLine() {
 	v.cycleDrawBorder(borderSlotRight38, true)
 	v.drawRun(borderSlotRight38+1, borderSlotRight40, true)
 	v.cycleDrawBorder(borderSlotRight40, false)
-	v.drawRun(borderSlotRight40+1, CyclesPerLine, false)
+	v.drawRun(borderSlotRight40+1, vincSlot, false)
+	v.cycleDrawVINC(vincSlot)
+	v.drawRun(vincSlot+1, CyclesPerLine, false)
+	v.endLine()
 }
 
 // drawRun paints the bus cycles from slot through to-1. None of them is a
@@ -464,6 +509,34 @@ func (v *VICII) cycleBlank(slot uint16) {
 	iecTick()
 }
 
+// cycleDrawVINC is cycleDraw for the one slot a line carrying VINC. The
+// slot is outside the reload window and cannot match the border
+// comparator, so neither question is asked here either.
+func (v *VICII) cycleDrawVINC(slot uint16) {
+	dot := slot * DotsPerCycle
+	v.dotclock4(dot)
+	v.vinc()
+	v.phi0low(slot)
+	v.dotclock4(dot + 4)
+	v.advance(slot)
+	v.phi0high(v.slot)
+	cpu.TickPhi2()
+	ciaTick()
+	iecTick()
+}
+
+// cycleBlankVINC is cycleBlank for that slot. A blanked line still has to
+// move the counter - vblank is where most of them are.
+func (v *VICII) cycleBlankVINC(slot uint16) {
+	v.vinc()
+	v.phi0low(slot)
+	v.advance(slot)
+	v.phi0high(v.slot)
+	cpu.TickPhi2()
+	ciaTick()
+	iecTick()
+}
+
 // commitGAccess takes up the g-access result fetched one bus cycle earlier.
 // It runs on the first dot of the slot, which is why it sits at the top of
 // the cycle rather than inside the dot path.
@@ -482,12 +555,22 @@ func (v *VICII) stepCycle() {
 		slot == borderSlotRight40
 	mayReload := slot >= reloadFirstSlot && slot < reloadSlotAfter
 	switch {
+	case !v.lineVisible && slot == vincSlot:
+		v.cycleBlankVINC(slot)
 	case !v.lineVisible:
 		v.cycleBlank(slot)
+	case slot == vincSlot:
+		v.cycleDrawVINC(slot)
 	case borderSlot:
 		v.cycleDrawBorder(slot, mayReload)
 	default:
 		v.cycleDraw(slot, mayReload)
+	}
+
+	// stepLine wraps the line when its run of slots ends. Stepping one
+	// cycle at a time, the last slot is where that falls.
+	if slot == CyclesPerLine-1 {
+		v.endLine()
 	}
 }
 
@@ -513,7 +596,7 @@ func (v *VICII) dotclock4(dot uint16) {
 	if dot >= renderFirstDot && dot+3 < renderDotAfter {
 		if v.verticalBorder {
 			c := v.borderColor & 0x0F
-			writePixels4ToBuffer(dot, v.rasterLine, c, c, c, c)
+			writePixels4ToBuffer(dot, v.beamLine, c, c, c, c)
 			return
 		}
 		// The sequencer shifts once per dot, so the four dots read bits 7
@@ -528,7 +611,7 @@ func (v *VICII) dotclock4(dot uint16) {
 			c := v.borderColor
 			c0, c1, c2, c3 = c, c, c, c
 		}
-		writePixels4ToBuffer(dot, v.rasterLine, c0&0x0F, c1&0x0F, c2&0x0F, c3&0x0F)
+		writePixels4ToBuffer(dot, v.beamLine, c0&0x0F, c1&0x0F, c2&0x0F, c3&0x0F)
 		return
 	}
 	// The group straddles the window edge, or is wholly outside it. The
@@ -625,7 +708,7 @@ func (v *VICII) paintDotOutOfGroup(dot uint16) {
 	}
 	if v.verticalBorder {
 		if dot >= renderFirstDot && dot < renderDotAfter {
-			writePixelInWindow(dot, v.rasterLine, v.borderColor&0x0F)
+			writePixelInWindow(dot, v.beamLine, v.borderColor&0x0F)
 		}
 		return
 	}
@@ -635,7 +718,7 @@ func (v *VICII) paintDotOutOfGroup(dot uint16) {
 		graphicsColor = v.borderColor
 	}
 	if dot >= renderFirstDot && dot < renderDotAfter {
-		writePixelInWindow(dot, v.rasterLine, graphicsColor&0x0F)
+		writePixelInWindow(dot, v.beamLine, graphicsColor&0x0F)
 	}
 }
 
@@ -683,12 +766,6 @@ func (v *VICII) phi0low(slot uint16) {
 	// numbering starts 10 slots later (its cycle N is our slot N-11, mod
 	// 63), so the constants below are the article's rebased onto slot.
 
-	// cycleRaster0 (article cycle 1): resets VCBase at the start of raster
-	// line 0.
-	if v.rasterLine == 0 && slot == 53 {
-		v.VCBase = 0
-	}
-
 	// cycleRaster30: latches whether DEN was set at any point during
 	// raster line $30 into allowBadLine, at the end of that line
 	// (section 3.5).
@@ -733,6 +810,32 @@ func (v *VICII) phi0low(slot uint16) {
 	// earlier cycle), so its range is shifted one cycle later: 16-55.
 	if slot >= 5 && slot <= 44 {
 		v.cycleGAccess()
+	}
+}
+
+// vinc moves the raster counter. It is article cycle 1 - the start of a
+// raster line as the counter measures one - which is nine cycles before
+// the beam wraps to the left edge. See vincSlot.
+//
+// Which slot carries it is known where the line is walked, so this is a
+// slot of the run rather than a test in phi0low: every cycle of every line
+// was paying for a question whose answer stepLine already had.
+func (v *VICII) vinc() {
+	v.rasterLine++
+	if v.rasterLine >= RasterLinesPerFrame {
+		v.rasterLine = 0
+	}
+
+	// The only place rasterLine moves, so the only place the cached
+	// answers can go stale. beamLine is deliberately not touched: the beam
+	// has not moved, and will not until the end of the line.
+	v.lineVisible = v.rasterLine < firstVBlankLine && v.rasterLine > lastVBlankLine
+	v.lineDrawable = v.rasterLine >= renderFirstLine && v.rasterLine < renderLineAfter
+
+	// cycleRaster0: resets VCBase at the start of raster line 0, on the
+	// VINC that begins it.
+	if v.rasterLine == 0 {
+		v.VCBase = 0
 	}
 }
 

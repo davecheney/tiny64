@@ -156,6 +156,10 @@ func TestAttachIECDoesNotWriteThroughSnapshots(t *testing.T) {
 // countingPeripheral records how many times the bus clocked it, and
 // checks where the beam stood each time.
 //
+// Where the beam stood is (dot, beamLine). rasterLine is a register that
+// moves on VINC, nine cycles before the beam wraps, so it does not name a
+// row here.
+//
 // The count alone only says the bus was clocked often enough; it does not
 // say it was clocked at the right moments. A path that clocked every
 // device twice on half the cycles would have the same total as one that
@@ -182,7 +186,7 @@ func (*countingPeripheral) iecCLKOut() bool  { return false }
 func (*countingPeripheral) iecDATAOut() bool { return false }
 
 func (c *countingPeripheral) iecTick() {
-	pos := int(vic.rasterLine)*DotsPerLine + int(vic.dot)
+	pos := int(vic.beamLine)*DotsPerLine + int(vic.dot)
 	if cia2.timerA != c.startPhi2-uint16(c.ticks)-1 {
 		c.wrongPhi2++
 	}
@@ -237,7 +241,7 @@ func TestBusIsClockedOnEveryFramePath(t *testing.T) {
 			// Finish KERNAL IOINIT before borrowing its unused timer.
 			m.run(CyclesPerFrame)
 			m.run(tc.startCycles)
-			startDot, startLine := vic.dot, vic.rasterLine
+			startDot, startLine := vic.dot, vic.beamLine
 			dev := &countingPeripheral{
 				addr:      9,
 				startPhi2: armPhi2Counter(),
@@ -246,8 +250,8 @@ func TestBusIsClockedOnEveryFramePath(t *testing.T) {
 			attachIEC(dev)
 			tc.run()
 
-			if vic.dot != startDot || vic.rasterLine != startLine {
-				t.Errorf("frame ended at dot %d line %d, want dot %d line %d", vic.dot, vic.rasterLine, startDot, startLine)
+			if vic.dot != startDot || vic.beamLine != startLine {
+				t.Errorf("frame ended at dot %d line %d, want dot %d line %d", vic.dot, vic.beamLine, startDot, startLine)
 			}
 			if dev.ticks != CyclesPerFrame {
 				t.Errorf("IEC ticks = %d, want %d", dev.ticks, CyclesPerFrame)
