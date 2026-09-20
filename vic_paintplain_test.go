@@ -42,7 +42,11 @@ func TestPlainGroupMatchesPaintWithNoSprites(t *testing.T) {
 								v.gdSequencer = seq
 								v.gdPending = pending
 								v.videoBufferPending = 0x0700 | uint16(pending)
-								v.spriteDisplay = 0
+								// Displayed but covering nothing here, which
+								// is the state spriteFreeGroup exists to tell
+								// apart: the group takes the plain path on the
+								// coverage being empty, not on the register.
+								v.spriteDisplay = 0xFF
 								clear(v.spriteCoverage[:])
 							}
 

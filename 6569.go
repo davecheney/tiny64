@@ -1149,7 +1149,7 @@ func (v *VICII) cycleDrawDisplay(dot uint16) {
 	// graphicsPixelPlain4 for why four dots can share the answer. dotclock4
 	// asks the same question, but reaching it to be asked is a call, and
 	// this is the path that runs on every slot of the display window.
-	if v.spriteDisplay == 0 {
+	if v.spriteFreeGroup(dot) {
 		c0, c1, c2, c3 := v.graphicsPixelPlain4(reload - dot)
 		writePixels4ToBuffer(dot, v.beamLine, c0, c1, c2, c3)
 	} else {
@@ -1162,7 +1162,7 @@ func (v *VICII) cycleDrawDisplay(dot uint16) {
 	cia.cia2.tick(sourceCIA2)
 	iecTick()
 
-	if v.spriteDisplay == 0 {
+	if v.spriteFreeGroup(dot + 4) {
 		c0, c1, c2, c3 := v.graphicsPixelPlain4(reload - (dot + 4))
 		writePixels4ToBuffer(dot+4, v.beamLine, c0, c1, c2, c3)
 	} else {
@@ -1335,7 +1335,7 @@ func (v *VICII) dotclockBorder4(dot, reload uint16) (byte, byte, byte, byte) {
 	// one thing these three slots a line exist for: the comparator can
 	// move it between one dot and the next. So the plain run below still
 	// asks it per dot, where graphicsPixelPlain4 asks it once.
-	if v.spriteDisplay == 0 {
+	if v.spriteFreeGroup(dot) {
 		if dot == reload {
 			v.loadGraphicsData()
 		}
@@ -1392,6 +1392,27 @@ func (v *VICII) dotclockBorder4(dot, reload uint16) (byte, byte, byte, byte) {
 	return c0, c1, c2, c3
 }
 
+// spriteFreeGroup reports that no sprite covers any of a half-phase's
+// four dots, which is what lets the group skip the compositor outright.
+//
+// The compositor's own early-out asks the same thing a dot at a time, and
+// pays a call to do it. Asked here it is four loads folded together, or
+// one when no sprite is displayed at all - and a sprite is 24 dots wide,
+// so even on a line carrying eight of them most groups are not covered by
+// any.
+//
+// Masking to a multiple of four keeps all four indices provably inside
+// the table: every group starts on one, so the mask changes no answer
+// that a real caller asks for.
+func (v *VICII) spriteFreeGroup(dot uint16) bool {
+	if v.spriteDisplay == 0 {
+		return true
+	}
+	d := dot & (511 &^ 3)
+	return v.spriteCoverage[d]|v.spriteCoverage[d+1]|
+		v.spriteCoverage[d+2]|v.spriteCoverage[d+3] == 0
+}
+
 // graphicsPixelPlain decides one dot's colour with no sprite over it: the
 // compositor's whole half removed rather than branched around, and the
 // border still asked, because the group it belongs to cannot answer that
@@ -1442,13 +1463,12 @@ func (v *VICII) dotclock4(dot, reload uint16, borderSlot bool) {
 		return
 	}
 
-	// Whether any sprite is displayed at all belongs to the group, for the
-	// reason graphicsPixelPlain4 gives, and a group none covers has no use
-	// for the compositor: no coverage load a dot, and no call a dot
-	// either, since what decides a plain group is small enough to inline
-	// where the compositor is not. Every painted slot outside the display
-	// window comes through here, which is where that was going to waste.
-	if v.spriteDisplay == 0 {
+	// Whether a sprite covers any of these four dots belongs to the group,
+	// for the reason graphicsPixelPlain4 gives, and a group none covers
+	// has no use for the compositor: no coverage load a dot, and no call a
+	// dot either, since what decides a plain group is small enough to
+	// inline where the compositor is not.
+	if v.spriteFreeGroup(dot) {
 		c0, c1, c2, c3 = v.graphicsPixelPlain4(reload - dot)
 		writePixels4ToBuffer(dot, v.beamLine, c0, c1, c2, c3)
 		return
