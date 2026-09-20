@@ -1913,6 +1913,59 @@ the 37-slot display run, which is the same argument as the border runs
 applied to the other half-phase. And the `beamLine`/`rasterLine` split,
 which would pay back the comparison `advance` costs.
 
+## The display run's half-phases: HARDWARE GATE PENDING
+
+`191cb81`. **Not on `tinygo`.** Parked on `dfc/display-run-halfphases`
+because the Tufty stopped enumerating on USB before it could be measured,
+and this branch does not accept a frame-time change on host evidence.
+
+The entry above listed `phi0lowDisplay` and `phi0highDisplay` as
+outstanding. Leaving them outstanding was the same habit that caused the
+restructure - deciding which parts of main's shape this branch needs - so
+they were taken immediately rather than queued.
+
+The display run is slots 7 to 43. Every test in `phi0low` and `phi0high`
+that asks which slot this is has one answer across all 37: the VCBase
+reload (53), the DEN latch's end-of-line (52), the VC load (1-3),
+goto-idle (47) and the border comparison (52) are outside the run, and the
+BA, g-access and c-access ranges cover all of it. `phi0lowDisplay` takes
+no slot argument at all. What survives is the Bad Line condition, which is
+not hoistable even here: YSCROLL is writable mid-line, so a `$D011` store
+moves it between one cycle and the next. `cycleDrawDisplay` also drops the
+reload test - the whole run is inside the reload window - and moves the
+beam without `advance`'s wrap test, since the run stops 19 slots short of
+the line's end.
+
+**The claim is held by tests, not by this paragraph.** It is only true
+while `phi0low` and `phi0high` keep their current ranges.
+`TestPhi0LowDisplayMatchesPhi0Low` and `TestPhi0HighDisplayMatchesPhi0High`
+walk every slot of the run both ways from the same state and require the
+machine to land in the same place;
+`TestDisplayRunStaysWithinTheHoistedRanges` holds the bounds that make
+those comparisons mean anything.
+
+Those tests seed RAM and colour RAM through `saveMachine`. They have to:
+against zeroed memory a c-access stores a zero over a zero, so a dropped
+access is indistinguishable from one that ran. That was not a theory -
+the first version of `TestPhi0HighDisplayMatchesPhi0High` passed while
+`phi0highDisplay` was missing its c-access entirely. Deleting each access
+in turn and confirming the test fails is what established the tests have
+teeth, and it is worth doing for any equivalence test on this path.
+
+**Verified:** frame-hash oracle unchanged at
+`0133dc95efe659f720ec511f1d4ae2a378a390845e3a8ee9231c29f4ebb318b1`, host
+build/vet/tests pass, both target builds pass. Tufty text 167152 ->
+167472, +320 bytes; `.bss` unchanged.
+
+**Not verified:** frame time. The Tufty disappeared from USB after the
+harness's 1200-baud BOOTSEL touch and does not re-enumerate; `ls
+/dev/cu.usbmodem*`, `/Volumes/RPI-RP2` and `system_profiler SPUSBDataType`
+all show nothing, so it needs a physical replug. **To land this:** flash
+`191cb81`, confirm the UF2 hash against the flashed image, require
+`maze=true` on all 20 windows and a mean at or under the `6348a6a`
+baseline of 51.42613 ms, then fast-forward `tinygo`. If it regresses, it
+does not land, however good the argument for it is.
+
 ## Contributing back to main
 
 This branch also contributes performance fixes upstream to `main` when
