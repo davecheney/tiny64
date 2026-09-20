@@ -27,7 +27,7 @@ const (
 	firstVBlankLine = 301
 	lastVBlankLine  = 7
 
-	// The picture occupies raster lines 8-300; writePixelToBuffer is
+	// The picture occupies raster lines 8-300; writePixels4ToBuffer is
 	// never called outside FirstVisibleLine..FirstVisibleLine+VisibleLines
 	// horizontally 0..VisibleDotsPerLine, so a display only needs a buffer
 	// that size. The display window is raster lines 51-250, leaving 43
@@ -708,10 +708,10 @@ func (v *VICII) refreshGraphicsPalette() {
 // width by expandGraphicsData when the sequencer last reloaded.
 // The index is returned rather than the foreground bit because only the
 // sprite compositor reads that, and most dots have no sprite over them -
-// paintGraphicsPixel's early-out returns before it would be used. So the
+// graphicsPixel's early-out returns before it would be used. So the
 // bit is worked out after that branch instead, where it is read.
 //
-// Measured null on desktop, twice, on two shapes of paintGraphicsPixel
+// Measured null on desktop, twice, on two shapes of graphicsPixel
 // two days and one rewrite apart: -0.31% [-0.95, +0.34] when first tried, and +0.15% against
 // a 0.73% drift floor on the current dot path. A wide out-of-order core
 // issues the discarded ALU work in slots that were idle anyway. It is here
@@ -722,9 +722,11 @@ func (v *VICII) nextGraphicsColor() (byte, uint8) {
 	return v.gdColor[index], index
 }
 
-// paintGraphicsPixelPlain emits one pixel with no sprite over it. It is
-// paintGraphicsPixel with the compositor's whole half removed rather than
-// branched around: no coverage load, no early-out, no foreground bit.
+// graphicsPixelPlain4 decides the colours of all four dots of a Phi0
+// half-phase, none of which a sprite covers. It is graphicsPixel with the
+// compositor's whole half removed rather than branched around - no
+// coverage load, no early-out, no foreground bit - and with everything the
+// four dots agree on lifted out of them.
 //
 // The caller has to know no sprite covers any of the dots it hands over.
 // spriteDisplay being zero is that guarantee - rebuildSpriteCoverage
@@ -733,59 +735,96 @@ func (v *VICII) nextGraphicsColor() (byte, uint8) {
 // which happens between the two half-phases of a bus cycle, never inside
 // one. So it is asked once per four dots instead of once per dot.
 //
-// TestPaintPlainMatchesPaintWithNoSprites holds it to paintGraphicsPixel.
-func (v *VICII) paintGraphicsPixelPlain(dot uint16) {
-	graphicsColor, _ := v.nextGraphicsColor()
+// reloadOffset is how far into the group the sequencer reloads, as
+// dotclockPlain4's reload-dot gives it: 0 to 3, or anything larger for a
+// group that does not reload.
+//
+// The border flip-flop cannot move inside a group either. Only
+// borderCompare writes it, and the three slots it can match in are
+// outside the display window, which is the only place this path runs; the
+// CPU cannot write it either, since a CSEL change only reaches it through
+// the next comparison. So it is one test for the group, not one a dot.
+//
+// That makes a closed border worth answering outright. Nothing reads what
+// the sequencer shifts out while it is closed - only that it keeps
+// shifting, which is what graphicsPixel's comment is about - so the
+// four samples go and the four shifts collapse into one. A reload
+// replaces the register rather than shifting into it, so the shifts
+// before it are dead too, and only the dots after it have to be counted.
+//
+// It does not take the dot. Where the pixels land is the write's
+// business, and the write is the caller's; with the compositor gone there
+// is nothing left here that depends on where along the line the beam is.
+//
+// TestPlainGroupMatchesPaintWithNoSprites holds the whole of that to four
+// graphicsPixel calls.
+func (v *VICII) graphicsPixelPlain4(reloadOffset uint16) (byte, byte, byte, byte) {
 	if v.mainBorder {
-		graphicsColor = v.borderColor
+		if reloadOffset < DotsPerCycle/2 {
+			v.loadGraphicsData()
+			v.gdSequencer <<= 2 * (DotsPerCycle/2 - reloadOffset)
+		} else {
+			v.gdSequencer <<= 2 * (DotsPerCycle / 2)
+		}
+		border := v.borderColor
+		return border, border, border, border
 	}
-	writePixelToBuffer(dot, v.beamLine, graphicsColor&0x0F)
+
+	var c0, c1, c2, c3 byte
+	switch reloadOffset {
+	case 0:
+		v.loadGraphicsData()
+		c0, _ = v.nextGraphicsColor()
+		c1, _ = v.nextGraphicsColor()
+		c2, _ = v.nextGraphicsColor()
+		c3, _ = v.nextGraphicsColor()
+	case 1:
+		c0, _ = v.nextGraphicsColor()
+		v.loadGraphicsData()
+		c1, _ = v.nextGraphicsColor()
+		c2, _ = v.nextGraphicsColor()
+		c3, _ = v.nextGraphicsColor()
+	case 2:
+		c0, _ = v.nextGraphicsColor()
+		c1, _ = v.nextGraphicsColor()
+		v.loadGraphicsData()
+		c2, _ = v.nextGraphicsColor()
+		c3, _ = v.nextGraphicsColor()
+	case 3:
+		c0, _ = v.nextGraphicsColor()
+		c1, _ = v.nextGraphicsColor()
+		c2, _ = v.nextGraphicsColor()
+		v.loadGraphicsData()
+		c3, _ = v.nextGraphicsColor()
+	default:
+		c0, _ = v.nextGraphicsColor()
+		c1, _ = v.nextGraphicsColor()
+		c2, _ = v.nextGraphicsColor()
+		c3, _ = v.nextGraphicsColor()
+	}
+	return c0, c1, c2, c3
 }
 
 // dotclockPlain4 is dotclock4 for dots no sprite covers: the four dots of
 // one Phi0 half-phase, with the reload asked once for the group instead of
-// once a dot. See dotclock4 for why reload-dot decides it, and
-// paintGraphicsPixelPlain for what the caller has to know before using
-// this path at all.
+// once a dot. See dotclock4 for why reload-dot decides it and for why the
+// four colours are written together, and graphicsPixelPlain4 for what is
+// left of the four dots once what they agree on is lifted out of them,
+// and for what the caller has to know before using this path at all.
 //
 // There is no border half here. The three slots the comparator can match
 // in are not inside the display window, so a dot on this path is never one
-// of them.
+// of them - which is also why the border flip-flop cannot move under the
+// group.
 func (v *VICII) dotclockPlain4(dot, reload uint16) {
-	switch reload - dot {
-	case 0:
-		v.loadGraphicsData()
-		v.paintGraphicsPixelPlain(dot)
-		v.paintGraphicsPixelPlain(dot + 1)
-		v.paintGraphicsPixelPlain(dot + 2)
-		v.paintGraphicsPixelPlain(dot + 3)
-	case 1:
-		v.paintGraphicsPixelPlain(dot)
-		v.loadGraphicsData()
-		v.paintGraphicsPixelPlain(dot + 1)
-		v.paintGraphicsPixelPlain(dot + 2)
-		v.paintGraphicsPixelPlain(dot + 3)
-	case 2:
-		v.paintGraphicsPixelPlain(dot)
-		v.paintGraphicsPixelPlain(dot + 1)
-		v.loadGraphicsData()
-		v.paintGraphicsPixelPlain(dot + 2)
-		v.paintGraphicsPixelPlain(dot + 3)
-	case 3:
-		v.paintGraphicsPixelPlain(dot)
-		v.paintGraphicsPixelPlain(dot + 1)
-		v.paintGraphicsPixelPlain(dot + 2)
-		v.loadGraphicsData()
-		v.paintGraphicsPixelPlain(dot + 3)
-	default:
-		v.paintGraphicsPixelPlain(dot)
-		v.paintGraphicsPixelPlain(dot + 1)
-		v.paintGraphicsPixelPlain(dot + 2)
-		v.paintGraphicsPixelPlain(dot + 3)
-	}
+	c0, c1, c2, c3 := v.graphicsPixelPlain4(reload - dot)
+	writePixels4ToBuffer(dot, v.beamLine, c0, c1, c2, c3)
 }
 
-// paintGraphicsPixel emits one pixel through the border unit and sprite compositor.
+// graphicsPixel decides one pixel's colour, through the border unit and
+// the sprite compositor. It returns it rather than writing it: a dot's
+// colour is per dot, but the write need not be, and dotclock4 collects
+// four of these into one write.
 //
 // Section 3.9 of the VIC Article is explicit that the *main* border
 // flip-flop alone decides whether border colour reaches the screen; the
@@ -798,7 +837,7 @@ func (v *VICII) dotclockPlain4(dot, reload uint16) {
 // nextGraphicsColor is therefore called unconditionally: the sequencer
 // keeps shifting behind a closed border exactly as the hardware does, and
 // only the colour that is written is replaced.
-func (v *VICII) paintGraphicsPixel(dot uint16) {
+func (v *VICII) graphicsPixel(dot uint16) byte {
 	graphicsColor, gdIndex := v.nextGraphicsColor()
 	// Which sprites cover this dot, decided when the line's windows were
 	// last settled rather than by asking all eight here. The mask keeps
@@ -809,8 +848,7 @@ func (v *VICII) paintGraphicsPixel(dot uint16) {
 		if v.mainBorder {
 			graphicsColor = v.borderColor
 		}
-		writePixelToBuffer(dot, v.beamLine, graphicsColor&0x0F)
-		return
+		return graphicsColor
 	}
 
 	// Past the early-out, so this is only worked out for the dots a sprite
@@ -830,8 +868,7 @@ func (v *VICII) paintGraphicsPixel(dot uint16) {
 			if v.mainBorder {
 				graphicsColor = v.borderColor
 			}
-			writePixelToBuffer(dot, v.beamLine, graphicsColor&0x0F)
-			return
+			return graphicsColor
 		}
 
 		mask := uint8(1 << i)
@@ -847,12 +884,10 @@ func (v *VICII) paintGraphicsPixel(dot uint16) {
 		} else if v.spritePriority&mask == 0 || !isForeground {
 			finalColor = spriteDotColor(v, val, i)
 		}
-		writePixelToBuffer(dot, v.beamLine, finalColor&0x0F)
-		return
+		return finalColor
 	}
 
 	d := dot
-	r := v.beamLine
 	priorityReg := v.spritePriority
 
 	var (
@@ -919,7 +954,7 @@ func (v *VICII) paintGraphicsPixel(dot uint16) {
 		}
 	}
 
-	writePixelToBuffer(d, r, finalColor&0x0F)
+	return finalColor
 }
 
 // ReadRegister reads a VIC-II register, mirrored every 64 bytes across
@@ -1123,7 +1158,7 @@ func (v *VICII) cycleDrawDisplay(dot uint16) {
 	reload := v.reloadDot(dot, true)
 
 	// Asked once for the half-phase, not once a dot: see
-	// paintGraphicsPixelPlain for why four dots can share the answer.
+	// graphicsPixelPlain4 for why four dots can share the answer.
 	if v.spriteDisplay == 0 {
 		v.dotclockPlain4(dot, reload)
 	} else {
@@ -1281,41 +1316,34 @@ func StepFrame() {
 	vic.StepFrame()
 }
 
-// dotclock advances the beam by one dot. Every phase of a bus cycle does
-// exactly this and nothing else: ask the border comparator, if this slot
-// is one of the three that can match; take up the g-access result, if this
-// is the dot XSCROLL selects; paint, if the dot reaches the screen; step
-// the beam.
+// dotclockBorder is one dot of a slot the border comparator can match:
+// take up the g-access result, if this is the dot XSCROLL selects; ask the
+// comparator; decide the colour. It is all that is left of a per-dot step,
+// and only three slots a line reach it.
 //
-// It was eight functions, one per phase, so that each had a single call
-// site and LLVM would inline it. That split was load-bearing while two of
-// the eight carried the border comparisons and were therefore bigger than
-// the rest. They no longer do: a shift register clocked at 8MHz does not
-// run comparators, and once those moved out the eight bodies were
-// byte-identical with nothing to tell them apart.
-func (v *VICII) dotclock(dot, reload uint16, borderSlot bool) {
+// Its caller does the write, because in the dot path that write is one of
+// four - see dotclock4.
+func (v *VICII) dotclockBorder(dot, reload uint16) byte {
 	if dot == reload {
 		v.loadGraphicsData()
 	}
 
 	// The comparator runs before the paint: the dot a comparison fires on
 	// is painted with the state it just set, not the one before.
-	if borderSlot {
-		v.borderCompare(dot)
-	}
-	v.paintGraphicsPixel(dot)
+	v.borderCompare(dot)
+	return v.graphicsPixel(dot)
 }
 
-// dotclock4 is the four dots of one Phi0 half-phase. Every caller of
-// dotclock wants exactly four of them with the same reload dot and the
-// same borderSlot, so this is what the dot path actually asks for.
+// dotclock4 is the four dots of one Phi0 half-phase. Every caller wants
+// exactly four of them with the same reload dot and the same borderSlot,
+// and it is the only way to paint at all: there is no single-dot step.
 //
-// dotclock is too big to inline - paintGraphicsPixel is a real call inside
+// A per-dot step was too big to inline - the paint was a real call inside
 // it - so those four dots were four calls, and that dispatch measured
 // about 13% of the frame, near enough the same share on all six demos.
 //
-// Both of dotclock's questions are the same for all four dots, so they are
-// asked once here instead of once a dot. borderSlot is fixed for the cycle
+// Both of its questions are the same for all four dots, so they are asked
+// once here instead of once a dot. borderSlot is fixed for the cycle
 // and true in three slots of 63. A bus cycle reloads at most once, so at
 // most one of these four dots is the reload dot, and reload-dot says which
 // - unsigned, so a reload in the cycle's other half, or none at all, comes
@@ -1324,49 +1352,61 @@ func (v *VICII) dotclock(dot, reload uint16, borderSlot bool) {
 // Four predictable branches are not expensive on an out-of-order core.
 // What this removes is the three extra calls and the per-dot work behind
 // them, which is why it is worth measuring rather than counting.
+//
+// The write is the third thing the four dots share. Deciding a colour is
+// per dot; putting it somewhere is not, and the four dots of a half-phase
+// are four consecutive pixels of one raster line. So the colours are
+// collected and handed to the sink together, so the row offset and the
+// bounds check are worked out once for the group - and, since nothing
+// between the dots can read the frame buffer or move the beam off this
+// line, holding three colours back until the fourth is decided changes no
+// answer.
 func (v *VICII) dotclock4(dot, reload uint16, borderSlot bool) {
+	var c0, c1, c2, c3 byte
 	if borderSlot {
 		// Three slots a line. The comparator has to run between the
 		// paints, since the dot a comparison fires on is painted with
 		// the state it just set, so this half stays per-dot.
-		v.dotclock(dot, reload, true)
-		v.dotclock(dot+1, reload, true)
-		v.dotclock(dot+2, reload, true)
-		v.dotclock(dot+3, reload, true)
+		c0 = v.dotclockBorder(dot, reload)
+		c1 = v.dotclockBorder(dot+1, reload)
+		c2 = v.dotclockBorder(dot+2, reload)
+		c3 = v.dotclockBorder(dot+3, reload)
+		writePixels4ToBuffer(dot, v.beamLine, c0, c1, c2, c3)
 		return
 	}
 
 	switch reload - dot {
 	case 0:
 		v.loadGraphicsData()
-		v.paintGraphicsPixel(dot)
-		v.paintGraphicsPixel(dot + 1)
-		v.paintGraphicsPixel(dot + 2)
-		v.paintGraphicsPixel(dot + 3)
+		c0 = v.graphicsPixel(dot)
+		c1 = v.graphicsPixel(dot + 1)
+		c2 = v.graphicsPixel(dot + 2)
+		c3 = v.graphicsPixel(dot + 3)
 	case 1:
-		v.paintGraphicsPixel(dot)
+		c0 = v.graphicsPixel(dot)
 		v.loadGraphicsData()
-		v.paintGraphicsPixel(dot + 1)
-		v.paintGraphicsPixel(dot + 2)
-		v.paintGraphicsPixel(dot + 3)
+		c1 = v.graphicsPixel(dot + 1)
+		c2 = v.graphicsPixel(dot + 2)
+		c3 = v.graphicsPixel(dot + 3)
 	case 2:
-		v.paintGraphicsPixel(dot)
-		v.paintGraphicsPixel(dot + 1)
+		c0 = v.graphicsPixel(dot)
+		c1 = v.graphicsPixel(dot + 1)
 		v.loadGraphicsData()
-		v.paintGraphicsPixel(dot + 2)
-		v.paintGraphicsPixel(dot + 3)
+		c2 = v.graphicsPixel(dot + 2)
+		c3 = v.graphicsPixel(dot + 3)
 	case 3:
-		v.paintGraphicsPixel(dot)
-		v.paintGraphicsPixel(dot + 1)
-		v.paintGraphicsPixel(dot + 2)
+		c0 = v.graphicsPixel(dot)
+		c1 = v.graphicsPixel(dot + 1)
+		c2 = v.graphicsPixel(dot + 2)
 		v.loadGraphicsData()
-		v.paintGraphicsPixel(dot + 3)
+		c3 = v.graphicsPixel(dot + 3)
 	default:
-		v.paintGraphicsPixel(dot)
-		v.paintGraphicsPixel(dot + 1)
-		v.paintGraphicsPixel(dot + 2)
-		v.paintGraphicsPixel(dot + 3)
+		c0 = v.graphicsPixel(dot)
+		c1 = v.graphicsPixel(dot + 1)
+		c2 = v.graphicsPixel(dot + 2)
+		c3 = v.graphicsPixel(dot + 3)
 	}
+	writePixels4ToBuffer(dot, v.beamLine, c0, c1, c2, c3)
 }
 
 // phi0low runs after the first four dots of every 8-dot cycle: while the VIC-II is
@@ -1790,7 +1830,7 @@ func spriteDotColor(v *VICII, val, i uint8) byte {
 }
 
 // decodeSpriteRow works out the dots sprite i paints, once for the line,
-// so that paintGraphicsPixel can index the answer instead of deriving it
+// so that graphicsPixel can index the answer instead of deriving it
 // for every dot the sprite covers.
 //
 // What it does not bake in is colour. The values are which of the four

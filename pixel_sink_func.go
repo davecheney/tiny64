@@ -6,4 +6,4 @@ package tiny64
 // function value rather than called directly, so the cost of that
 // indirection can be measured against it.
 
-var writePixelToBuffer = writePixelToIndexed
+var writePixels4ToBuffer = writePixels4ToIndexed
