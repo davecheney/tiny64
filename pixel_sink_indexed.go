@@ -3,10 +3,9 @@
 package tiny64
 
 const (
-	// FrameBufferStride is the indexed row size in bytes, rounded up to
-	// four so the desktop can upload each group as one RGBA texel.
-	// Padding is unused storage, not additional visible VIC-II dots.
-	FrameBufferStride = (VisibleDotsPerLine + 3) &^ 3
+	// FrameBufferStride is the indexed row size in bytes: one palette
+	// index per visible VIC-II dot, with no padding between rows.
+	FrameBufferStride = VisibleDotsPerLine
 
 	visibleFrameOffset = FirstVisibleLine * FrameBufferStride
 )
@@ -14,8 +13,8 @@ const (
 var frameBufferIndexed [FrameBufferStride * RasterLinesPerFrame]byte
 
 // FrameBufferIndexed returns the current visible frame in row-major order,
-// one C64Palette index per pixel, padded to FrameBufferStride bytes per line.
-// The returned slice is a live view of the framebuffer, updated by emulation.
+// one C64Palette index per pixel, FrameBufferStride bytes per line. The
+// returned slice is a live view of the framebuffer, updated by emulation.
 func FrameBufferIndexed() []byte {
 	return frameBufferIndexed[visibleFrameOffset : visibleFrameOffset+FrameBufferStride*VisibleLines]
 }

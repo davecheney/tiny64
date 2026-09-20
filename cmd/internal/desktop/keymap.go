@@ -1,5 +1,3 @@
-//go:build sdl
-
 package desktop
 
 import (
@@ -14,13 +12,12 @@ import (
 // works too, at the cost of a duplicate-library warning from the linker.
 
 // #define SDL_MAIN_HANDLED
-// #include <SDL2/SDL.h>
+// #include <SDL.h>
 import "C"
 
 // The host keys, by physical position. See keyboard.go for why the map is
 // positional rather than symbolic, and what the shifted table is for.
-// This is the same mapping as keymap_ebiten.go, over SDL's scancodes;
-// keyboard_test.go checks whichever pair was built covers the matrix.
+// keyboard_test.go checks the two tables between them cover the matrix.
 var positional = map[C.SDL_Scancode]tiny64.Key{
 	C.SDL_SCANCODE_A: tiny64.KeyA,
 	C.SDL_SCANCODE_B: tiny64.KeyB,

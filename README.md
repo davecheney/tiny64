@@ -278,19 +278,40 @@ The disassembler covers all 256 opcodes, including the undocumented ones,
 which are printed with a leading `*`.
 
 It is deliberately small: the core package has no dependency on any
-graphics library, so it can run headless (for testing) or under
-[Ebitengine](https://ebitengine.org/) for a desktop GUI. It also builds
-under TinyGo, with the long-term aim of running tiny64 on a Raspberry Pi
-Pico. TinyGo is a compiler choice, not a target: what selects the embedded
-frame buffer is the `baremetal` build tag, which TinyGo sets for board
-targets and not for the host. A host TinyGo build is a desktop build.
+graphics library, so it can run headless (for testing) or under SDL2 for a
+desktop GUI. It also builds under TinyGo, with the long-term aim of
+running tiny64 on a Raspberry Pi Pico. TinyGo is a compiler choice, not a
+target: what selects the embedded frame buffer is the `baremetal` build
+tag, which TinyGo sets for board targets and not for the host. A host
+TinyGo build is a desktop build.
+
+SDL2 is the only desktop backend, and it is the reason both compilers can
+build the same frontend: it is reached through a small cgo shim, where
+Ebitengine -- which this used to default to -- reaches TinyGo through
+purego, whose `func.go` needs `reflect.Value.SetPointer`, and TinyGo's
+reflect has no such method.
+
+The three commands that open a window -- `cmd/c64`, `cmd/deadtest` and
+`cmd/destestmax` -- therefore need cgo and the SDL2 development headers:
+
+    sudo apt-get install libsdl2-dev   # Debian, Ubuntu
+    brew install sdl2                  # macOS
+
+Everything else -- the core package, `cmd/c64cli`, `cmd/snapshot`,
+`cmd/prg` and the board targets -- builds without either.
+
+The window opens at the largest whole multiple of the 408x293 picture that
+leaves room around it on the display, never below 2x. Whole multiples only:
+a fractional one makes some emulated dots taller than their neighbours.
+Resize it however you like afterwards -- SDL scales the picture to fit,
+keeps its proportions and letterboxes the remainder.
 
 ## Layout
 
 - the repository root is the core emulator package (CPU, VIC-II, CIA,
   1541, the generic IEC drive, bus/PLA)
 - `rom/` embeds the ROM images the emulator needs to boot
-- `cmd/internal/desktop/` is the shared Ebitengine frontend used by the desktop
+- `cmd/internal/desktop/` is the shared SDL2 frontend used by the desktop
   commands
 - `cmd/c64` is the desktop C64 emulator
 - `cmd/c64cli` runs the emulator headless, for testing and debugging
@@ -326,9 +347,10 @@ Tufty's 320x240 framebuffer in RP2040 RAM.
 ## The frame buffer
 
 The VIC-II decides on a four bit colour index per pixel. The default Go
-frame buffer stores each index in one byte; the desktop GPU expands it
-through a palette shader. The `pixelsink_func` build uses the same storage
-but calls the pixel writer indirectly, for benchmarking.
+frame buffer stores each index in one byte; the desktop expands those to
+colour on the CPU as the frame is handed to SDL. The `pixelsink_func`
+build uses the same storage but calls the pixel writer indirectly, for
+benchmarking.
 
 `tiny64.C64Palette` holds Pepto's PAL values, derived from the 6569's
 colour carrier rather than eyeballed, and identical to the `pepto-pal.vpl`
@@ -336,15 +358,17 @@ that VICE ships. Sharing VICE's palette means a capture taken there can be
 compared against our output directly, which is how the demo fixtures get
 validated against something other than this emulator's own judgement.
 
-Four horizontally adjacent pixels are packed into the RGBA channels of one
-texel, including the alpha channel. The 408-pixel rows have a
-`FrameBufferStride` of 408 bytes, with no padding, so `FrameBufferIndexed`
-can be uploaded directly without CPU row repacking.
-The visible picture remains 408x293; the texture is 102x293 and the upload
-is 119,544 bytes rather than 478,176 bytes of RGBA. The indexed raster
-storage, including non-visible lines, occupies 127,296 bytes.
-`cmd/internal/desktop/palette.kage` selects each pixel's channel and looks
-up its colour in the palette uniform.
+`FrameBufferStride` is 408 bytes, one index per visible dot with no
+padding between rows. The indexed raster storage, including the
+non-visible lines, occupies 127,296 bytes.
+
+`ExpandFrameBufferRGBA` takes the destination buffer and its pitch, which
+is what lets the frame be expanded exactly once. SDL hands out the
+streaming texture's own staging buffer through `SDL_LockTexture`, so the
+desktop expands straight into that: every pixel is written where the
+driver is already going to read it. Expanding into storage of our own and
+then asking SDL to copy it across would cost a second pass over the whole
+picture, about 57MB/s of memory traffic for nothing.
 
 `FrameBufferRGBA` expands a frame for the callers that do want whole
 pixels on the CPU -- the tests and `cmd/snapshot` -- into a tightly packed
@@ -355,13 +379,8 @@ overwrites it. Copy the result to retain a snapshot across calls.
 
 Bare-metal targets -- those TinyGo sets `baremetal` for -- retain their
 cropped 320x240 RGB565BE frame buffer and `FrameBufferRGB565BE` API; they
-do not use the desktop palette shader. The `headless` sink stores no
+do not use the indexed frame buffer at all. The `headless` sink stores no
 pixels.
-
-The shader readback tests require a graphics session and run separately
-from the ordinary unit tests:
-
-    go test -tags gpu ./cmd/internal/desktop
 
 The DOS wedge, 1541 and IEC drive tests in the root package each boot a
 whole emulated C64 and talk to a drive one bus transition at a time, which

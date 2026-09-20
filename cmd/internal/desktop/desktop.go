@@ -1,21 +1,22 @@
 // Package desktop provides the shared GUI frontend used by tiny64's
 // desktop commands (cmd/c64, cmd/destestmax, cmd/deadtest).
 //
-// It has two backends, chosen by build tag. The default is Ebitengine,
-// which expands palette indices into colours on the GPU. Under -tags sdl
-// it is SDL2 through a small cgo shim, which is what TinyGo can compile:
-// Ebitengine reaches TinyGo through purego, whose func.go needs
-// reflect.Value.SetPointer, and TinyGo's reflect does not have it.
+// It draws through SDL2, over a small cgo shim. SDL is the backend rather
+// than one of several because it is what both compilers can build: this
+// used to default to Ebitengine, which reaches TinyGo through purego,
+// whose func.go needs reflect.Value.SetPointer, and TinyGo's reflect does
+// not have it. With one backend there is no tag to pass and no second
+// keyboard map to keep in step.
 //
 // The package is deliberately isolated from the core tiny64 package: the
 // long-term goal is to run tiny64 on a Raspberry Pi Pico 2 under TinyGo,
-// which won't use either backend, so nothing here should be depended on
-// by anything outside cmd/*.
+// which won't use this frontend at all, so nothing here should be
+// depended on by anything outside cmd/*.
 //
-// A backend supplies two verbs, openDisplay and runLoop, and calls step
-// once per frame. Everything else - the power-on noise, the reset
-// sequence, the frame count - lives here, so the two backends cannot
-// drift on the parts that are not about drawing.
+// The drawing lives in backend.go, which supplies two verbs, openDisplay
+// and runLoop, and calls step once per frame. Everything else - the
+// power-on noise, the reset sequence, the frame count - lives here, where
+// the commands that share this frontend can rely on it being the same.
 package desktop
 
 import (
@@ -30,16 +31,22 @@ const (
 	// never written, so there's no point sizing the window for them.
 	ScreenWidth  = tiny64.VisibleDotsPerLine
 	ScreenHeight = tiny64.VisibleLines
-	Scale        = 2
+
+	// Scale is the smallest the window will open at, in window pixels per
+	// emulated dot. One is too small to read the 40-column screen on
+	// anything modern, so two is the floor; openingScale in backend.go
+	// picks the actual opening size, which on a large or dense display is
+	// a good deal more than this.
+	Scale = 2
 )
 
 // frames counts the PAL frames the emulator has run, reported on exit as
 // a rough check that the machine was actually executing.
 var frames int
 
-// step advances the machine by one frame. Both backends call it once per
-// iteration of their loop, so the emulated cadence does not depend on
-// which one is built.
+// step advances the machine by one frame. runLoop calls it once per
+// iteration, so the emulated cadence is set here rather than by whatever
+// the drawing side happens to be doing.
 func step() {
 	// Sample the host keyboard once per frame. The matrix itself is
 	// combinational, so the guest sees whatever is held at the instant it

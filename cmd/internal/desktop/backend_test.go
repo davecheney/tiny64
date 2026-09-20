@@ -1,5 +1,3 @@
-//go:build sdl
-
 package desktop
 
 import "testing"

@@ -18,6 +18,13 @@ jobs:
         with:
           go-version-file: go.mod
 
+      # The desktop frontend draws through SDL2 over a cgo shim, so every
+      # step below needs the headers, not just the ones that name a
+      # window. This is also why nothing here sets CGO_ENABLED=0: cmd/c64,
+      # cmd/deadtest and cmd/destestmax cannot be built without cgo.
+      - name: Install SDL2
+        run: sudo apt-get update && sudo apt-get install -y libsdl2-dev
+
       - name: Build
         run: go build ./...
 
@@ -39,33 +46,6 @@ jobs:
 
       - name: Vet (1541)
         run: go vet -tags drive1541 ./...
-
-      # The desktop frontend has a second backend, on SDL2 instead of
-      # Ebitengine, because Ebitengine reaches TinyGo through purego, whose
-      # func.go needs reflect.Value.SetPointer and TinyGo's reflect has no
-      # such method. It is behind the sdl tag, so none of the steps above
-      # compile it, its cgo shim, or its copy of the keyboard map.
-      #
-      # This pass runs the standard toolchain over it rather than TinyGo.
-      # That is deliberate: both compile the same files, and an error in
-      # the shim surfaces here as an ordinary Go error instead of one from
-      # a compiler with its own cgo implementation. TinyGo itself is not
-      # installed on the runner - what it can build is checked by hand.
-      - name: Install SDL2
-        run: sudo apt-get update && sudo apt-get install -y libsdl2-dev
-
-      - name: Build (sdl)
-        run: go build -tags sdl ./...
-
-      # The desktop tests are the only ones the tag changes, and neither of
-      # the two it selects needs a display: one checks the keyboard map
-      # covers the matrix, the other that SDL's RGBA32 really is byte-order
-      # RGBA, which is what lets a frame upload without repacking.
-      - name: Test (sdl)
-        run: go test -tags sdl ./cmd/internal/desktop
-
-      - name: Vet (sdl)
-        run: go vet -tags sdl ./...
 
       # There's no golangci-lint in the repo yet, so "lint" is what the
       # standard toolchain offers: vet, plus a formatting check, written
