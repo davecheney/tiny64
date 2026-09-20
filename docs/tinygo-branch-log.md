@@ -1987,7 +1987,7 @@ could be measured rather than pushed to `tinygo` on host evidence.
 
 ## The beamLine/rasterLine split, and VINC as a slot of the run
 
-`f35521c`. **51.829036 -> 46.766726 ms** for the three commits together;
+`ecb431c`. **51.829036 -> 46.766726 ms** for the three commits together;
 this one **47.642618 -> 46.766726, -0.8759 ms, -1.838%**.
 
 The last structural difference from main in the dot path. `rasterLine` was
@@ -2084,7 +2084,7 @@ overlap 47.43-47.81. Accepted.
 ### Where the dot path stands
 
 `51.829036 -> 46.766726 ms, -9.77%` across `414996a`, `191cb81` and
-`f35521c`, with the picture byte-identical throughout. There is no
+`ecb431c`, with the picture byte-identical throughout. There is no
 remaining structural difference from main in the dot path: what is left
 out is sprites, the real 1541 and the full graphics modes, which is what
 this branch is for. Upstream work on this path should apply again.
