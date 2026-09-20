@@ -843,38 +843,75 @@ func (v *VICII) graphicsPixel(dot uint16) byte {
 	// actually covers. See nextGraphicsColor.
 	isForeground := v.gdForeground&(1<<gdIndex) != 0
 
+	// More than one sprite over the one dot is the rare half, and none of
+	// it is here: see graphicsPixelOverlap.
+	if display&(display-1) != 0 {
+		return v.graphicsPixelOverlap(dot, display, graphicsColor, isForeground)
+	}
+
 	// One sprite over the dot is the common case, and it does not need
-	// any of the machinery the general path carries. Nothing can win the
+	// any of the machinery the overlap path carries. Nothing can win the
 	// pixel ahead of it, so there is no first-hit bookkeeping; nothing
 	// can share the dot with it, so there is no sprite-sprite collision.
 	// What is left is the dot's own value, one collision register and the
 	// priority bit.
-	if display&(display-1) == 0 {
-		i := uint8(bits.TrailingZeros8(display))
-		val := v.spritePixels[i][dot-v.spriteStart[i]]
-		if val == spriteDotNone {
-			if v.mainBorder {
-				graphicsColor = v.borderColor
-			}
-			return graphicsColor
-		}
-
-		mask := uint8(1 << i)
-		if isForeground && mask&^v.spriteDataCollision != 0 {
-			v.spriteDataCollision |= mask
-			v.interruptStatus |= 0x08
-			v.updateIRQ()
-		}
-
-		finalColor := graphicsColor
+	i := uint8(bits.TrailingZeros8(display))
+	val := v.spritePixels[i][dot-v.spriteStart[i]]
+	if val == spriteDotNone {
 		if v.mainBorder {
-			finalColor = v.borderColor
-		} else if v.spritePriority&mask == 0 || !isForeground {
-			finalColor = spriteDotColor(v, val, i)
+			graphicsColor = v.borderColor
 		}
-		return finalColor
+		return graphicsColor
 	}
 
+	mask := spriteBit(i)
+	if isForeground && mask&^v.spriteDataCollision != 0 {
+		v.raiseSpriteDataCollision(mask)
+	}
+
+	if v.mainBorder {
+		return v.borderColor
+	}
+	if v.spritePriority&mask == 0 || !isForeground {
+		return spriteDotColor(v, val, i)
+	}
+	return graphicsColor
+}
+
+// raiseSpriteDataCollision records that sprite data met foreground
+// graphics data, in $D01F and the interrupt latch.
+//
+// Both callers test the register before reaching here, for the reason
+// graphicsPixelOverlap gives: a collision is news once and then
+// background, so the store and the interrupt update - neither of them
+// small, and updateIRQ is a call of its own - are work the dot path
+// should carry a branch to rather than a copy of.
+func (v *VICII) raiseSpriteDataCollision(mask uint8) {
+	v.spriteDataCollision |= mask
+	v.interruptStatus |= 0x08
+	v.updateIRQ()
+}
+
+// raiseSpriteSpriteCollision records that two sprites painted the same
+// dot, in $D01E and the interrupt latch.
+func (v *VICII) raiseSpriteSpriteCollision(mask uint8) {
+	v.spriteSpriteCollision |= mask
+	v.interruptStatus |= 0x04
+	v.updateIRQ()
+}
+
+// graphicsPixelOverlap decides a dot that more than one sprite covers.
+// The first hit wins the pixel, and every sprite that painted the dot
+// goes into the sprite-sprite collision register.
+//
+// It is out of line from graphicsPixel because it is the rare half, and
+// the expensive one: a loop over the coverage mask, two collision
+// registers, and first-hit bookkeeping that neither of the other two
+// paths needs. Sprites have to be placed over one another to reach it at
+// all. Kept here it costs the dots that need it a call and the dots that
+// do not nothing, which is what leaves graphicsPixel small enough for a
+// caller to take four of it.
+func (v *VICII) graphicsPixelOverlap(dot uint16, display uint8, graphicsColor byte, isForeground bool) byte {
 	d := dot
 	priorityReg := v.spritePriority
 
@@ -890,7 +927,7 @@ func (v *VICII) graphicsPixel(dot uint16) byte {
 	// order the range tests did.
 	for remaining := display; remaining != 0; remaining &= remaining - 1 {
 		i := uint8(bits.TrailingZeros8(remaining))
-		mask := uint8(1 << i)
+		mask := spriteBit(i)
 
 		// The dot is inside this sprite's window - that is what coverage
 		// means - so how far into it says which of the row's dots this
@@ -918,15 +955,11 @@ func (v *VICII) graphicsPixel(dot uint16) byte {
 	// dot, which is what the common case is - a collision is news once and
 	// then background.
 	if hitCount > 1 && currentHitMask&^v.spriteSpriteCollision != 0 {
-		v.spriteSpriteCollision |= currentHitMask
-		v.interruptStatus |= 0x04
-		v.updateIRQ()
+		v.raiseSpriteSpriteCollision(currentHitMask)
 	}
 
 	if hitCount > 0 && isForeground && currentHitMask&^v.spriteDataCollision != 0 {
-		v.spriteDataCollision |= currentHitMask
-		v.interruptStatus |= 0x08
-		v.updateIRQ()
+		v.raiseSpriteDataCollision(currentHitMask)
 	}
 
 	finalColor := graphicsColor
