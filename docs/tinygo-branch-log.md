@@ -1985,6 +1985,110 @@ USB after the harness's 1200-baud BOOTSEL touch and needed a physical
 replug. The commit was parked on `dfc/display-run-halfphases` until it
 could be measured rather than pushed to `tinygo` on host evidence.
 
+## The beamLine/rasterLine split, and VINC as a slot of the run
+
+`f35521c`. **51.829036 -> 46.766726 ms** for the three commits together;
+this one **47.642618 -> 46.766726, -0.8759 ms, -1.838%**.
+
+The last structural difference from main in the dot path. `rasterLine` was
+doing two jobs: naming the framebuffer row a dot lands in, and holding the
+value `$D012` reads. On the chip those are one counter, but it does not
+move where the beam wraps - it moves on VINC, in slot 53, nine cycles
+earlier. Conflating them forced the increment to the end of the line,
+which forced `advance` to ask "did the beam run off the line" in every bus
+cycle so the line's last cycle would see the counter already moved.
+
+`beamLine` is the beam's row and steps in `endLine`, which `stepLine`
+calls once where its run of slots stops. `rasterLine` is the register and
+steps on VINC. `advance` loses its test and becomes two assignments.
+
+**This is a behaviour change, not bookkeeping.** `$D012` reads the new
+line from slot 53 rather than slot 62, and VCBase's reload at article
+cycle 1 now happens on the VINC that begins raster line 0 rather than 53
+cycles into it. Article cycle 1 *is* slot 53 in this coordinate system, so
+this is what that rule always meant; the old code had `rasterLine` aligned
+to the beam, which made article cycle 1 land most of a line late.
+
+### The intermediate measurement, which is the point of this entry
+
+Taken the way main has it - VINC as a test at the top of `phi0low` - this
+**regressed 1.17%** on hardware: 48.198692 ms against 47.642618. The
+comparison removed from `advance` was simply moved into `phi0low`, and
+`phi0low` grew from `0x218` to `0x250`. For a change whose case is
+correctness, paying 1.17% would have been a real cost, and under this
+branch's rule it would not have landed.
+
+But which slot carries VINC is known *where the line is walked*. It is the
+same question the border slots and the display run already answered: a
+fact `stepLine` has statically, being re-asked at runtime by every cycle
+of every line. Dividing the runs on slot 53 the way they already divide on
+6, 44 and 46 - `cycleDrawVINC` and `cycleBlankVINC`, the blank path
+included because vblank is where most of the lines that still have to move
+the counter are - brings `phi0low` out at `0x210`, **smaller than before
+the split**, and turns the 1.17% loss into a 1.84% gain. A 3% swing
+between two versions of the same change.
+
+main tests for it in `phi0low` because main's line has a blanked tail this
+one does not. **Tracking main's structure is the rule; copying its
+placement is not.** The difference is that a run divides where the answers
+are constant, and which slots those are is a property of the line, which
+differs here.
+
+### Field placement is not a detail either
+
+`beamLine` first went in beside `rasterLine`, which pushed every field
+below it two bytes down and out of the compact fixed-offset range TinyGo
+uses for the hot byte fields - `gdPending`, `videoBuffer`, the colour and
+control registers. It now sits at the cold end of the scalars, leaving
+every existing offset alone and costing only its own two reads a cycle.
+That was part of the same 1.17%, and the struct comment says so, because
+the next person to add a field here needs to know.
+
+### Verification
+
+Frame-hash oracle unchanged at
+`0133dc95efe659f720ec511f1d4ae2a378a390845e3a8ee9231c29f4ebb318b1`, so the
+picture is byte-identical despite the behaviour change - MAZE never reads
+`$D012` in the nine-cycle window, which is a fact about MAZE and not a
+proof the change is invisible in general. Host build/vet/tests pass; both
+target builds pass. Tufty text 167472 -> 168304, +832 bytes for the two
+new cycle variants; `.bss` unchanged.
+
+The invariant that lets the two counters exist at all - they differ only
+across slots 53 to 62, dots 424 to 503, every one past
+`VisibleDotsPerLine` 405 - is held by
+`TestBeamLineAgreesWithRasterWherePainted`, which steps two frames and
+requires agreement across every cycle whose dots are all visible, **and
+requires them to actually diverge somewhere**, or the test proves nothing.
+`TestNothingPaintsAfterVINC` holds the window fact it rests on. Checked
+for teeth by moving VINC into the visible region, by stopping the beam
+advancing, and by stopping the counter moving: all three fail. Two earlier
+candidate mutations passed, correctly - repainting from `rasterLine` and
+resyncing at the wrap are both no-ops precisely *because* the invariant
+holds, which is worth knowing before reading a surviving mutant as a weak
+test.
+
+Two tests read `rasterLine` as a beam position and were corrected rather
+than adjusted to pass: `countingPeripheral` composes a position out of a
+row and a dot, which is `beamLine`; and the `c64cli` trace expected
+`RASTER = n/CyclesPerLine`, which assumed the DOT and RASTER columns step
+together. main's `rasterAfter` helper and its exported
+`RasterIncrementCycle` are taken verbatim for the latter.
+
+**Hardware.** `beamline-split2`, UF2
+`a6f0097af7965703f2c274415c605b2503e96fe9f6c6e352780496758f547bcf`,
+confirmed against the flashed image. Mean **46.766726 ms**, min 46.62742,
+max 46.91464, `maze=true` on all 20 windows. The window range does not
+overlap 47.43-47.81. Accepted.
+
+### Where the dot path stands
+
+`51.829036 -> 46.766726 ms, -9.77%` across `414996a`, `191cb81` and
+`f35521c`, with the picture byte-identical throughout. There is no
+remaining structural difference from main in the dot path: what is left
+out is sprites, the real 1541 and the full graphics modes, which is what
+this branch is for. Upstream work on this path should apply again.
+
 ## Contributing back to main
 
 This branch also contributes performance fixes upstream to `main` when
