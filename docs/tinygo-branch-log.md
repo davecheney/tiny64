@@ -1770,6 +1770,62 @@ both target builds (`tinygo build` is the only thing that compiles
 `cmd/tufty2040`, so `go build ./...` passing means little there).
 Hardware run in `files/` as `nocart`.
 
+## Upstream review addendum: through `b6fcfc3`
+
+Five commits since the `7ac3e0a` boundary. **None apply.**
+
+`aa50775` adds benchstat as a module tool. The user has prohibited native
+performance benchmarks on this branch, so the tool has no user here.
+
+`19425bc`, `c96b41f` and `b6fcfc3` are all sprite-compositor work - ask
+whether any sprite is displayed once a group, take the compositor out of
+border groups no sprite covers, decide a group's coverage once. This
+branch has no sprite compositor at all: no `spriteDisplay`, no
+`graphicsPixel`, no `spritePixel`. There is nothing to hoist the question
+out of. This is the lightweight renderer the branch exists to keep.
+
+### `1eea99b` deserves a longer answer
+
+"Paint a border half-phase without calling per dot", measured -2.20%
+geomean upstream, is exactly the kind of change this branch wants. It is
+not applicable because **this branch already made the move, earlier and
+in a tighter shape.**
+
+Upstream's problem was that `dotclock4` called `dotclockBorder` four
+times, and each of those called `borderCompare`, which re-derived
+`lineVisible` and the CSEL-selected pair per dot. Their fix hoists both
+into `borderComparePair` and spells the four dots out.
+
+Here, neither helper ever existed:
+
+- `lineVisible`/`lineDrawable` are settled at VINC and tested **once per
+  cycle** in `stepCycle`, not per dot. `dotclockFirst4` and
+  `dotclockSecond2` carry no vblank check of their own.
+- The comparison is not merely hoisted to the pair, it is **distributed to
+  the one phase that can reach it**. Dots ≡7 (mod 8) are the only ones
+  that can equal `rightComp38` (359) or `leftComp38` (55), so `dotclock6`
+  tests those two and nothing else; `dotclock7` owns `rightComp40` (368)
+  and `leftComp40` (48). Upstream still picks a pair and checks both dots
+  in it.
+
+So the second half-phase costs three calls here against upstream's one,
+but two of those three are single-dot functions that each test two
+constants, where upstream's one function tests a pair per dot. The
+batching half of `1eea99b` landed here as `8478a14` (-0.8808%).
+
+### What not to conclude
+
+The tempting next step is to fold `dotclock6` and `dotclock7` into the
+group the way upstream folded its four. Do not read that out of this
+entry. It is a **new experiment, not a backport**, and the branch has
+already been burned by it once: the note above `stepCycle` records ~161
+ms/frame from routing six call sites through a shared helper LLVM
+declined to inline, and both regressions traced to re-entering the
+general per-dot path. `dotclock7` also owns the line and frame wrap and
+the g-access commit, so it is not a peer of the other seven.
+
+New upstream boundary: `b6fcfc3`.
+
 ## Contributing back to main
 
 This branch also contributes performance fixes upstream to `main` when
