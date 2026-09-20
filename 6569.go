@@ -92,7 +92,7 @@ type VICII struct {
 	// raster line. lineDrawable further narrows that to the lines the
 	// active pixel sink actually stores. Vertical blanking and the render
 	// window are properties of the line, not of the dot, and rasterLine is
-	// only ever written by dotclock7's line wrap, so every dot on a line
+	// only ever written by endLine's line wrap, so every dot on a line
 	// gives the same answer. Caching turns each dotclock's test into a
 	// single byte load instead of reloading rasterLine and redoing range
 	// compares - which LLVM cannot hoist for us, since the pixel sink call
@@ -358,7 +358,7 @@ func (v *VICII) stepLine() {
 	// comparator's last. So the runs already divide on it.
 	v.drawRun(0, borderSlotLeft, false)
 	v.cycleDrawBorder(borderSlotLeft, true)
-	v.drawRun(displayFirstSlot, displaySlotAfter, true)
+	v.drawDisplayRun()
 	v.cycleDrawBorder(borderSlotRight38, true)
 	v.drawRun(borderSlotRight38+1, borderSlotRight40, true)
 	v.cycleDrawBorder(borderSlotRight40, false)
@@ -372,6 +372,37 @@ func (v *VICII) drawRun(from, to uint16, mayReload bool) {
 	for slot := from; slot < to; slot++ {
 		v.cycleDraw(slot, mayReload)
 	}
+}
+
+// drawDisplayRun paints the 37 bus cycles of the display window. Every
+// slot test in phi0low and phi0high has a fixed answer across it, so the
+// run gets half-phases with those answers built in.
+func (v *VICII) drawDisplayRun() {
+	for slot := uint16(displayFirstSlot); slot < displaySlotAfter; slot++ {
+		v.cycleDrawDisplay(slot)
+	}
+}
+
+// cycleDrawDisplay is cycleDraw for the interior of the display window.
+// The body is spelled out rather than shared with cycleDraw for the reason
+// cycleDraw gives: nothing in this path inlines, so a shared helper would
+// be real calls - which is the cost this is removing in the first place.
+func (v *VICII) cycleDrawDisplay(slot uint16) {
+	dot := slot * DotsPerCycle
+	// Every slot in the run is inside the reload window, so mayReload is
+	// not a question here.
+	v.commitGAccess()
+	v.dotclock4(dot)
+	v.phi0lowDisplay()
+	v.dotclock4(dot + 4)
+	// The run stops well before the end of the line, so the beam moves
+	// without the wrap test advance carries.
+	v.slot = slot + 1
+	v.dot = v.slot * DotsPerCycle
+	v.phi0highDisplay()
+	cpu.TickPhi2()
+	ciaTick()
+	iecTick()
 }
 
 // blankRun runs the bus cycles from slot through to-1 without painting.
@@ -615,6 +646,38 @@ func (v *VICII) paintDotOutOfGroup(dot uint16) {
 // cycleRaster0/cycleRaster30/cycleIsBadLine/cycleIsCAccess are inlined
 // directly here (each had exactly one call site, unconditional or nearly
 // so) to remove function-call overhead from the frame fast path.
+// phi0lowDisplay is phi0low for the display run, slots displayFirstSlot
+// through displaySlotAfter-1. Every test in phi0low that asks which slot
+// this is has the same answer across all 37 of them: VCBase reload (53),
+// the DEN latch's end-of-line (52), the VC load (1-3), goto-idle (47) and
+// the border comparison (52) are all outside the run, and the BA and
+// g-access ranges cover all of it.
+//
+// It takes no slot: with every such test answered, nothing left in it
+// depends on which of the 37 cycles this is.
+//
+// It must stay in step with phi0low; TestPhi0LowDisplayMatchesPhi0Low
+// walks the run both ways and compares.
+func (v *VICII) phi0lowDisplay() {
+	// Bad Line state is not hoistable even here: YSCROLL is writable
+	// mid-line, so a $D011 store moves the condition between one cycle and
+	// the next.
+	if v.rasterLine == badLineRasterStart && v.control1&0x10 != 0 {
+		v.denLatch = true
+	}
+
+	yscroll := v.control1 & 0x07
+	badLine := v.rasterLine >= badLineRasterStart && v.rasterLine <= badLineRasterEnd &&
+		uint8(v.rasterLine)&0x07 == yscroll && v.allowBadLine
+	v.badLine = badLine
+	if badLine {
+		v.idle = false
+	}
+
+	v.BA = !badLine
+	v.cycleGAccess()
+}
+
 func (v *VICII) phi0low(slot uint16) {
 	// slot indexes the 8-dot bus cycles across a line. The article's cycle
 	// numbering starts 10 slots later (its cycle N is our slot N-11, mod
@@ -733,6 +796,18 @@ func (v *VICII) cycleBorderComp() {
 // phi0high runs on the 4th dot of every 8-dot cycle: it performs a Bad
 // Line's c-access (article cycles 15-54) and hands the bus to the CPU for
 // Phi2.
+// phi0highDisplay is phi0high for the display run, where the c-access
+// range covers every slot, so only the Bad Line question is left.
+//
+// It must stay in step with phi0high; TestPhi0HighDisplayMatchesPhi0High
+// walks the run both ways and compares.
+func (v *VICII) phi0highDisplay() {
+	if v.badLine {
+		v.cycleCAccess()
+	}
+	v.AEC = v.BA
+}
+
 func (v *VICII) phi0high(slot uint16) {
 	// slot as in phi0low, but 4 dots later, so its offset from the
 	// article's cycle numbering differs by one, which is why the caller
