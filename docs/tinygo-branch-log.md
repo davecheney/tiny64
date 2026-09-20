@@ -1913,28 +1913,41 @@ the 37-slot display run, which is the same argument as the border runs
 applied to the other half-phase. And the `beamLine`/`rasterLine` split,
 which would pay back the comparison `advance` costs.
 
-## The display run's half-phases: HARDWARE GATE PENDING
+## The display run's half-phases
 
-`191cb81`. **Not on `tinygo`.** Parked on `dfc/display-run-halfphases`
-because the Tufty stopped enumerating on USB before it could be measured,
-and this branch does not accept a frame-time change on host evidence.
+`191cb81`. The largest single frame-time win this branch has recorded:
+**51.42613 ms -> 47.642618 ms, -3.7835 ms, -7.357%.**
 
 The entry above listed `phi0lowDisplay` and `phi0highDisplay` as
 outstanding. Leaving them outstanding was the same habit that caused the
 restructure - deciding which parts of main's shape this branch needs - so
-they were taken immediately rather than queued.
+they were taken immediately rather than queued. That judgement is what the
+number above is worth recording for: the restructure itself paid 0.777%,
+and the piece that was nearly deferred paid nine times that.
 
-The display run is slots 7 to 43. Every test in `phi0low` and `phi0high`
-that asks which slot this is has one answer across all 37: the VCBase
-reload (53), the DEN latch's end-of-line (52), the VC load (1-3),
-goto-idle (47) and the border comparison (52) are outside the run, and the
-BA, g-access and c-access ranges cover all of it. `phi0lowDisplay` takes
-no slot argument at all. What survives is the Bad Line condition, which is
-not hoistable even here: YSCROLL is writable mid-line, so a `$D011` store
-moves it between one cycle and the next. `cycleDrawDisplay` also drops the
-reload test - the whole run is inside the reload window - and moves the
-beam without `advance`'s wrap test, since the run stops 19 slots short of
-the line's end.
+The display run is slots 7 to 43 - 37 of the 63 bus cycles in every
+visible line. Every test in `phi0low` and `phi0high` that asks which slot
+this is has one answer across all 37: the VCBase reload (53), the DEN
+latch's end-of-line (52), the VC load (1-3), goto-idle (47) and the border
+comparison (52) all fall outside the run, and the BA, g-access and
+c-access ranges all cover it. So the run gets half-phases with those
+answers built in, and `phi0lowDisplay` takes no slot argument at all. What
+survives is the Bad Line condition, which is not hoistable even here:
+YSCROLL is writable mid-line, so a `$D011` store moves it between one
+cycle and the next.
+
+`cycleDrawDisplay` also drops the reload test, since the whole run is
+inside the reload window, and moves the beam without `advance`'s wrap
+test, since the run stops 19 slots short of the line's end.
+
+**Why it pays so much more than the restructure.** The restructure changed
+the shape of the call graph but left `phi0low` doing all of its per-slot
+work in every slot. This is the commit that takes the work out: roughly
+ten branches removed from each of 37 slots on each of 284 drawable lines,
+every frame. Structure was the enabler; this is the payment. A structural
+commit measuring flat or nearly flat is not evidence the structure was
+pointless - it may only mean the commit that collects on it has not been
+written yet.
 
 **The claim is held by tests, not by this paragraph.** It is only true
 while `phi0low` and `phi0high` keep their current ranges.
@@ -1946,25 +1959,31 @@ those comparisons mean anything.
 
 Those tests seed RAM and colour RAM through `saveMachine`. They have to:
 against zeroed memory a c-access stores a zero over a zero, so a dropped
-access is indistinguishable from one that ran. That was not a theory -
-the first version of `TestPhi0HighDisplayMatchesPhi0High` passed while
+access is indistinguishable from one that ran. That was not a theory - the
+first version of `TestPhi0HighDisplayMatchesPhi0High` passed while
 `phi0highDisplay` was missing its c-access entirely. Deleting each access
-in turn and confirming the test fails is what established the tests have
-teeth, and it is worth doing for any equivalence test on this path.
+in turn and requiring the test to fail is what established the tests have
+teeth, and it is worth doing for any equivalence test on this path: an
+equivalence test that has never been shown to fail has not been shown to
+test anything.
 
-**Verified:** frame-hash oracle unchanged at
-`0133dc95efe659f720ec511f1d4ae2a378a390845e3a8ee9231c29f4ebb318b1`, host
-build/vet/tests pass, both target builds pass. Tufty text 167152 ->
-167472, +320 bytes; `.bss` unchanged.
+**Verified.** Frame-hash oracle unchanged at
+`0133dc95efe659f720ec511f1d4ae2a378a390845e3a8ee9231c29f4ebb318b1`, so the
+picture is byte-identical and the frame time is like-for-like. Host
+build/vet/tests pass; both target builds pass. Tufty text 167152 ->
+167472, +320 bytes; `.bss` unchanged. 320 bytes for 7.36%.
 
-**Not verified:** frame time. The Tufty disappeared from USB after the
-harness's 1200-baud BOOTSEL touch and does not re-enumerate; `ls
-/dev/cu.usbmodem*`, `/Volumes/RPI-RP2` and `system_profiler SPUSBDataType`
-all show nothing, so it needs a physical replug. **To land this:** flash
-`191cb81`, confirm the UF2 hash against the flashed image, require
-`maze=true` on all 20 windows and a mean at or under the `6348a6a`
-baseline of 51.42613 ms, then fast-forward `tinygo`. If it regresses, it
-does not land, however good the argument for it is.
+**Hardware.** `display-run`, UF2
+`0ca6a7134dbb99ba6e7adbd0f63b21c831b7d2634c247a4383876d7fa38898e6`, built
+twice from the clean committed tree to the same hash and confirmed against
+the flashed image. Mean **47.642618 ms**, min 47.43114, max 47.80806,
+`maze=true` on all 20 windows. The window range does not overlap the
+baseline's 51.17-51.61 at any point. Accepted.
+
+The measurement was delayed a session: the Tufty stopped enumerating on
+USB after the harness's 1200-baud BOOTSEL touch and needed a physical
+replug. The commit was parked on `dfc/display-run-halfphases` until it
+could be measured rather than pushed to `tinygo` on host evidence.
 
 ## Contributing back to main
 
