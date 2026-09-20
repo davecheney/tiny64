@@ -2089,6 +2089,52 @@ remaining structural difference from main in the dot path: what is left
 out is sprites, the real 1541 and the full graphics modes, which is what
 this branch is for. Upstream work on this path should apply again.
 
+## Frame time, end to end
+
+Every entry above measures one change against the baseline in front of
+it. Nobody reading them in order can see the arc, so here it is in one
+place. PAL is 312 x 63 = 19656 cycles at 985248 Hz = **19.950 ms**, so
+"x realtime" is `emulate / 19.950`. All figures are the `emulate=`
+telemetry only; display costs 29us wait + 99us start at the current tip,
+fully overlapped, so emulate is effectively the whole budget.
+
+`cmd/tufty2040` is not this branch's. It arrived in `cc0390c` on
+2026-09-11 and is still on `main`; this branch inherited it and has only
+ever been shrinking its frame time.
+
+| build | ms/frame | x realtime |
+| --- | ---: | ---: |
+| `cc0390c`, TinyGo default `-opt=z` | ~79 | 3.96 |
+| `-opt=2` adopted as the standing flag | ~73.5 | 3.68 |
+| 2026-09-15 wedge-era baseline | 74.231756 | 3.72 |
+| 2026-09-18, after the IEC skip and XIP counters | 60.978899 | 3.06 |
+| dotclock grouping (`3399435`, `59a1151`) | 59.390526 | 2.98 |
+| ST7789 control code in RAM (`c8dc378`) | 59.352090 | 2.97 |
+| half-phase four-dot write (`4ce80ac`) | 56.142114 | 2.81 |
+| paint the remaining four dots (`8478a14`) | 55.647570 | 2.79 |
+| autostart, wedge EPROM gone (`236879b`) | 51.863218 | 2.60 |
+| structural 6569 (`414996a`) | 51.426130 | 2.58 |
+| display-run half-phases (`191cb81`) | 47.642618 | 2.39 |
+| beamLine split (`ecb431c`) | 46.766726 | 2.34 |
+
+**~79 -> 46.767 ms: -41%, 1.69x faster, in nine days.** Realtime needs
+another 2.34x: 26.8 ms, 57% of what is left.
+
+Two things this table must not be allowed to imply:
+
+- **The largest single step is not measured.** 74.2 -> 61.0 is -17.8%,
+  bigger than everything since combined, and there is no device A/B for
+  it anywhere in this log. The IEC commits carry native measurements
+  only (-3.80%, -4.38%, -5.03% and neighbours), and native benchmarking
+  is now prohibited, so attributing that 17.8% to them is inference from
+  commit ordering. It is plausible - `819b030` removes a non-inlinable
+  interface call from all 19,656 cycles of a frame, which costs far more
+  on an M0+ than on the host that measured it - but plausible is not
+  measured, and it should be labelled that way whenever it is cited.
+- **The 74.2/73.5 inversion is a workload change, not drift.** The wedge
+  cartridge landed between them. Rows from different workloads are not
+  comparable; only adjacent rows sharing a workload are.
+
 ## Contributing back to main
 
 This branch also contributes performance fixes upstream to `main` when
