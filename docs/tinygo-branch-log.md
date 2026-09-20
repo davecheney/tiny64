@@ -1662,6 +1662,55 @@ Accepted: no regression, and the branch gains the mechanism.
 `go test ./...`, `go vet ./...`, `-tags headless`, `-tags pixelsink_func`
 and both target builds pass.
 
+## The Tufty autostarts MAZE instead of carrying the wedge EPROM
+
+With `Autostart` on the branch, the 8K DOS wedge EPROM the Tufty embedded
+exists only to type `up-arrow *` `RETURN`. Autostart does that job from the
+host side, so the EPROM goes, and with it the cartridge mapping and the
+`demoLoader` keystroke state machine. `EnableDOSWedge` and the wedge itself
+stay in the library, unchanged and still tested; this is the device build
+choosing a different way to start the demo.
+
+This reverses part of the PR #55 exception, deliberately. That exception
+accepted +0.624 ms/frame *because the wedge was the only way to get the demo
+loaded*. It is not any more, and the capability is preserved: the Tufty still
+boots MAZE off the virtual drive over the emulated IEC bus, with all the
+normal KERNAL messages. Only the mechanism changed. Upstream made the same
+call, removing the wedge in `413f0e2` immediately after autostart landed.
+
+| | wedge (`dc0ac5e`) | autostart (`236879b`) | delta |
+| --- | --- | --- | --- |
+| frame time | 55.646514 ms | 51.863218 ms | **-3.783 ms (-6.80%)** |
+| flash | 198816 | 160672 | -38144 (-19.2%) |
+| XIP accesses / 50 frames | ~246.7M | ~233.5M | -5.4% |
+| XIP misses / 50 frames | ~84,700 | ~63,100 | -25.5% |
+
+Removing the wedge takes far more than the 8K image out of flash: the
+cartridge decode and the demo's keystroke machinery go too, 38144 bytes in
+total. This is also the first change on this branch where the miss count
+falls *with* frame time instead of inverting -- the earlier entries all
+improved frame time while absolute misses rose. Fewer bytes of hot code is
+the one lever that moves both.
+
+### Proving the demo actually runs
+
+A failed autostart leaves the machine at `READY.`, which still steps frames
+and still reports a frame time -- a faster one, because the editor loop is
+cheaper than a BASIC program. A number on its own cannot tell the two apart,
+so the stats line now carries `maze=`, comparing `$0801` against the embedded
+PRG. It read `true` on all twenty windows of the measured run.
+
+That check earned itself immediately. The first attempt reported
+`maze loaded=false`, which looked like the wildcard load failing against
+`AttachVirtualPRG`. It was the probe: `Autostart` only *types* the command,
+and the LOAD happens over the frames that follow, so reading `$0801` the
+instant it returns is always false. `cbmMatch` handles `"*"` fine, and a host
+test using the Tufty's exact configuration -- `AttachVirtualPRG(8, "MAZE", ...)`
+rather than a D64 -- loads and runs the program.
+
+Measured as a single run rather than A/B/A at the maintainer's direction, the
+55.6 ms baseline being well established by the three runs above it.
+
 ## Contributing back to main
 
 This branch also contributes performance fixes upstream to `main` when
