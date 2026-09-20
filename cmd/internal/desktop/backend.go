@@ -11,17 +11,22 @@
 //     prefix and a Linux distribution's.
 //   - Build constraints on a #cgo line ("#cgo darwin CFLAGS:") are
 //     rejected too, hence unconstrained rather than per-GOOS.
-//   - The include path names SDL's own directory and the include below is
-//     <SDL.h>, which is the form "pkg-config --cflags sdl3" produces, not
-//     <SDL3/SDL.h> off the parent. That matters for TinyGo specifically:
-//     its bundled clang does not search /usr/include, and putting the
-//     whole of it on the path to reach SDL3/ pulls glibc's headers in
-//     ahead of clang's own, at which point <wchar.h> cannot find
-//     __gnuc_va_list and nothing compiles. Naming .../SDL3 directly
-//     reaches the headers without disturbing that ordering. The -L list
-//     is spelled out for the same reason, since lld does not search
-//     /usr/lib either; the multiarch entries are for Debian and Ubuntu,
-//     where that is where libSDL3 lands.
+//   - The include path names SDL's own directory, so the include below
+//     can be <SDL.h>. That matters for TinyGo specifically: its bundled
+//     clang does not search /usr/include, and putting the whole of it on
+//     the path pulls glibc's headers in ahead of clang's own, at which
+//     point <wchar.h> cannot find __gnuc_va_list and nothing compiles.
+//     Naming .../SDL3 directly reaches SDL.h without disturbing that
+//     ordering, which is why /usr/include is absent below.
+//     SDL's own headers, however, include each other as <SDL3/SDL_foo.h>,
+//     so the parent has to be reachable as well or SDL.h fails on its
+//     first line. On Linux it already is: /usr/include is a default
+//     search path for the compilers that use it. On macOS Homebrew's
+//     prefix is not, so the parents are named too, without naming
+//     /usr/include and reintroducing the ordering problem above.
+//     The -L list is spelled out because lld does not search /usr/lib
+//     either; the multiarch entries are for Debian and Ubuntu, where that
+//     is where libSDL3 lands.
 //   - SDL_DISABLE_ARM_NEON_H is SDL's own escape hatch for exactly this:
 //     SDL_cpuinfo.h pulls in <arm_neon.h> on ARM, and TinyGo's bundled
 //     clang headers do not include it. Nothing here uses NEON intrinsics.
@@ -48,7 +53,7 @@ import (
 // bargain, and in SDL3 it needs SDL_main.h named explicitly: SDL.h used to
 // include it and deliberately no longer does.
 
-// #cgo CFLAGS: -I/opt/homebrew/include/SDL3 -I/usr/local/include/SDL3 -I/usr/include/SDL3 -D_THREAD_SAFE -DSDL_DISABLE_ARM_NEON_H
+// #cgo CFLAGS: -I/opt/homebrew/include/SDL3 -I/usr/local/include/SDL3 -I/usr/include/SDL3 -I/opt/homebrew/include -I/usr/local/include -D_THREAD_SAFE -DSDL_DISABLE_ARM_NEON_H
 // #cgo LDFLAGS: -L/opt/homebrew/lib -L/usr/local/lib -L/usr/lib -L/usr/lib/x86_64-linux-gnu -L/usr/lib/aarch64-linux-gnu -lSDL3
 // #define SDL_MAIN_HANDLED
 // #include <SDL.h>
