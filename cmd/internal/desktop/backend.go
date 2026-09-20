@@ -42,6 +42,7 @@ package desktop
 import (
 	"fmt"
 	"runtime"
+	"time"
 	"unsafe"
 
 	"github.com/davecheney/tiny64"
@@ -227,9 +228,15 @@ func openDisplay(title string) (func(), error) {
 		closeDisplay()
 		return nil, sdlError("SDL_CreateRenderer")
 	}
-	// Vsync is a separate call in SDL3 rather than a renderer creation
-	// flag; 1 is one present per refresh, which is what paces the loop.
-	if !C.SDL_SetRenderVSync(sdl.renderer, 1) {
+	// Vsync is off: pacer, not the panel, decides when a frame ends, and
+	// a present that blocks until the next refresh would put that
+	// decision back in the display's hands and spend the wait inside SDL
+	// rather than in a sleep. The cost is that a frame can be torn, since
+	// 50.125Hz divides into no common refresh rate and the swap lands
+	// mid-scanout. SDL3 makes this a call rather than a creation flag, so
+	// it can be turned back on at runtime if that trade stops being worth
+	// it.
+	if !C.SDL_SetRenderVSync(sdl.renderer, 0) {
 		closeDisplay()
 		return nil, sdlError("SDL_SetRenderVSync")
 	}
@@ -286,8 +293,10 @@ func openDisplay(title string) (func(), error) {
 }
 
 // runLoop steps the machine and presents a frame until the window closes.
-// Vsync is on, so the display's refresh is what paces it.
+// A pacer sets the cadence, not the display: see its comment for why the
+// panel's refresh rate is the wrong clock for a PAL machine.
 func runLoop() error {
+	var clock pacer
 	for {
 		if pumpEvents() {
 			return nil
@@ -298,6 +307,8 @@ func runLoop() error {
 		if err := present(); err != nil {
 			return err
 		}
+
+		time.Sleep(clock.advance(time.Now()))
 	}
 }
 
