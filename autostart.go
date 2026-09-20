@@ -39,7 +39,7 @@ const (
 //
 // This is not the cartridge autostart the KERNAL performs when it finds
 // a CBM80 signature at $8004; nothing is plugged into the expansion
-// port, no ROM is added, and the DOS wedge is unaffected either way.
+// port and no ROM is added.
 //
 // "*" is CBM DOS's first-file wildcard, which is why no filename is
 // needed: MakeD64FromPRG writes the PRG as the only file on a fresh
@@ -74,8 +74,7 @@ func Type(s string) {
 		}
 
 		// The count last. An interrupt landing between the two sees a
-		// buffer that is either empty or complete, never half written;
-		// the wedge cartridge's own 6502 queueRun orders it the same way.
+		// buffer that is either empty or complete, never half written.
 		ram[kernalKeyCount] = byte(n)
 
 		s = s[n:]

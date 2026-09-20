@@ -72,7 +72,6 @@ func (c *CPU) Status() uint8 {
 // does when the RESET line is asserted, and resets the VIC-II's internal
 // video logic state.
 func Reset() {
-	cartridge.reset()
 	cpu.Reset()
 	vic.Reset()
 	resetDriveIfAttached()

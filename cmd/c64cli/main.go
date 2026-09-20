@@ -68,7 +68,6 @@ func main() {
 	disk := flag.String("disk", "", "insert this D64 disk image or PRG file into drive 8")
 	prg := flag.String("prg", "", "insert this PRG file into drive 8 (formatted on a virtual disk)")
 	autostart := flag.String("autostart", "", `insert this D64 or PRG and run it: LOAD"*",8,1 then RUN (the boot is not traced)`)
-	wedge := flag.Bool("wedge", false, "enable the resident DOS wedge at the BASIC prompt")
 	flag.Parse()
 
 	// Fill RAM with random values to simulate power-on randomness.
@@ -81,16 +80,10 @@ func main() {
 		colorRAM[i] = byte(rand.Uint() & 0x0F)
 	}
 
-	// There is one expansion port, and -wedge is a cartridge now too, so
-	// two of these would silently unplug each other.
-	carts := 0
-	for _, inserted := range []bool{*destestmax, *deadtest, *wedge} {
-		if inserted {
-			carts++
-		}
-	}
-	if carts > 1 {
-		log.Fatal("only one of -destestmax, -deadtest and -wedge can be used: there is one cartridge port")
+	// There is one expansion port, so two of these would silently unplug
+	// each other.
+	if *destestmax && *deadtest {
+		log.Fatal("only one of -destestmax and -deadtest can be used: there is one cartridge port")
 	}
 
 	if *destestmax {
@@ -98,9 +91,6 @@ func main() {
 	}
 	if *deadtest {
 		tiny64.GetBus().Insert(rom.DeadTest, true, false, true, false)
-	}
-	if *wedge {
-		tiny64.EnableDOSWedge()
 	}
 	// -disk, -prg and -autostart all name one image for drive 8; they
 	// differ only in what happens once it is in there, so exactly one of
