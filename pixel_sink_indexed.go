@@ -26,10 +26,9 @@ var frameBufferRGBAExpanded [VisibleDotsPerLine * VisibleLines * 4]byte
 // emulation does not update it, but the next FrameBufferRGBA call overwrites
 // it. Callers retaining a snapshot across calls must copy it.
 //
-// A caller that is going to hand the result straight to a graphics API
-// should use ExpandFrameBufferRGBA instead, and expand into whatever
-// buffer that API is going to read from. This one exists for callers that
-// want the bytes themselves - PNG capture, and the tests.
+// This is the form callers want when they want the bytes themselves -
+// PNG capture, and the tests. A caller with storage of its own to fill
+// can use ExpandFrameBufferRGBA and skip the copy.
 func FrameBufferRGBA() []byte {
 	ExpandFrameBufferRGBA(frameBufferRGBAExpanded[:], VisibleDotsPerLine*4)
 	return frameBufferRGBAExpanded[:]
@@ -40,14 +39,16 @@ func FrameBufferRGBA() []byte {
 // hold VisibleLines rows of that pitch, and pitch must be at least
 // VisibleDotsPerLine*4.
 //
-// Taking the destination as a parameter is what lets a display backend
-// expand once instead of twice. SDL hands out the texture's own staging
-// buffer through SDL_LockTexture, so expanding into that writes the frame
-// where the driver is already going to read it; expanding into storage of
-// our own and then asking SDL to copy it there costs a second pass over
-// every pixel, which at 408x293 and 60Hz is about 57MB/s of memory
-// traffic for nothing. The pitch is a parameter for the same reason: it
-// is the driver's, not ours, and it need not be a packed row.
+// The destination and its pitch are parameters so that a caller can
+// expand straight into storage it already has, of whatever row length
+// that storage uses, rather than into a buffer of ours that then has to
+// be copied out of.
+//
+// Nothing in the emulator's own display path needs this any more: the
+// desktop hands the GPU one palette index per pixel and lets it do the
+// lookup, so the only frames expanded to colour on the CPU are the ones
+// something wants the bytes of - PNG capture and the tests, both of which
+// come through FrameBufferRGBA.
 func ExpandFrameBufferRGBA(dst []byte, pitch int) {
 	src := FrameBufferIndexed()
 	for y := range VisibleLines {

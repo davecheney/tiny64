@@ -10,7 +10,11 @@ permissions:
 
 jobs:
   ci:
-    runs-on: ubuntu-latest
+    # Not ubuntu-latest, which is still 24.04 and has no SDL3 at all.
+    # libsdl3-dev first appears in 25.10, but at 3.2, and the paletted
+    # texture this uses needs 3.4; 26.04 is the first release that carries
+    # one new enough.
+    runs-on: ubuntu-26.04
     steps:
       - uses: actions/checkout@v7
 
@@ -18,12 +22,12 @@ jobs:
         with:
           go-version-file: go.mod
 
-      # The desktop frontend draws through SDL2 over a cgo shim, so every
+      # The desktop frontend draws through SDL3 over a cgo shim, so every
       # step below needs the headers, not just the ones that name a
       # window. This is also why nothing here sets CGO_ENABLED=0: cmd/c64
       # cannot be built without cgo.
-      - name: Install SDL2
-        run: sudo apt-get update && sudo apt-get install -y libsdl2-dev
+      - name: Install SDL3
+        run: sudo apt-get update && sudo apt-get install -y libsdl3-dev
 
       - name: Build
         run: go build ./...
