@@ -1326,6 +1326,43 @@ func StepFrame() {
 func (v *VICII) dotclockBorder4(dot, reload uint16) (byte, byte, byte, byte) {
 	left, right := v.borderComparePair()
 
+	// Whether any sprite is displayed is the group's question here as it
+	// is everywhere else - see dotclock4 - and answering it once is what
+	// lets a group none covers decide its dots inline rather than call
+	// the compositor four times.
+	//
+	// What the group cannot answer is the border flip-flop, which is the
+	// one thing these three slots a line exist for: the comparator can
+	// move it between one dot and the next. So the plain run below still
+	// asks it per dot, where graphicsPixelPlain4 asks it once.
+	if v.spriteDisplay == 0 {
+		if dot == reload {
+			v.loadGraphicsData()
+		}
+		v.borderCompare(dot, left, right)
+		c0 := v.graphicsPixelPlain()
+
+		if dot+1 == reload {
+			v.loadGraphicsData()
+		}
+		v.borderCompare(dot+1, left, right)
+		c1 := v.graphicsPixelPlain()
+
+		if dot+2 == reload {
+			v.loadGraphicsData()
+		}
+		v.borderCompare(dot+2, left, right)
+		c2 := v.graphicsPixelPlain()
+
+		if dot+3 == reload {
+			v.loadGraphicsData()
+		}
+		v.borderCompare(dot+3, left, right)
+		c3 := v.graphicsPixelPlain()
+
+		return c0, c1, c2, c3
+	}
+
 	// The comparator runs before the paint: the dot a comparison fires on
 	// is painted with the state it just set, not the one before.
 	if dot == reload {
@@ -1353,6 +1390,19 @@ func (v *VICII) dotclockBorder4(dot, reload uint16) (byte, byte, byte, byte) {
 	c3 := v.graphicsPixel(dot + 3)
 
 	return c0, c1, c2, c3
+}
+
+// graphicsPixelPlain decides one dot's colour with no sprite over it: the
+// compositor's whole half removed rather than branched around, and the
+// border still asked, because the group it belongs to cannot answer that
+// for it. Only dotclockBorder4's plain run wants this - anywhere else the
+// flip-flop holds for the group and graphicsPixelPlain4 lifts it out.
+func (v *VICII) graphicsPixelPlain() byte {
+	graphicsColor, _ := v.nextGraphicsColor()
+	if v.mainBorder {
+		graphicsColor = v.borderColor
+	}
+	return graphicsColor
 }
 
 // dotclock4 is the four dots of one Phi0 half-phase. Every caller wants
