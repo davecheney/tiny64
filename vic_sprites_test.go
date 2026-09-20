@@ -7,18 +7,33 @@ import (
 // paintDots paints the dots [from, to) into the frame buffer without
 // moving the beam, which is what the tests below want to look at.
 //
-// It goes through dotclock4, the only way to paint: four dots decided and
-// written together. So the range has to divide into those groups, and a
-// test that changes something part way through a run has to do it on a
-// group boundary - which is also true of the machine, since the CPU only
-// gets the bus between half-phases.
+// Four dots are decided and written together, so the range has to divide
+// into those groups, and a test that changes something part way through a
+// run has to do it on a group boundary - which is also true of the
+// machine, since the CPU only gets the bus between half-phases.
+//
+// The three-way dispatch is cycleDraw's, spelled out again rather than
+// shared with it: cycleDraw ticks the CPU and the CIAs and moves the beam
+// on, and these tests want the dots painted and nothing else. cycleDraw
+// is the source of truth if the two ever disagree - though all three
+// paths are held to each other by the sweeps in vic_paintplain_test.go
+// and vic_paintsolo_test.go, so a group that took the wrong one here
+// would still paint the right colours.
 func paintDots(t *testing.T, v *VICII, from, to uint16) {
 	t.Helper()
 	if from%(DotsPerCycle/2) != 0 || to%(DotsPerCycle/2) != 0 {
 		t.Fatalf("dots %d to %d are not whole half-phases", from, to)
 	}
 	for dot := from; dot < to; dot += DotsPerCycle / 2 {
-		v.dotclock4(dot, noReloadDot, false)
+		if v.spriteFreeGroup(dot) {
+			c0, c1, c2, c3 := v.graphicsPixelPlain4(noReloadDot - dot)
+			writePixels4ToBuffer(dot, v.beamLine, c0, c1, c2, c3)
+		} else if i, ok := v.spriteSoloGroup(dot); ok {
+			c0, c1, c2, c3 := v.graphicsPixelSolo4(dot, noReloadDot-dot, i)
+			writePixels4ToBuffer(dot, v.beamLine, c0, c1, c2, c3)
+		} else {
+			v.dotclock4(dot, noReloadDot)
+		}
 	}
 }
 

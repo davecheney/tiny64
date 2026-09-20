@@ -167,7 +167,7 @@ func TestVICXScrollDelaysGraphicsReload(t *testing.T) {
 	v.slot = 51 / DotsPerCycle
 	// The dot path paints half a phase at a time, so this is the group
 	// dot 51 falls in - 48 to 51, reloading on its last dot.
-	v.dotclock4(48, 51, false)
+	v.dotclock4(48, 51)
 	// The sequencer holds two bits per dot, so the pending $FF is 0x5555
 	// once widened - see expandGraphicsData. The group reloads and then
 	// paints the same dot, which shifts the first pixel out of it, so what
@@ -201,7 +201,7 @@ func TestVICMulticolorXScrollSevenReloadsAtPairBoundary(t *testing.T) {
 	v.slot = 7
 	// Dot 56 is the first dot of its group, so unlike the group above
 	// this one reloads and then paints all four of its dots.
-	v.dotclock4(56, 56, false)
+	v.dotclock4(56, 56)
 	// $FF widened two bits to the dot. This character is not multicolor
 	// itself - bit 11 of the video buffer is clear - so it widens as a
 	// standard one even though MCM is set. Four pixels have shifted out
@@ -220,7 +220,7 @@ func TestVICMulticolorXScrollSevenReloadsAtPairBoundary(t *testing.T) {
 	}
 	v.slot = 55 / DotsPerCycle
 	// Dot 55 is the last dot of the group running from 52.
-	v.dotclock4(52, 55, false)
+	v.dotclock4(52, 55)
 	// $A5 widened two bits to the dot is 0x4411, less the one pixel the
 	// group paints after reloading on its last dot.
 	if v.gdSequencer != 0x1044 {

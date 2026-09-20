@@ -1227,12 +1227,13 @@ func (v *VICII) cycleDraw(slot, dot uint16, borderSlot, mayReload bool) {
 	// a time - so this is the call that a drawn border cycle was paying
 	// to be told it had nothing to composite.
 	//
-	// A border slot skips both. The flip-flop moves between the dots of
-	// those three slots a line, which is what dotclockBorder4 exists for,
-	// and neither group answer survives that; it asks the sprite-free
-	// question itself, per group, on the other side of the call.
+	// A border slot skips both and goes straight to dotclockBorder4. The
+	// flip-flop moves between the dots of those three slots a line, which
+	// is what that function exists for, and neither group answer survives
+	// that; it asks the sprite-free question itself, per group.
 	if borderSlot {
-		v.dotclock4(dot, reload, true)
+		c0, c1, c2, c3 := v.dotclockBorder4(dot, reload)
+		writePixels4ToBuffer(dot, v.beamLine, c0, c1, c2, c3)
 	} else if v.spriteFreeGroup(dot) {
 		c0, c1, c2, c3 := v.graphicsPixelPlain4(reload - dot)
 		writePixels4ToBuffer(dot, v.beamLine, c0, c1, c2, c3)
@@ -1240,7 +1241,7 @@ func (v *VICII) cycleDraw(slot, dot uint16, borderSlot, mayReload bool) {
 		c0, c1, c2, c3 := v.graphicsPixelSolo4(dot, reload-dot, i)
 		writePixels4ToBuffer(dot, v.beamLine, c0, c1, c2, c3)
 	} else {
-		v.dotclock4(dot, reload, false)
+		v.dotclock4(dot, reload)
 	}
 	v.phi0low(slot)
 
@@ -1257,7 +1258,8 @@ func (v *VICII) cycleDraw(slot, dot uint16, borderSlot, mayReload bool) {
 	iecTick()
 
 	if borderSlot {
-		v.dotclock4(dot+4, reload, true)
+		c0, c1, c2, c3 := v.dotclockBorder4(dot+4, reload)
+		writePixels4ToBuffer(dot+4, v.beamLine, c0, c1, c2, c3)
 	} else if v.spriteFreeGroup(dot + 4) {
 		c0, c1, c2, c3 := v.graphicsPixelPlain4(reload - (dot + 4))
 		writePixels4ToBuffer(dot+4, v.beamLine, c0, c1, c2, c3)
@@ -1265,7 +1267,7 @@ func (v *VICII) cycleDraw(slot, dot uint16, borderSlot, mayReload bool) {
 		c0, c1, c2, c3 := v.graphicsPixelSolo4(dot+4, reload-(dot+4), i)
 		writePixels4ToBuffer(dot+4, v.beamLine, c0, c1, c2, c3)
 	} else {
-		v.dotclock4(dot+4, reload, false)
+		v.dotclock4(dot+4, reload)
 	}
 	// The bus cycle is over. This is the machine's only beam counter, and
 	// it moves once here rather than eight times through the dot path.
@@ -1294,7 +1296,7 @@ func (v *VICII) cycleDrawDisplay(dot uint16) {
 		c0, c1, c2, c3 := v.graphicsPixelSolo4(dot, reload-dot, i)
 		writePixels4ToBuffer(dot, v.beamLine, c0, c1, c2, c3)
 	} else {
-		v.dotclock4(dot, reload, false)
+		v.dotclock4(dot, reload)
 	}
 	v.phi0lowDisplay()
 
@@ -1310,7 +1312,7 @@ func (v *VICII) cycleDrawDisplay(dot uint16) {
 		c0, c1, c2, c3 := v.graphicsPixelSolo4(dot+4, reload-(dot+4), i)
 		writePixels4ToBuffer(dot+4, v.beamLine, c0, c1, c2, c3)
 	} else {
-		v.dotclock4(dot+4, reload, false)
+		v.dotclock4(dot+4, reload)
 	}
 	v.slot = dot/DotsPerCycle + 1
 	v.phi0highDisplay()
@@ -1465,13 +1467,13 @@ func StepFrame() {
 // selects; asks the comparator, against the pair chosen above; and
 // decides its colour. The four are written out rather than called,
 // because a per-dot function here is a real call and this is the path
-// that has four of them. The write is dotclock4's, since it is one write
+// that has four of them. The write is the caller's, since it is one write
 // for the group.
 func (v *VICII) dotclockBorder4(dot, reload uint16) (byte, byte, byte, byte) {
 	left, right := v.borderComparePair()
 
 	// Whether any sprite is displayed is the group's question here as it
-	// is everywhere else - see dotclock4 - and answering it once is what
+	// is everywhere else - see spriteFreeGroup - and answering it once is what
 	// lets a group none covers decide its dots inline rather than call
 	// the compositor four times.
 	//
@@ -1601,62 +1603,35 @@ func (v *VICII) graphicsPixelPlain() byte {
 	return graphicsColor
 }
 
-// dotclock4 is the four dots of one Phi0 half-phase. Every caller wants
-// exactly four of them with the same reload dot and the same borderSlot,
-// and it is the only way to paint at all: there is no single-dot step.
+// dotclock4 is the four dots of one Phi0 half-phase, decided one at a
+// time. It is where a group goes when nothing can be said about it as a
+// group: some of its dots are covered and some are not, or two sprites
+// are over it, so neither graphicsPixelPlain4 nor graphicsPixelSolo4
+// fits and the compositor has to run per dot.
 //
-// A per-dot step was too big to inline - the paint was a real call inside
-// it - so those four dots were four calls, and that dispatch measured
-// about 13% of the frame, near enough the same share on all six demos.
+// Its callers ask both group questions before reaching it, so it asks
+// neither. That is not a precondition it depends on - the compositor
+// decides any dot correctly, whatever covers it - it is just that a
+// caller that has already asked would be asking twice. A new caller that
+// has not asked will paint the right picture and pay for it.
 //
-// Both of its questions are the same for all four dots, so they are asked
-// once here instead of once a dot. borderSlot is fixed for the cycle
-// and true in three slots of 63. A bus cycle reloads at most once, so at
-// most one of these four dots is the reload dot, and reload-dot says which
-// - unsigned, so a reload in the cycle's other half, or none at all, comes
-// out >= 4 rather than needing a test of its own.
+// There is no single-dot entry point. A per-dot step was too big to
+// inline - the paint is a real call inside it - so a dot at a time was
+// four calls a group, and that dispatch measured about 13% of the frame.
+// What the four share is asked once here: a bus cycle reloads at most
+// once, so at most one of these dots is the reload dot, and reload-dot
+// says which - unsigned, so a reload in the cycle's other half, or none
+// at all, comes out >= 4 rather than needing a test of its own.
 //
-// Four predictable branches are not expensive on an out-of-order core.
-// What this removes is the three extra calls and the per-dot work behind
-// them, which is why it is worth measuring rather than counting.
-//
-// The write is the third thing the four dots share. Deciding a colour is
-// per dot; putting it somewhere is not, and the four dots of a half-phase
-// are four consecutive pixels of one raster line. So the colours are
-// collected and handed to the sink together, so the row offset and the
-// bounds check are worked out once for the group - and, since nothing
-// between the dots can read the frame buffer or move the beam off this
-// line, holding three colours back until the fourth is decided changes no
-// answer.
-func (v *VICII) dotclock4(dot, reload uint16, borderSlot bool) {
+// The write is the other thing they share. Deciding a colour is per dot;
+// putting it somewhere is not, and the four dots of a half-phase are four
+// consecutive pixels of one raster line. So the colours are collected and
+// handed to the sink together, and the row offset and the bounds check
+// are worked out once for the group - and, since nothing between the dots
+// can read the frame buffer or move the beam off this line, holding three
+// colours back until the fourth is decided changes no answer.
+func (v *VICII) dotclock4(dot, reload uint16) {
 	var c0, c1, c2, c3 byte
-	if borderSlot {
-		// Three slots a line, and the only ones whose dots are not all
-		// alike: see dotclockBorder4.
-		c0, c1, c2, c3 = v.dotclockBorder4(dot, reload)
-		writePixels4ToBuffer(dot, v.beamLine, c0, c1, c2, c3)
-		return
-	}
-
-	// Whether a sprite covers any of these four dots belongs to the group,
-	// for the reason graphicsPixelPlain4 gives, and a group none covers
-	// has no use for the compositor: no coverage load a dot, and no call a
-	// dot either, since what decides a plain group is small enough to
-	// inline where the compositor is not.
-	if v.spriteFreeGroup(dot) {
-		c0, c1, c2, c3 = v.graphicsPixelPlain4(reload - dot)
-		writePixels4ToBuffer(dot, v.beamLine, c0, c1, c2, c3)
-		return
-	}
-
-	// One sprite over all four dots is what a covered group almost
-	// always is, and it is decidable a group at a time for the same
-	// reason the coverage is: see spriteSoloGroup.
-	if i, ok := v.spriteSoloGroup(dot); ok {
-		c0, c1, c2, c3 = v.graphicsPixelSolo4(dot, reload-dot, i)
-		writePixels4ToBuffer(dot, v.beamLine, c0, c1, c2, c3)
-		return
-	}
 
 	switch reload - dot {
 	case 0:
