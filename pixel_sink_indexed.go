@@ -26,38 +26,29 @@ var frameBufferRGBAExpanded [VisibleDotsPerLine * VisibleLines * 4]byte
 // emulation does not update it, but the next FrameBufferRGBA call overwrites
 // it. Callers retaining a snapshot across calls must copy it.
 //
-// This is the form callers want when they want the bytes themselves -
-// PNG capture, and the tests. A caller with storage of its own to fill
-// can use ExpandFrameBufferRGBA and skip the copy.
+// Nothing in the emulator's own display path expands a frame any more.
+// The desktop hands the GPU one palette index per pixel and lets it do
+// the lookup, so the only frames that become colour on the CPU are the
+// ones something wants the bytes of: PNG capture, and the tests.
+//
+// This used to take the destination and its row pitch as arguments, so
+// that a display backend could expand straight into a driver's own
+// buffer and save the copy out of ours. Nothing needs that now, and a
+// parameter no caller varies is a parameter that only invites getting it
+// wrong.
 func FrameBufferRGBA() []byte {
-	ExpandFrameBufferRGBA(frameBufferRGBAExpanded[:], VisibleDotsPerLine*4)
-	return frameBufferRGBAExpanded[:]
-}
+	const pitch = VisibleDotsPerLine * 4
 
-// ExpandFrameBufferRGBA expands the current visible frame into dst as
-// row-major RGBA, starting each row pitch bytes after the last. dst must
-// hold VisibleLines rows of that pitch, and pitch must be at least
-// VisibleDotsPerLine*4.
-//
-// The destination and its pitch are parameters so that a caller can
-// expand straight into storage it already has, of whatever row length
-// that storage uses, rather than into a buffer of ours that then has to
-// be copied out of.
-//
-// Nothing in the emulator's own display path needs this any more: the
-// desktop hands the GPU one palette index per pixel and lets it do the
-// lookup, so the only frames expanded to colour on the CPU are the ones
-// something wants the bytes of - PNG capture and the tests, both of which
-// come through FrameBufferRGBA.
-func ExpandFrameBufferRGBA(dst []byte, pitch int) {
 	src := FrameBufferIndexed()
+	dst := frameBufferRGBAExpanded[:]
 	for y := range VisibleLines {
 		srcRow := src[y*FrameBufferStride : y*FrameBufferStride+VisibleDotsPerLine]
-		dstRow := dst[y*pitch : y*pitch+VisibleDotsPerLine*4]
+		dstRow := dst[y*pitch : y*pitch+pitch]
 		for x, colorIndex := range srcRow {
 			copy(dstRow[x*4:x*4+4], C64Palette[colorIndex&0x0f][:])
 		}
 	}
+	return dst
 }
 
 // ClearFrameBuffer blanks the whole frame, including the parts of it
