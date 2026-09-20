@@ -162,6 +162,44 @@ Autostart happens once, at startup. A reset from inside the emulated
 machine does not repeat it — there is no hook to notice with. To
 autostart something else, run the program again.
 
+## Cartridges
+
+`-cartridge FILE` plugs a `.crt` cartridge image into the expansion port
+before reset. Both front ends take it:
+
+    go run ./cmd/c64 -cartridge testdata/dead_test.crt
+    go run ./cmd/c64cli -cartridge testdata/destest-max.crt -cycles 5000000
+
+Nothing about the cartridge is written down in Go. The container's header
+says whether the PCB pulls `/EXROM` and `/GAME` low, and each CHIP packet
+says where its ROM chip loads, which is what decides whether the image
+sits behind `/ROML` or `/ROMH`. tiny64 reads all four from the file.
+
+One thing about that header is easy to get backwards, and a cartridge
+mapped into the wrong window runs garbage rather than failing, so it is
+worth stating: a line's status byte is **0 when the line is active**, that
+is, pulled low. The specification's own worked example is an ordinary 8K
+cartridge with `$18 = $00` and `$19 = $01`, and an 8K cartridge asserts
+`/EXROM` and leaves `/GAME` floating.
+
+Two wirings are accepted, because they are the two the PLA models:
+
+| cartridge | `/EXROM` | `/GAME` | ROM loads at | chip-select |
+|---|---|---|---|---|
+| ordinary 8K | asserted | floating | `$8000` | `/ROML` |
+| MAX mode | floating | asserted | `$E000` | `/ROMH` |
+
+Both windows are 8K, and the image must be exactly that. Anything else is
+refused with an error naming what is in the way: a bank-switching or
+freezer cartridge (any hardware type but the generic one), a 16K
+cartridge, more than one ROM chip, a chip in a window tiny64 does not
+decode, or an image for another Commodore machine.
+
+`-cartridge` cannot be combined with `-autostart`. A cartridge boots
+instead of BASIC, and `-autostart` types into a prompt a MAX-mode
+cartridge never brings up. A cartridge and a disk together are fine —
+that is how the hardware works.
+
 ## Inspecting programs
 
 `cmd/prg` decodes a `.prg` file - a two byte little endian load address
@@ -199,8 +237,8 @@ Ebitengine -- which this used to default to -- reaches TinyGo through
 purego, whose `func.go` needs `reflect.Value.SetPointer`, and TinyGo's
 reflect has no such method.
 
-The three commands that open a window -- `cmd/c64`, `cmd/deadtest` and
-`cmd/destestmax` -- therefore need cgo and the SDL2 development headers:
+The one command that opens a window -- `cmd/c64` -- therefore needs cgo
+and the SDL2 development headers:
 
     sudo apt-get install libsdl2-dev   # Debian, Ubuntu
     brew install sdl2                  # macOS
@@ -233,7 +271,6 @@ keeps its proportions and letterboxes the remainder.
 - `cmd/snapshot` captures headless PNGs and checks `testdata/demos` goldens
 - `cmd/internal/prg` and `cmd/internal/disasm` are the PRG decoder and the
   6502 disassembler behind it
-- `cmd/deadtest` and `cmd/destestmax` run C64 diagnostic cartridges
 
 Tufty 2040 builds should leave TinyGo's default scheduler and optimization
 level in place unless re-measuring on hardware; scheduler or `-opt` overrides

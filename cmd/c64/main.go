@@ -18,12 +18,21 @@ func main() {
 	disk := flag.String("disk", "", "insert this D64 disk image or PRG file into drive 8")
 	prg := flag.String("prg", "", "insert this PRG file into drive 8 (formatted on a virtual disk)")
 	autostart := flag.String("autostart", "", `insert this D64 or PRG and run it: LOAD"*",8,1 then RUN`)
+	cartridge := flag.String("cartridge", "", "insert this .crt cartridge image into the expansion port")
 	profileDir := flag.String("pprof", "", "write a CPU profile of each interval into this directory")
 	profileEvery := flag.Duration("pprof-every", 5*time.Second, "how much of the run each -pprof profile covers")
 	flag.Parse()
 
 	if *profileDir != "" {
 		go profileIntervals(*profileDir, *profileEvery)
+	}
+
+	// A cartridge takes the machine over before BASIC starts, and
+	// -autostart types into a BASIC prompt that a MAX-mode cartridge never
+	// brings up. It would type regardless, into a machine with no screen
+	// editor, so refuse the pair rather than do that quietly.
+	if *cartridge != "" && *autostart != "" {
+		log.Fatal("-cartridge cannot be used with -autostart: a cartridge boots instead of BASIC")
 	}
 
 	// -disk, -prg and -autostart all name one image for drive 8; they
@@ -41,13 +50,27 @@ func main() {
 		log.Fatal("specify at most one of -disk, -prg or -autostart")
 	}
 
-	// Read the disk before opening a window, so a bad path is an error on
-	// the command line rather than a window that appears and vanishes.
+	// Read the disk and the cartridge before opening a window, so a bad
+	// path is an error on the command line rather than a window that
+	// appears and vanishes.
 	var image []byte
 	if targetFile != "" {
 		var err error
 		if image, err = tiny64.ReadDiskOrPRG(os.DirFS(filepath.Dir(targetFile)), filepath.Base(targetFile)); err != nil {
 			log.Fatal(err)
+		}
+	}
+	title := "c64"
+	var crt *tiny64.CRT
+	if *cartridge != "" {
+		var err error
+		if crt, err = tiny64.ReadCRT(os.DirFS(filepath.Dir(*cartridge)), filepath.Base(*cartridge)); err != nil {
+			log.Fatal(err)
+		}
+		// Cartridges name themselves in their own header, and a window
+		// showing a diagnostic cartridge is not showing a C64.
+		if crt.Name != "" {
+			title = crt.Name
 		}
 	}
 	// The prelude runs the machine to the BASIC prompt and types the load
@@ -57,7 +80,10 @@ func main() {
 	if *autostart != "" {
 		prelude = tiny64.Autostart
 	}
-	if err := desktop.Run("c64", func() {
+	if err := desktop.Run(title, func() {
+		if crt != nil {
+			tiny64.GetBus().InsertCRT(crt)
+		}
 		if image != nil {
 			// Inserting a disk plugs a drive into the serial bus, if
 			// there wasn't one there already. Which kind it is was

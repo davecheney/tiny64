@@ -1,5 +1,5 @@
 // Package desktop provides the shared GUI frontend used by tiny64's
-// desktop commands (cmd/c64, cmd/destestmax, cmd/deadtest).
+// desktop commands (cmd/c64).
 //
 // It draws through SDL2, over a small cgo shim. SDL is the backend rather
 // than one of several because it is what both compilers can build: this
