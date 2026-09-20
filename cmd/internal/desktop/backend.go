@@ -1,12 +1,8 @@
-//go:build sdl
-
-// The SDL2 backend, which is what TinyGo can build: Ebitengine reaches
-// TinyGo through purego, whose func.go calls reflect.Value.SetPointer, and
-// TinyGo's reflect does not implement it.
+// The SDL2 backend.
 //
 // It is a hand-rolled cgo shim over the dozen SDL calls this needs rather
 // than a binding module, because TinyGo's cgo is its own reimplementation
-// and the smaller the surface the less of it has to hold. Three of its
+// and the smaller the surface the less of it has to hold. Four of its
 // limits shaped what follows, all found by building the thing:
 //
 //   - "#cgo pkg-config:" is rejected outright, so the flags below are
@@ -15,6 +11,17 @@
 //     prefix and a Linux distribution's.
 //   - Build constraints on a #cgo line ("#cgo darwin CFLAGS:") are
 //     rejected too, hence unconstrained rather than per-GOOS.
+//   - The include path names SDL's own directory and the include below is
+//     <SDL.h>, which is the form "pkg-config --cflags sdl2" produces, not
+//     <SDL2/SDL.h> off the parent. That matters for TinyGo specifically:
+//     its bundled clang does not search /usr/include, and putting the
+//     whole of it on the path to reach SDL2/ pulls glibc's headers in
+//     ahead of clang's own, at which point <wchar.h> cannot find
+//     __gnuc_va_list and nothing compiles. Naming .../SDL2 directly
+//     reaches the headers without disturbing that ordering. The -L list
+//     is spelled out for the same reason, since lld does not search
+//     /usr/lib either; the multiarch entries are for Debian and Ubuntu,
+//     where that is where libSDL2 lands.
 //   - SDL_DISABLE_ARM_NEON_H is SDL's own escape hatch for exactly this:
 //     SDL_cpuinfo.h pulls in <arm_neon.h> on ARM, and TinyGo's bundled
 //     clang headers do not include it. Nothing here uses NEON intrinsics.
@@ -34,10 +41,10 @@ import (
 // no C main of our own. SDL_SetMainReady below is the other half of that
 // bargain.
 
-// #cgo CFLAGS: -I/opt/homebrew/include -I/usr/local/include -D_THREAD_SAFE -DSDL_DISABLE_ARM_NEON_H
-// #cgo LDFLAGS: -L/opt/homebrew/lib -L/usr/local/lib -lSDL2
+// #cgo CFLAGS: -I/opt/homebrew/include/SDL2 -I/usr/local/include/SDL2 -I/usr/include/SDL2 -D_THREAD_SAFE -DSDL_DISABLE_ARM_NEON_H
+// #cgo LDFLAGS: -L/opt/homebrew/lib -L/usr/local/lib -L/usr/lib -L/usr/lib/x86_64-linux-gnu -L/usr/lib/aarch64-linux-gnu -lSDL2
 // #define SDL_MAIN_HANDLED
-// #include <SDL2/SDL.h>
+// #include <SDL.h>
 import "C"
 
 // sdlEventSize is sizeof(SDL_Event). Events are polled into a buffer of
@@ -71,6 +78,40 @@ func sdlError(what string) error {
 	return fmt.Errorf("%s: %s", what, C.GoString(C.SDL_GetError()))
 }
 
+// openingScale is how many window pixels the picture gets per emulated dot
+// when the window first appears.
+//
+// Scale alone is not enough. It is a count of pixels, and how big that is
+// depends entirely on the panel: 2x is a reasonable window on a 1080p
+// desktop and a postage stamp on the 2736x1824 the same code opens on
+// next. So Scale is the floor, and the opening size is the largest whole
+// multiple of the picture that still leaves room around it on the display
+// the window is about to appear on.
+//
+// Whole multiples only, because a fractional one is what produces uneven
+// scanlines - some emulated dots two pixels tall, their neighbours three.
+// SDL will happily scale to any size once the user drags the window; this
+// is only about not handing them a bad one to begin with.
+func openingScale() int {
+	// Usable bounds rather than the full display: it excludes the panels
+	// and docks the window cannot occupy anyway, which on a desktop with
+	// a top bar is the difference between fitting and not.
+	var usable C.SDL_Rect
+	if C.SDL_GetDisplayUsableBounds(0, &usable) != 0 {
+		// No display to measure, so there is nothing to derive a size
+		// from. The floor is as good a guess as any.
+		return Scale
+	}
+
+	// Four fifths, so the window opens as a window - large, but with the
+	// desktop still visible around it and the title bar still reachable.
+	fit := min(
+		int(usable.w)*4/5/ScreenWidth,
+		int(usable.h)*4/5/ScreenHeight,
+	)
+	return max(fit, Scale)
+}
+
 // openDisplay brings up the window, the renderer and the streaming texture
 // the frame is uploaded into.
 func openDisplay(title string) (func(), error) {
@@ -96,10 +137,11 @@ func openDisplay(title string) (func(), error) {
 	cTitle := C.CString(title)
 	defer C.free(unsafe.Pointer(cTitle))
 
+	scale := openingScale()
 	sdl.window = C.SDL_CreateWindow(cTitle,
 		C.SDL_WINDOWPOS_CENTERED, C.SDL_WINDOWPOS_CENTERED,
-		ScreenWidth*Scale, ScreenHeight*Scale,
-		C.SDL_WINDOW_SHOWN|C.SDL_WINDOW_RESIZABLE)
+		C.int(ScreenWidth*scale), C.int(ScreenHeight*scale),
+		C.SDL_WINDOW_SHOWN|C.SDL_WINDOW_RESIZABLE|C.SDL_WINDOW_ALLOW_HIGHDPI)
 	if sdl.window == nil {
 		closeDisplay()
 		return nil, sdlError("SDL_CreateWindow")
@@ -115,16 +157,16 @@ func openDisplay(title string) (func(), error) {
 		return nil, sdlError("SDL_CreateRenderer")
 	}
 
-	// A logical size does the job Layout does for Ebitengine: SDL scales
-	// the picture to fill whatever the window currently is, keeps its
+	// A logical size is the whole of the window policy: SDL scales the
+	// picture to fill whatever the window currently is, keeps its
 	// proportions and letterboxes the remainder.
 	//
-	// Unlike the Ebitengine backend there is no aspect snap to go with
-	// it. snapWindowToPicture exists because Ebitengine exposes neither
-	// GLFW's aspect ratio hint nor a resize-finished event; SDL2 has no
-	// aspect hint either (SDL_SetWindowAspectRatio is SDL3), so rather
-	// than reimplement the settle timer this leaves the window where the
-	// user put it and lives with the letterbox.
+	// There is deliberately no aspect snap to go with it. SDL2 has no
+	// aspect ratio hint - SDL_SetWindowAspectRatio is SDL3 - so squaring
+	// the window up with the picture would mean watching for the resize
+	// to stop and then setting the size ourselves, which is fighting the
+	// window manager for control of something the user just set. This
+	// leaves the window where they put it and lives with the letterbox.
 	if C.SDL_RenderSetLogicalSize(sdl.renderer, ScreenWidth, ScreenHeight) != 0 {
 		closeDisplay()
 		return nil, sdlError("SDL_RenderSetLogicalSize")
@@ -147,7 +189,7 @@ func openDisplay(title string) (func(), error) {
 		return nil, sdlError("SDL_CreateTexture")
 	}
 	// The picture is opaque and covers the target completely, so there is
-	// nothing to blend with. This matches the Ebitengine path's BlendCopy.
+	// nothing to blend with.
 	C.SDL_SetTextureBlendMode(sdl.frame, C.SDL_BLENDMODE_NONE)
 
 	return closeDisplay, nil

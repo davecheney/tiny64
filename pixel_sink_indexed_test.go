@@ -17,11 +17,11 @@ func saveFrameBuffers(t *testing.T) {
 
 func TestFrameBufferIndexedLayout(t *testing.T) {
 	saveFrameBuffers(t)
-	// 408 dots is already a multiple of four, so the stride carries no
-	// padding; the row-length check below would not catch a regression
-	// that reintroduced some, hence asserting both.
-	if FrameBufferStride != 408 || FrameBufferStride%4 != 0 {
-		t.Fatalf("indexed stride = %d, want 408 and divisible by four", FrameBufferStride)
+	// The stride is the visible dot count exactly, with no padding. The
+	// row-length check below would not catch a regression that
+	// reintroduced some, hence pinning the number here as well.
+	if FrameBufferStride != 408 {
+		t.Fatalf("indexed stride = %d, want 408", FrameBufferStride)
 	}
 	fb := FrameBufferIndexed()
 	if want := FrameBufferStride * VisibleLines; len(fb) != want {

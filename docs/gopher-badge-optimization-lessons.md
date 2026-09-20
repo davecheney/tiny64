@@ -5,7 +5,7 @@ optimization attempts on real Gopher Badge hardware (see PR #13 and its
 sibling attempts). They apply specifically to `cmd/gopher-badge64`
 (TinyGo, Cortex-M0+, RP2040): an in-order core with no branch predictor,
 no data/instruction cache, and code executing in place from flash (XIP).
-Desktop numbers (Ebitengine/amd64/arm64 host builds) do not transfer to
+Desktop numbers (amd64/arm64 host builds) do not transfer to
 this target and can even point the wrong way.
 
 ## Code size / instruction count dominates branch count

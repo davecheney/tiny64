@@ -6,12 +6,11 @@ import (
 	"github.com/davecheney/tiny64"
 )
 
-// The two backends declare their own positional and shifted tables over
-// their own host key type, and the build tags make them mutually
-// exclusive, so no test can compare them directly. These check whichever
-// pair was built against the matrix instead, which catches the two ways
-// the tables can be wrong without either backend having to know about the
-// other.
+// The tables in keymap.go are keyed by SDL scancode, so there is nothing
+// to compare them against but the matrix they are meant to cover. These
+// check them against it, which catches the two ways such a table can be
+// wrong: a matrix key with no host key on it, and a host key that would
+// press two things at once.
 
 // TestKeymapCoversMatrix checks every key in the C64 matrix is reachable.
 func TestKeymapCoversMatrix(t *testing.T) {

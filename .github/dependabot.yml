@@ -2,8 +2,9 @@
 
 version: 2
 updates:
-  # Go module dependencies in go.mod. Ebitengine and the TinyGo drivers
-  # are the only direct ones.
+  # Go module dependencies in go.mod. The TinyGo drivers and the PIO
+  # library are the only direct ones; SDL2 is a system package, not a
+  # module, so nothing here tracks it.
   - package-ecosystem: "gomod"
     directory: "/"
     schedule:

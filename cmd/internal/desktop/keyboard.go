@@ -2,9 +2,8 @@ package desktop
 
 import "github.com/davecheney/tiny64"
 
-// Both backends map the host keyboard the same way, and this is where the
-// reasoning for it lives; all that differs between them is the type used
-// to name a host key.
+// This is where the reasoning behind the host keyboard map lives; the map
+// itself is in keymap.go, over SDL's scancodes.
 //
 // The map is positional: host keys are matched to C64 keys by where they
 // sit on the keyboard, not by the character they produce. Pressing the key
@@ -18,10 +17,9 @@ import "github.com/davecheney/tiny64"
 // through the KERNAL. Positional cannot misreport the matrix, so it is
 // what we use.
 //
-// Both host key types suit that: ebiten.Key is defined in terms of
-// physical US-layout key positions rather than the characters a layout
-// produces, and an SDL scancode is physical by definition. So each backend
-// declares a positional table and a shifted table over its own key type,
+// An SDL scancode suits that exactly: it names a physical key position
+// rather than the character the host's layout produces from it. So
+// keymap.go is a positional table and a shifted table over SDL_Scancode,
 // and a pollKeyboard that rebuilds the matrix from them.
 
 // pressShifted presses a C64 key that the host reaches only by holding
