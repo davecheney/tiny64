@@ -1784,47 +1784,134 @@ branch has no sprite compositor at all: no `spriteDisplay`, no
 `graphicsPixel`, no `spritePixel`. There is nothing to hoist the question
 out of. This is the lightweight renderer the branch exists to keep.
 
-### `1eea99b` deserves a longer answer
+### `1eea99b`: RETRACTED, this entry was wrong
 
-"Paint a border half-phase without calling per dot", measured -2.20%
-geomean upstream, is exactly the kind of change this branch wants. It is
-not applicable because **this branch already made the move, earlier and
-in a tighter shape.**
+The text this replaces claimed `1eea99b` was "not applicable because this
+branch already made the move, earlier and in a tighter shape", and closed
+with a "What not to conclude" section forbidding the fold. Both are
+withdrawn. `1eea99b` had not been made here. It has now been taken, as
+part of tracking main's dot path structure - see the next entry, which
+measured -0.777% on hardware.
 
-Upstream's problem was that `dotclock4` called `dotclockBorder` four
-times, and each of those called `borderCompare`, which re-derived
-`lineVisible` and the CSEL-selected pair per dot. Their fix hoists both
-into `borderComparePair` and spells the four dots out.
+The entry is worth keeping as a record of how the mistake was made,
+because it was not made for want of reading the commits:
 
-Here, neither helper ever existed:
+- It conceded the number that decided the question - "the second half-phase
+  costs three calls here against upstream's one" - and then argued past it
+  with arithmetic. `c96b41f`, which had already been read, states the rule
+  directly: where asking a question per dot also means *calling* per dot,
+  **the call is the cost worth removing, not the arithmetic**. Three calls
+  against one is the whole finding, and this branch was on the wrong side
+  of it.
+- It reasoned about `dotclock6` and `dotclock7` as though they were the
+  state of the art. main had already deleted `dotclock0` through
+  `dotclock7` outright. The comparison was against a version of upstream
+  that no longer existed.
+- The regression it cited as precedent - ~161 ms/frame - was from routing
+  six call sites through a shared helper LLVM declined to inline. Spelling
+  four dots out inside one function is the opposite operation. The
+  evidence was real and the inference from it was backwards.
 
-- `lineVisible`/`lineDrawable` are settled at VINC and tested **once per
-  cycle** in `stepCycle`, not per dot. `dotclockFirst4` and
-  `dotclockSecond2` carry no vblank check of their own.
-- The comparison is not merely hoisted to the pair, it is **distributed to
-  the one phase that can reach it**. Dots ≡7 (mod 8) are the only ones
-  that can equal `rightComp38` (359) or `leftComp38` (55), so `dotclock6`
-  tests those two and nothing else; `dotclock7` owns `rightComp40` (368)
-  and `leftComp40` (48). Upstream still picks a pair and checks both dots
-  in it.
+The general fault: three of the five commits were dismissed as "sprite
+compositor work" because sprites appear in their diffs. The rule a commit
+establishes is not scoped by the subsystem that first paid for it. Read
+what the commit says it learned, not which files it touched.
 
-So the second half-phase costs three calls here against upstream's one,
-but two of those three are single-dot functions that each test two
-constants, where upstream's one function tests a pair per dot. The
-batching half of `1eea99b` landed here as `8478a14` (-0.8808%).
+### The rule this branch had lost
 
-### What not to conclude
+**This branch differs from main in what it leaves out - sprites, the real
+1541, the lightweight renderer - and never in how the VIC is shaped.**
 
-The tempting next step is to fold `dotclock6` and `dotclock7` into the
-group the way upstream folded its four. Do not read that out of this
-entry. It is a **new experiment, not a backport**, and the branch has
-already been burned by it once: the note above `stepCycle` records ~161
-ms/frame from routing six call sites through a shared helper LLVM
-declined to inline, and both regressions traced to re-entering the
-general per-dot path. `dotclock7` also owns the line and frame wrap and
-the g-access commit, so it is not a peer of the other seven.
+Shape is not a feature. When the two diverge structurally, upstream work
+on the dot path stops being applicable here, not because it conflicts but
+because there is nothing left to map it onto. That is what happened, and
+the repair cost a 749-line rewrite of `6569.go`. A review that finds a
+structural difference between this branch and main should treat it as a
+defect in this branch, and the burden of proof is on keeping the
+difference, not on taking the change.
 
 New upstream boundary: `b6fcfc3`.
+
+## Tracking main's VIC dot path structure
+
+`414996a`. The review above found that the dot path here and on main had
+become different answers to the same question. This replaces the shape of
+the inner loop wholesale.
+
+**What was here.** Eight per-phase `dotclock0`..`dotclock7` plus
+`dotclockFirst4`/`dotclockSecond2`; a border comparison reachable from
+every one of the 63 slots in a line; a test in every bus cycle asking
+whether the beam had run off the end of the line; `dot` as the beam
+counter, moved eight times per cycle through the dot path.
+
+**What main has, and this now has.** A frame is a loop over lines
+(`stepLine`). A line is a handful of runs whose properties are built into
+the run rather than tested for. A bus cycle is two half-phase calls. A
+half-phase paints four dots in one call (`dotclock4`, or
+`dotclockBorder4`). `slot` is the beam counter and moves once per cycle.
+
+The two structural wins:
+
+- The border comparator's four dots fall in slots 6, 44 and 46 and
+  nowhere else, so the line divides into runs on those slots and the
+  other 60 do not ask. The comparison is not hoisted out of the dot for
+  them, it is gone.
+- Running off the end of a line becomes a fact about where the loop
+  stopped (`endLine`) instead of a comparison in every cycle.
+
+**Where this deliberately differs from main, and why.** The runs gate on
+`lineVisible`, where main gates on drawability. `renderFirstLine` and
+`renderLineAfter` are build-tag dependent here (`pixel_window_full.go`
+against `pixel_window_tinygo.go`) because the Tufty's panel is smaller
+than the C64's picture and crops it. A cropped line can still contain the
+raster lines where the vertical border flip-flop moves - 51/55 at the top,
+247/251 at the bottom - so it still has to be walked. Painting is what
+drawability gates, and the paint path gates it per group. main has no
+crop and so can gate the runs themselves. This is a difference in what the
+branch leaves out, which is the allowed kind.
+
+`advance(slot)` runs before `phi0high` and the CPU's Phi2, so the line's
+final cycle sees the raster counter already moved. That is what `$D012`
+reads there: behaviour, not bookkeeping. main reaches the same result
+through its `beamLine`/`rasterLine` split; here it costs one comparison
+per cycle.
+
+**The one-dot shift, and why the picture is unchanged.** Slot S paints
+dots 8S..8S+7 where cycle c painted 8c+1..8c+8. Equivalent because the
+g-access commit moved with it - out of the old `dotclock7` and up to the
+top of the cycle as `commitGAccess` - `phi0low` only marks work that the
+next cycle commits, and the CPU's Phi2 still lands after the slot's eight
+dots either way.
+
+**Verification.** A frame-hash oracle ran MAZE for 400 frames under
+`-tags pixelsink_func` and hashed `FrameBufferRGBA()` at frames 120, 200,
+300 and 400. Cumulative
+`0133dc95efe659f720ec511f1d4ae2a378a390845e3a8ee9231c29f4ebb318b1`,
+byte-identical to `28e1e50`. Pixel identity was established *before* the
+hardware run, so the frame time below is a like-for-like comparison and
+not a picture that got cheaper by getting smaller. Host build, vet and
+tests pass; both target builds pass.
+
+Deletes `vic_color_lookup_test.go`, which tested the per-phase dotclocks
+main deleted along with them. `vic_cycle_test.go` moves to the slot
+convention.
+
+**Cost.** Tufty text 164768 -> 167152, +2384 bytes for the specialised run
+variants. `.bss` unchanged at 223224. Flash is not scarce here and no size
+number has ever predicted a frame-time result on this branch.
+
+**Hardware.** `structural-6569`, UF2
+`2a38baf538f694a2239a2a0ffe22ba3877383d67824271a3672bc4ba87a2227a` built
+from the clean committed tree and confirmed against the flashed image.
+Mean **51.42613 ms** against the `28e1e50` baseline of 51.829036 ms:
+**-0.4029 ms, -0.777%**. Min 51.17368, max 51.6102, `maze=true` on all 20
+windows. Accepted.
+
+**Still outstanding from main, and wanted.** `phi0lowDisplay` and
+`phi0highDisplay`: every slot test in `phi0low` has a fixed answer across
+the 37-slot display run, which is the same argument as the border runs
+applied to the other half-phase. And the `beamLine`/`rasterLine` split,
+which would pay back the comparison `advance` costs.
 
 ## Contributing back to main
 
