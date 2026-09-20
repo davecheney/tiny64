@@ -43,7 +43,7 @@ const (
 //
 // It leaves DEN clear, which is worth being explicit about: with the
 // screen off there are no Bad Lines, no c- or g-accesses, and
-// spriteDisplay never leaves zero, so paintGraphicsPixel takes its
+// spriteDisplay never leaves zero, so graphicsPixel takes its
 // display == 0 early out on every dot. That is the cheapest the machine
 // ever gets. loadDisplayProgram and loadSpriteProgram below turn the
 // screen and the sprites on for benchmarks that need to see that work.

@@ -39,11 +39,30 @@ func ClearFrameBuffer() {
 	clear(frameBufferRGB565BE[:])
 }
 
-func writePixelToBuffer(x, y uint16, colorIndex byte) {
+// writePixels4ToBuffer writes one Phi0 half-phase's four dots, which is
+// the only width the dot path writes in. The crop is asked once for the
+// group rather than once a dot: x is a multiple of four, and so are the
+// crop's left edge and its width, so all four dots are inside the panel
+// or all four are outside.
+func writePixels4ToBuffer(x, y uint16, c0, c1, c2, c3 byte) {
 	x -= rgb565CropX
 	y -= rgb565CropY
 	if x >= rgb565Width || y >= rgb565Height {
 		return
 	}
-	frameBufferRGB565BE[int(y)*rgb565Width+int(x)] = c64PaletteRGB565BE[colorIndex&0x0f]
+	i := int(y)*rgb565Width + int(x)
+	row := frameBufferRGB565BE[i : i+4]
+	row[0] = c64PaletteRGB565BE[c0&0x0f]
+	row[1] = c64PaletteRGB565BE[c1&0x0f]
+	row[2] = c64PaletteRGB565BE[c2&0x0f]
+	row[3] = c64PaletteRGB565BE[c3&0x0f]
 }
+
+// The group crop above is only sound while the panel's left edge and
+// width are multiples of four, and while a bus cycle's dots divide into
+// groups of four. Converting a negative constant to uint is the error.
+const (
+	_ = uint(0 - rgb565CropX%4)
+	_ = uint(0 - rgb565Width%4)
+	_ = uint(0 - DotsPerCycle%4)
+)

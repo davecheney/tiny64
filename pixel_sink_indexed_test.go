@@ -30,9 +30,15 @@ func TestFrameBufferIndexedLayout(t *testing.T) {
 	for i := range frameBufferIndexed {
 		frameBufferIndexed[i] = 0xff
 	}
+	// The sink writes a Phi0 half-phase at a time, which is the only
+	// width the dot path has; VisibleDotsPerLine divides into those
+	// groups, which is the stride assertion above restated.
 	for y := range VisibleLines {
-		for x := range VisibleDotsPerLine {
-			writePixelToBuffer(uint16(x), uint16(y+FirstVisibleLine), 0xf0|byte((x+y)%16))
+		for x := 0; x < VisibleDotsPerLine; x += 4 {
+			line := uint16(y + FirstVisibleLine)
+			writePixels4ToBuffer(uint16(x), line,
+				0xf0|byte((x+y)%16), 0xf0|byte((x+1+y)%16),
+				0xf0|byte((x+2+y)%16), 0xf0|byte((x+3+y)%16))
 		}
 	}
 	for y := range RasterLinesPerFrame {
@@ -69,11 +75,11 @@ func TestFrameBufferRGBALifetime(t *testing.T) {
 	saveFrameBuffers(t)
 	ClearFrameBuffer()
 	indexed := FrameBufferIndexed()
-	writePixelToBuffer(0, FirstVisibleLine, 2)
+	writePixels4ToBuffer(0, FirstVisibleLine, 2, 2, 2, 2)
 	rgba := FrameBufferRGBA()
 	retained := bytes.Clone(rgba)
 
-	writePixelToBuffer(0, FirstVisibleLine, 3)
+	writePixels4ToBuffer(0, FirstVisibleLine, 3, 3, 3, 3)
 	if indexed[0] != 3 {
 		t.Fatalf("indexed view did not update: got %d, want 3", indexed[0])
 	}

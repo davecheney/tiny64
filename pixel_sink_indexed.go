@@ -66,6 +66,14 @@ func ClearFrameBuffer() {
 	clear(frameBufferIndexed[:])
 }
 
-func writePixelToIndexed(x, y uint16, colorIndex byte) {
-	frameBufferIndexed[int(y)*FrameBufferStride+int(x)] = colorIndex & 0x0f
+// writePixels4ToIndexed writes one Phi0 half-phase's four dots at once:
+// four consecutive pixels of one line, so one row offset and one bounds
+// check instead of four of each.
+func writePixels4ToIndexed(x, y uint16, c0, c1, c2, c3 byte) {
+	i := int(y)*FrameBufferStride + int(x)
+	row := frameBufferIndexed[i : i+4]
+	row[0] = c0 & 0x0f
+	row[1] = c1 & 0x0f
+	row[2] = c2 & 0x0f
+	row[3] = c3 & 0x0f
 }

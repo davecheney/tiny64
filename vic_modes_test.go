@@ -165,11 +165,15 @@ func TestVICXScrollDelaysGraphicsReload(t *testing.T) {
 
 	// And the data is actually taken up there.
 	v.slot = 51 / DotsPerCycle
-	v.dotclock(51, 51, false)
+	// The dot path paints half a phase at a time, so this is the group
+	// dot 51 falls in - 48 to 51, reloading on its last dot.
+	v.dotclock4(48, 51, false)
 	// The sequencer holds two bits per dot, so the pending $FF is 0x5555
-	// once widened - see expandGraphicsData. dotclock reloads and then
+	// once widened - see expandGraphicsData. The group reloads and then
 	// paints the same dot, which shifts the first pixel out of it, so what
-	// is left is 0x5555 shifted up two bits, which is 0x5554.
+	// is left is 0x5555 shifted up two bits, which is 0x5554. The three
+	// dots painted before the reload shifted the register the reload then
+	// replaced, so they leave nothing behind.
 	if v.gdSequencer != 0x5554 || v.videoBuffer != 0x0100 {
 		t.Fatalf("sequencer=%#04x buffer=%#04x at dot %d, want pending graphics data",
 			v.gdSequencer, v.videoBuffer, v.Dot())
@@ -195,12 +199,14 @@ func TestVICMulticolorXScrollSevenReloadsAtPairBoundary(t *testing.T) {
 	}
 
 	v.slot = 7
-	v.dotclock(56, 56, false)
+	// Dot 56 is the first dot of its group, so unlike the group above
+	// this one reloads and then paints all four of its dots.
+	v.dotclock4(56, 56, false)
 	// $FF widened two bits to the dot. This character is not multicolor
 	// itself - bit 11 of the video buffer is clear - so it widens as a
-	// standard one even though MCM is set. As above, the dot that reloads
-	// is also painted, so one pixel has already shifted out: 0x5554.
-	if v.gdSequencer != 0x5554 || v.videoBuffer != 0x0100 {
+	// standard one even though MCM is set. Four pixels have shifted out
+	// of it by the end of the group, leaving 0x5555 shifted up eight.
+	if v.gdSequencer != 0x5500 || v.videoBuffer != 0x0100 {
 		t.Fatalf("sequencer=%#04x buffer=%#04x at dot %d, want pending graphics data",
 			v.gdSequencer, v.videoBuffer, v.Dot())
 	}
@@ -213,9 +219,10 @@ func TestVICMulticolorXScrollSevenReloadsAtPairBoundary(t *testing.T) {
 		t.Fatalf("standard-resolution XSCROLL=7 reload dot = %d, want 55", got)
 	}
 	v.slot = 55 / DotsPerCycle
-	v.dotclock(55, 55, false)
+	// Dot 55 is the last dot of the group running from 52.
+	v.dotclock4(52, 55, false)
 	// $A5 widened two bits to the dot is 0x4411, less the one pixel the
-	// same dotclock call paints.
+	// group paints after reloading on its last dot.
 	if v.gdSequencer != 0x1044 {
 		t.Fatal("standard-resolution XSCROLL=7 did not reload at dot 55")
 	}

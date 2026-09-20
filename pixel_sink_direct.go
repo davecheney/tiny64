@@ -2,6 +2,6 @@
 
 package tiny64
 
-func writePixelToBuffer(x, y uint16, colorIndex byte) {
-	writePixelToIndexed(x, y, colorIndex)
+func writePixels4ToBuffer(x, y uint16, c0, c1, c2, c3 byte) {
+	writePixels4ToIndexed(x, y, c0, c1, c2, c3)
 }

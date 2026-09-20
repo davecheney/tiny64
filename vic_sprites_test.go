@@ -4,6 +4,24 @@ import (
 	"testing"
 )
 
+// paintDots paints the dots [from, to) into the frame buffer without
+// moving the beam, which is what the tests below want to look at.
+//
+// It goes through dotclock4, the only way to paint: four dots decided and
+// written together. So the range has to divide into those groups, and a
+// test that changes something part way through a run has to do it on a
+// group boundary - which is also true of the machine, since the CPU only
+// gets the bus between half-phases.
+func paintDots(t *testing.T, v *VICII, from, to uint16) {
+	t.Helper()
+	if from%(DotsPerCycle/2) != 0 || to%(DotsPerCycle/2) != 0 {
+		t.Fatalf("dots %d to %d are not whole half-phases", from, to)
+	}
+	for dot := from; dot < to; dot += DotsPerCycle / 2 {
+		v.dotclock4(dot, noReloadDot, false)
+	}
+}
+
 // TestVICSpriteSingleColorRendering verifies that a single-color sprite
 // draws at the configured X/Y position with the individual sprite color.
 func TestVICSpriteSingleColorRendering(t *testing.T) {
@@ -48,8 +66,8 @@ func TestVICSpriteSingleColorRendering(t *testing.T) {
 	}
 
 	// One bus cycle paints dots 48 to 55 - pixels 0-7 of byte 0, $FF, so
-	// all eight are red. Stepping rather than calling paintGraphicsPixel
-	// by hand matters because dot 48 is also where the left comparison
+	// all eight are red. Stepping rather than painting the dots by hand
+	// matters because dot 48 is also where the left comparison
 	// opens the border, and that happens inside the cycle that paints it.
 	v.StepCycle()
 
@@ -226,8 +244,11 @@ func TestVICSpritePriority(t *testing.T) {
 	// border here is the rest of that same hand placement.
 	v.mainBorder = false
 
-	red := C64Palette[2]
-	white := C64Palette[1]
+	// The colours are compared as the compositor decides them rather than
+	// through the frame buffer: graphicsPixel is what this test is about,
+	// and what the dot path then does with its answer - four dots to a
+	// write - is dotclock4's business.
+	const red, white = 2, 1
 
 	// Test 1: Priority = 0 (sprite in front of graphics). Sprite (Red) shows over foreground graphics (White).
 	v.WriteRegister(0xD01B, 0x00)
@@ -239,9 +260,8 @@ func TestVICSpritePriority(t *testing.T) {
 	// and passes or fails on the order the suite happens to run in.
 	v.refreshGraphicsPalette()
 	v.slot = 6
-	v.paintGraphicsPixel(v.Dot())
-	if got := [4]byte(frameBufferPixelRGBA(48, 56)); got != red {
-		t.Errorf("priority=0 sprite pixel over foreground = %v, want Red %v", got, red)
+	if got := v.graphicsPixel(v.Dot()) & 0x0F; got != red {
+		t.Errorf("priority=0 sprite pixel over foreground = %d, want Red %d", got, red)
 	}
 
 	// Test 2: Priority = 1 (sprite behind graphics). Foreground graphics (White) shows over sprite.
@@ -254,18 +274,16 @@ func TestVICSpritePriority(t *testing.T) {
 	// and passes or fails on the order the suite happens to run in.
 	v.refreshGraphicsPalette()
 	v.slot = 6
-	v.paintGraphicsPixel(v.Dot())
-	if got := [4]byte(frameBufferPixelRGBA(48, 56)); got != white {
-		t.Errorf("priority=1 sprite pixel under foreground = %v, want White %v", got, white)
+	if got := v.graphicsPixel(v.Dot()) & 0x0F; got != white {
+		t.Errorf("priority=1 sprite pixel under foreground = %d, want White %d", got, white)
 	}
 
 	// Test 3: Priority = 1 (sprite behind graphics). Over background graphics (gdSequencer=0), sprite (Red) shows.
 	v.WriteRegister(0xD01B, 0x01)
 	v.gdSequencer = 0x00 // background graphics pixel
 	v.slot = 6
-	v.paintGraphicsPixel(v.Dot())
-	if got := [4]byte(frameBufferPixelRGBA(48, 56)); got != red {
-		t.Errorf("priority=1 sprite pixel over background = %v, want Red %v", got, red)
+	if got := v.graphicsPixel(v.Dot()) & 0x0F; got != red {
+		t.Errorf("priority=1 sprite pixel over background = %d, want Red %d", got, red)
 	}
 }
 
@@ -295,7 +313,7 @@ func TestVICSpriteSpriteCollision(t *testing.T) {
 		v.StepCycle()
 	}
 	v.slot = 6
-	v.paintGraphicsPixel(v.Dot())
+	v.graphicsPixel(v.Dot())
 
 	// Check IRQ fired
 	if !v.IRQ {
@@ -342,7 +360,7 @@ func TestVICSpriteDataCollision(t *testing.T) {
 	v.videoBuffer = 0x0100
 	v.refreshGraphicsPalette()
 	v.slot = 6
-	v.paintGraphicsPixel(v.Dot())
+	v.graphicsPixel(v.Dot())
 
 	if !v.IRQ {
 		t.Errorf("v.IRQ = false after sprite-data collision, want true")
@@ -387,9 +405,7 @@ func TestVICSpriteXMSBForSprites1To7(t *testing.T) {
 
 	// The beam does not move: this paints the cycle's eight dots by
 	// naming them, which is what the dot path itself does now.
-	for dot := v.Dot(); dot < v.Dot()+DotsPerCycle; dot++ {
-		v.paintGraphicsPixel(dot)
-	}
+	paintDots(t, v, v.Dot(), v.Dot()+DotsPerCycle)
 
 	buf := FrameBufferRGBA()
 	redColor := C64Palette[2]
@@ -431,9 +447,7 @@ func TestVICWrappedSpritesFillLeftBorderBlock(t *testing.T) {
 	v.decodeSpriteRows()
 
 	// Four cycles' worth of dots, named rather than stepped.
-	for dot := v.Dot(); dot < v.Dot()+4*DotsPerCycle; dot++ {
-		v.paintGraphicsPixel(dot)
-	}
+	paintDots(t, v, v.Dot(), v.Dot()+4*DotsPerCycle)
 
 	for dot := uint16(0); dot < 24; dot++ {
 		if !frameBufferPixelIs(dot, 56, 2) {
@@ -748,13 +762,9 @@ func TestVICSpriteMulticolorWriteMidLineRedecodesRow(t *testing.T) {
 	v.rebuildSpriteCoverage()
 	v.decodeSpriteRows()
 
-	for dot := uint16(24); dot < 32; dot++ {
-		v.paintGraphicsPixel(dot)
-	}
+	paintDots(t, v, 24, 32)
 	v.WriteRegister(0xD01C, 0x01)
-	for dot := uint16(32); dot < 48; dot++ {
-		v.paintGraphicsPixel(dot)
-	}
+	paintDots(t, v, 32, 48)
 
 	for dot := uint16(24); dot < 32; dot++ {
 		if !frameBufferPixelIs(dot, 56, 2) {
