@@ -331,6 +331,21 @@ func screenLine(row int) string {
 	return strings.TrimRight(b.String(), " ")
 }
 
+// runUntil steps the machine until reached reports true, or until the
+// budget is spent. Unlike waitForScreen it watches the machine itself
+// rather than the screen, which is what a cartridge that never brings up
+// a screen editor needs.
+func (m *machine) runUntil(what string, budget int, reached func() bool) {
+	m.t.Helper()
+	for range budget {
+		if reached() {
+			return
+		}
+		vic.StepCycle()
+	}
+	m.t.Fatalf("did not reach %s; PC=$%04X", what, cpu.PC)
+}
+
 // waitForScreen runs the machine until want appears anywhere on the
 // screen, or until the budget is spent. The failure dumps every non-blank
 // row, because a test that was waiting on text is almost always easier to

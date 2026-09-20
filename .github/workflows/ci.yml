@@ -20,8 +20,8 @@ jobs:
 
       # The desktop frontend draws through SDL2 over a cgo shim, so every
       # step below needs the headers, not just the ones that name a
-      # window. This is also why nothing here sets CGO_ENABLED=0: cmd/c64,
-      # cmd/deadtest and cmd/destestmax cannot be built without cgo.
+      # window. This is also why nothing here sets CGO_ENABLED=0: cmd/c64
+      # cannot be built without cgo.
       - name: Install SDL2
         run: sudo apt-get update && sudo apt-get install -y libsdl2-dev
 
