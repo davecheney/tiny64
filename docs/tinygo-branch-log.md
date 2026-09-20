@@ -1711,6 +1711,65 @@ rather than a D64 -- loads and runs the program.
 Measured as a single run rather than A/B/A at the maintainer's direction, the
 55.6 ms baseline being well established by the three runs above it.
 
+## Removing the DOS wedge and all cartridge support
+
+Commit `4769e31`. Upstream's `413f0e2` removes the wedge on the strength
+of `ea7989e` having landed first; this is the same argument extended to
+the whole expansion port, because this branch has no other cartridge user
+and never will - the user has ruled carts out.
+
+Gone: `doswedge.go` and its two test files, `cartridge.go`, `cmd/deadtest`,
+`cmd/destestmax`, `rom/dead_test.bin`, `rom/destest-max.rom`, the `-wedge`
+flag on both desktop front ends, and the cartridge arms of `pla.go`.
+2006 lines deleted against 40 added.
+
+### What was actually hot
+
+`plaVICLoad` ran an ultimax-ROMH test on **every VIC c-access and
+g-access**, and `plaLoad` ran an 8K-ROML test on every CPU read in
+`$8000-$9FFF`. On the face of it that is the best hot-path removal
+available on this branch.
+
+It is worth nothing on the Tufty, and the reason is instructive. With
+`Insert` unreachable from `cmd/tufty2040`, the `cartridge` global is
+provably zero, so LLVM had already constant-folded both tests and deleted
+the arms. The image is **the same 160672 bytes** as the tip before this
+commit.
+
+Measured anyway rather than assumed, because "the optimiser surely did X"
+is exactly the class of claim this log exists to stop:
+
+| build | flash | frame time |
+| --- | --- | --- |
+| tip `cd441a9` | 160672 | 51.863218 ms |
+| this commit | 160672 | 51.829036 ms |
+
+**-0.0659%**, i.e. drift, which is what an identical-sized image should
+give. `maze=true` on all 20 windows, so autostart still reaches the demo
+with no cartridge in the machine.
+
+### Why do it then
+
+Three things that are not frame time:
+
+- The **desktop and headless builds do** pay for those branches; they can
+  have a cartridge inserted, so nothing folds.
+- The host test suite drops from **15.9s to 5.8s**. The wedge integration
+  tests booted a machine and drove the KERNAL.
+- `pla.go` is the file most likely to be touched by future VIC work, and
+  it is now short enough to hold in your head.
+
+The standing rule stays: no size or line-count saving is evidence of a
+frame-time gain. This entry is a case in point - the largest deletion on
+the branch so far moved frame time by nothing.
+
+### Verification
+
+`go build/vet/test ./...`, `-tags headless`, `-tags pixelsink_func`, and
+both target builds (`tinygo build` is the only thing that compiles
+`cmd/tufty2040`, so `go build ./...` passing means little there).
+Hardware run in `files/` as `nocart`.
+
 ## Contributing back to main
 
 This branch also contributes performance fixes upstream to `main` when
