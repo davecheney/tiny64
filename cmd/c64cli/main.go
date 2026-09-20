@@ -67,6 +67,7 @@ func main() {
 	deadtest := flag.Bool("deadtest", false, "insert the Dead Test MAX-mode cartridge before reset")
 	disk := flag.String("disk", "", "insert this D64 disk image or PRG file into drive 8")
 	prg := flag.String("prg", "", "insert this PRG file into drive 8 (formatted on a virtual disk)")
+	autostart := flag.String("autostart", "", `insert this D64 or PRG and run it: LOAD"*",8,1 then RUN (the boot is not traced)`)
 	wedge := flag.Bool("wedge", false, "enable the resident DOS wedge at the BASIC prompt")
 	flag.Parse()
 
@@ -101,9 +102,19 @@ func main() {
 	if *wedge {
 		tiny64.EnableDOSWedge()
 	}
-	targetFile := *disk
-	if targetFile == "" {
-		targetFile = *prg
+	// -disk, -prg and -autostart all name one image for drive 8; they
+	// differ only in what happens once it is in there, so exactly one of
+	// them may be given and whichever it is names the file.
+	var targetFile string
+	named := 0
+	for _, f := range []string{*disk, *prg, *autostart} {
+		if f != "" {
+			targetFile = f
+			named++
+		}
+	}
+	if named > 1 {
+		log.Fatal("specify at most one of -disk, -prg or -autostart")
 	}
 	if targetFile != "" {
 		image, err := tiny64.ReadDiskOrPRG(os.DirFS(filepath.Dir(targetFile)), filepath.Base(targetFile))
@@ -116,6 +127,13 @@ func main() {
 	}
 
 	tiny64.Reset()
+
+	// The prelude steps whole frames of its own, so the KERNAL's boot
+	// does not appear in the trace; the loop below picks the machine up
+	// with the load already typed.
+	if *autostart != "" {
+		tiny64.Autostart()
+	}
 
 	cpu := tiny64.GetCPU()
 	bus := tiny64.GetBus()

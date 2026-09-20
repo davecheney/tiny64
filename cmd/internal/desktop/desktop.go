@@ -56,8 +56,14 @@ func (e *emulator) Layout(outsideWidth, outsideHeight int) (int, int) {
 // Run wires the VIC-II's pixel output to an Ebitengine window, randomizes
 // RAM to simulate power-on noise, calls setup (if non-nil) so the caller
 // can plug in a cartridge or a disk drive before reset, resets the
-// machine, and blocks running the game loop until the window is closed.
-func Run(title string, setup func()) error {
+// machine, calls afterReset (if non-nil) so the caller can drive the
+// freshly booted machine before the window takes over, and blocks running
+// the game loop until the window is closed.
+//
+// afterReset is where tiny64.Autostart goes. It runs the machine itself,
+// so the frames it steps are not presented; by the time the loop below
+// paints anything the prompt is up and the command has been typed.
+func Run(title string, setup, afterReset func()) error {
 	var emu emulator
 	defer func() {
 		fmt.Println("emulated frames:", emu.frames)
@@ -77,6 +83,10 @@ func Run(title string, setup func()) error {
 	}
 
 	tiny64.Reset()
+
+	if afterReset != nil {
+		afterReset()
+	}
 
 	ebiten.SetWindowSize(ScreenWidth*Scale, ScreenHeight*Scale)
 	ebiten.SetWindowTitle(title)

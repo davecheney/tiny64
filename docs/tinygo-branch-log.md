@@ -1605,6 +1605,63 @@ while the miss count goes up, and the second where it does so with fewer
 total accesses. Fetching less code is what pays; where the remaining misses
 land is not the predictor. Frame time stays the gate.
 
+## Backport: `ea7989e` autostart a disk without a cartridge
+
+Taken at the maintainer's direction. `-autostart FILE` runs the machine to
+the BASIC prompt and puts `LOAD"*",8,1` and `RUN` into the KERNAL's own
+ten-character type-ahead buffer at `$0277`, then returns. It is a prelude,
+not a mode: nothing is patched, no ROM is added, nothing stays hooked, and
+a build that does not use the flag pays nothing for it.
+
+`autostart.go` and `autostart_test.go` were taken verbatim -- the file needs
+only `ram`, `vic.StepFrame` and `min`, all of which this branch already has,
+and both upstream tests pass unmodified against this branch's lightweight
+virtual drive. That is worth stating plainly: the upstream end-to-end case
+does a real KERNAL boot, a real BASIC LOAD over the emulated IEC bus, and a
+`RUN` that was typed before the load started, and it passes here without
+adaptation. The only missing piece was the `skipShort` helper, added to
+`machine_test.go`.
+
+The front ends follow upstream: `-autostart` on `cmd/c64` and `cmd/c64cli`,
+mutually exclusive with `-disk` and `-prg`, and `desktop.Run` grows an
+`afterReset` hook for the prelude to run in. This branch's desktop is
+Ebitengine rather than upstream's SDL, but the hook point is the same --
+after `tiny64.Reset()`, before the frame loop -- so `cmd/deadtest` and
+`cmd/destestmax` just pass `nil`.
+
+### It is dead code on the Tufty, and it still changed the image
+
+The Tufty does not call `Autostart`, and the size report is identical either
+way: 198816 flash, 227388 RAM. It is dead-code eliminated. The loadable
+image still changed, which given this branch's history with flash placement
+is not something to wave through.
+
+The cause is link order, not code. Every code address is unchanged --
+`TickPhi2` at `1001c770` and `main.main` at `100225e4` in both -- and the
+only symbol differences are anonymous string/pack/alloc renumbering plus a
+BSS move: the 64K `ram` array goes from `200279a0` to `20001e80`, landing
+straight after `colorRAM` and pushing the drive, keyboard and
+`frameBufferRGB565BE` up by 64K. Adding a file that touches `ram` reordered
+the globals.
+
+Measured anyway, because a moved framebuffer and a moved `ram` change what
+the display DMA and the CPU are doing to each other:
+
+| run | mean ms/frame |
+| --- | --- |
+| A-before | 55.647358 |
+| B-autostart | 55.646514 |
+| A-restored | 55.647456 |
+
+Baseline mean 55.647407, drift 0.000098 ms. The candidate is 0.00089 ms
+faster, which is **-0.0016%** -- neutral, and inside the noise either way.
+The RP2040 stripes SRAM0-3 across banks, so a contiguous buffer spans all
+four wherever it starts, which is the likely reason the move costs nothing.
+Accepted: no regression, and the branch gains the mechanism.
+
+`go test ./...`, `go vet ./...`, `-tags headless`, `-tags pixelsink_func`
+and both target builds pass.
+
 ## Contributing back to main
 
 This branch also contributes performance fixes upstream to `main` when

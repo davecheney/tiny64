@@ -43,6 +43,17 @@ func clearFrameBufferRGBA() {
 	clear(FrameBufferRGBA())
 }
 
+// skipShort skips the tests that boot a whole emulated C64 and then talk
+// to a drive one bus transition at a time, which costs tens of millions
+// of emulated cycles. `go test -short .` gives a fast local run of
+// everything else; a full run still guards every change.
+func skipShort(t *testing.T) {
+	t.Helper()
+	if testing.Short() {
+		t.Skip("boots an emulated machine and drives a disk drive; skipped under -short")
+	}
+}
+
 func frameBufferPixelRGBA(x, y uint16) []byte {
 	const stride = VisibleDotsPerLine * 4
 	idx := int(y-FirstVisibleLine)*stride + int(x)*4

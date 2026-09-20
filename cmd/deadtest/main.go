@@ -14,7 +14,7 @@ func main() {
 	insertCart := func() {
 		tiny64.GetBus().Insert(rom.DeadTest, true, false, true, false)
 	}
-	if err := desktop.Run("Dead Test", insertCart); err != nil {
+	if err := desktop.Run("Dead Test", insertCart, nil); err != nil {
 		log.Fatal(err)
 	}
 }
