@@ -16,10 +16,3 @@ var DiagCart []byte
 
 //go:embed dead_test.bin
 var DeadTest []byte
-
-// DOSWedge is the tiny64 DOS wedge cartridge EPROM image, assembled by
-// the builder in the tiny64 package's tests and regenerated with
-// "go test github.com/davecheney/tiny64 -run TestDOSWedgeEmbeddedImage -update".
-//
-//go:embed doswedge.bin
-var DOSWedge []byte

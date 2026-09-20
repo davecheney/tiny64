@@ -42,12 +42,12 @@ func saveMachine(t *testing.T) {
 
 // skipShort skips a test under -short.
 //
-// The DOS wedge, 1541 and IEC drive tests are the expensive ones: each
-// boots a whole emulated C64, waits for the KERNAL to come up, and then
-// talks to a drive one bus transition at a time, which costs tens of
-// millions of emulated cycles. Together they are most of the suite's
-// runtime, so `go test -short .` gives a fast local run of everything
-// else. CI runs without -short, so they still guard every change.
+// The 1541 and IEC drive tests are the expensive ones: each boots a whole
+// emulated C64, waits for the KERNAL to come up, and then talks to a
+// drive one bus transition at a time, which costs tens of millions of
+// emulated cycles. Together they are most of the suite's runtime, so
+// `go test -short .` gives a fast local run of everything else. CI runs
+// without -short, so they still guard every change.
 func skipShort(t *testing.T) {
 	t.Helper()
 	if testing.Short() {
@@ -329,4 +329,29 @@ func screenLine(row int) string {
 		}
 	}
 	return strings.TrimRight(b.String(), " ")
+}
+
+// waitForScreen runs the machine until want appears anywhere on the
+// screen, or until the budget is spent. The failure dumps every non-blank
+// row, because a test that was waiting on text is almost always easier to
+// diagnose from what the machine actually printed instead.
+func (m *machine) waitForScreen(want string) {
+	m.t.Helper()
+	const budget = 80_000_000
+	for spent := 0; spent < budget; spent += 100_000 {
+		if screenHas(want) {
+			return
+		}
+
+		m.run(100_000)
+	}
+	var screen strings.Builder
+	for row := range 25 {
+		if line := screenLine(row); line != "" {
+			screen.WriteString("\n")
+			screen.WriteString(line)
+		}
+	}
+	m.t.Fatalf("after %d cycles, screen does not contain %q; PC=$%04X screen:%s",
+		budget, want, cpu.PC, screen.String())
 }

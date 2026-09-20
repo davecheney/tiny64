@@ -18,7 +18,6 @@ func main() {
 	disk := flag.String("disk", "", "insert this D64 disk image or PRG file into drive 8")
 	prg := flag.String("prg", "", "insert this PRG file into drive 8 (formatted on a virtual disk)")
 	autostart := flag.String("autostart", "", `insert this D64 or PRG and run it: LOAD"*",8,1 then RUN`)
-	wedge := flag.Bool("wedge", false, "enable the resident DOS wedge at the BASIC prompt")
 	profileDir := flag.String("pprof", "", "write a CPU profile of each interval into this directory")
 	profileEvery := flag.Duration("pprof-every", 5*time.Second, "how much of the run each -pprof profile covers")
 	flag.Parse()
@@ -59,9 +58,6 @@ func main() {
 		prelude = tiny64.Autostart
 	}
 	if err := desktop.Run("c64", func() {
-		if *wedge {
-			tiny64.EnableDOSWedge()
-		}
 		if image != nil {
 			// Inserting a disk plugs a drive into the serial bus, if
 			// there wasn't one there already. Which kind it is was

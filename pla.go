@@ -138,8 +138,6 @@ func ioLoad(addr uint16) uint8 {
 			return cia2ReadPRA()
 		}
 		return cia.cia2.load(addr, sourceCIA2)
-	case addr >= dosWedgeIO && cartridge.wedgeIO():
-		return cartridge.ROM[dosWedgeIOBank+int(addr-dosWedgeIO)]
 	default:
 		return ram[addr]
 	}
@@ -163,10 +161,6 @@ func ioStore(addr uint16, val uint8) {
 		if r := addr & 0x0F; r == 0x00 || r == 0x02 {
 			iecActive = true
 			vic.setBank()
-		}
-	case addr >= dosWedgeIO && cartridge.wedgeIO():
-		if addr == dosWedgeLatch {
-			cartridge.writeWedgeLatch(val)
 		}
 	default:
 		ram[addr] = val
