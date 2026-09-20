@@ -1,12 +1,18 @@
 // Package desktop provides the shared GUI frontend used by tiny64's
 // desktop commands (cmd/c64).
 //
-// It draws through SDL2, over a small cgo shim. SDL is the backend rather
+// It draws through SDL3, over a small cgo shim. SDL is the backend rather
 // than one of several because it is what both compilers can build: this
 // used to default to Ebitengine, which reaches TinyGo through purego,
 // whose func.go needs reflect.Value.SetPointer, and TinyGo's reflect does
 // not have it. With one backend there is no tag to pass and no second
 // keyboard map to keep in step.
+//
+// SDL3 rather than SDL2 because of SDL_SetTexturePalette: the VIC-II
+// decides on a palette index per pixel, and a paletted texture is that
+// shape exactly, so a frame goes to the GPU as one byte per pixel and is
+// expanded to colour there. Under SDL2 the expansion had to happen on the
+// CPU first, at four times the bytes.
 //
 // The package is deliberately isolated from the core tiny64 package: the
 // long-term goal is to run tiny64 on a Raspberry Pi Pico 2 under TinyGo,

@@ -128,6 +128,11 @@ func pollKeyboard(keys *tiny64.Keyboard) {
 	// SDL keeps one keyboard state array for the life of the program and
 	// refreshes it as events are pumped, so this is a read of what
 	// pumpEvents last drained rather than a fresh scan of the hardware.
+	//
+	// SDL3 types the array as bool where SDL2 had Uint8. It is read as
+	// bytes either way: a C bool is one byte holding 0 or 1, and going
+	// through Go's bool would mean trusting TinyGo's cgo to agree with
+	// clang about a type it has no particular reason to know.
 	var n C.int
 	held := unsafe.Slice((*byte)(unsafe.Pointer(C.SDL_GetKeyboardState(&n))), int(n))
 
