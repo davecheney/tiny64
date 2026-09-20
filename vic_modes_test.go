@@ -409,9 +409,11 @@ func TestVICSideBorderWriteAtCompareDot(t *testing.T) {
 	v.WriteRegister(0xD016, csel)
 
 	// borderCompare owns the left comparison, so run just that rather than
-	// a whole cycle around it.
+	// a whole cycle around it - against the pair the group would have
+	// selected, since which pair that is is the thing under test.
 	v.slot = leftComp40 / DotsPerCycle
-	v.borderCompare(v.Dot())
+	left, right := v.borderComparePair()
+	v.borderCompare(v.Dot(), left, right)
 	if v.mainBorder {
 		t.Fatal("mainBorder=true: the left comparison missed a CSEL write made one dot earlier")
 	}
