@@ -1392,6 +1392,53 @@ builds before the hardware gate. The device was restored to the accepted
 phase 4/5 image after the A/B/A run and serial telemetry confirmed the
 candidate's labeled XIP counters and approximately 59.35 ms/frame operation.
 
+## Display control code in RAM
+
+The ST7789 control path (`startDisplay`, `waitDisplay`, `setWindow` and
+`command`) now carries `//go:section .ramfuncs`, so those four methods are
+linked into RAM instead of executing from XIP flash. Only the CPU-side
+control code moves; `piolib`'s `Tx8`/`Tx8Async` and the DMA helpers still run
+from flash, and the pixel data path is unchanged.
+
+TinyGo silently ignores `//go:section` unless the file also imports `unsafe`.
+A first attempt without that import compiled cleanly, emitted no warning and
+produced a *byte-identical* UF2. Always confirm placement with
+`llvm-nm -n` (RAM symbols appear at `0x2000....`, flash at `0x1000....`)
+rather than trusting the directive.
+
+Measured by Tufty A/B/A. Baseline A averaged 59.390488 ms/frame, candidate B
+averaged 59.352090 ms/frame, and restored A averaged 59.389416 ms/frame. The
+candidate improved frame time by 0.037862 ms (0.0638%) against a baseline
+drift of -0.001072 ms, so the effect is roughly 35x the drift. In valid
+pre-counter-wrap windows XIP misses fell from 69,164-75,454 to 55,188-59,986
+per 50-frame sample (about 1,440 to 1,160 misses per frame, a 19% reduction)
+and the displayed hit rate rose from 99.97% to 99.98%. Per-frame display
+telemetry moved from `wait=27.1us start=103.8us` to `wait=27.5us
+start=85.1us`. The exact candidate UF2 was
+`7f654474366dc2bb3937cab496821e063677988a2c0582c5a1692f091fb97b56`.
+
+Both frame time and XIP misses improve, so this clears the branch's
+no-regression gate, but the win is small and mostly a cache-pollution effect:
+keeping the once-per-frame display code out of XIP leaves more of the cache
+holding emulator code. It is not a fix for the display cost itself.
+
+A second, larger variant was also measured and rejected. It duplicated the
+same four routines as free functions so their callees were RAM-resident too,
+and it was slightly faster still (59.339554 ms/frame, 0.0854% under a
+59.390287 ms baseline, 1,106 misses per frame). That extra 0.021% did not
+justify maintaining a second copy of the display driver, so the five-line
+annotation was adopted instead.
+
+This also rules out the CPU-side display calls as the explanation for the
+much larger no-display result recorded earlier: baseline `wait` plus `start`
+is only about 0.13 ms/frame, whereas removing the display entirely moved the
+`emulate` phase from ~59.39 ms to ~45.64 ms. That remaining gap is contention
+while the previous frame's DMA overlaps `StepFrame`, not time spent in these
+routines.
+
+The candidate passed host tests, vet, and Tufty and Gopher Badge firmware
+builds before the hardware gate.
+
 - **Build & Flash**: `tinygo flash -target=tufty2040 -opt=2 -scheduler=none ./cmd/tufty2040` (compiles and flashes in a single step).
 - **Bootloader Reset**: Opening USB CDC port at 1200 baud resets the RP2040 into bootloader mode (`/Volumes/RPI-RP2`).
 - **Serial Telemetry Monitoring**: Use `tinygo monitor` or read USB serial port (`/dev/cu.usbmodem1201` on macOS) at 115200 baud. Average `emulate=...ms` over 50-frame windows. Baseline is ~73-74ms/frame at `-opt=2 -scheduler=none`.

@@ -5,6 +5,7 @@ package main
 import (
 	"errors"
 	"time"
+	_ "unsafe"
 
 	"machine"
 
@@ -111,6 +112,7 @@ func (st *parallelST7789) configureDisplay() error {
 	return st.command(madctlCommand, []byte{madctl})
 }
 
+//go:section .ramfuncs
 func (st *parallelST7789) startDisplay(frame []byte) error {
 	if st.asyncFramePending {
 		return errAsyncFramePending
@@ -135,6 +137,7 @@ func (st *parallelST7789) startDisplay(frame []byte) error {
 	return nil
 }
 
+//go:section .ramfuncs
 func (st *parallelST7789) waitDisplay() {
 	if !st.asyncFramePending {
 		return
@@ -145,6 +148,7 @@ func (st *parallelST7789) waitDisplay() {
 	st.asyncFramePending = false
 }
 
+//go:section .ramfuncs
 func (st *parallelST7789) setWindow(x, y, w, h int16) error {
 	st.buf[0] = byte(x >> 8)
 	st.buf[1] = byte(x)
@@ -160,6 +164,7 @@ func (st *parallelST7789) setWindow(x, y, w, h int16) error {
 	return st.command(raset, st.buf[:])
 }
 
+//go:section .ramfuncs
 func (st *parallelST7789) command(command byte, data []byte) error {
 	st.dc.Low()
 	st.cs.Low()
