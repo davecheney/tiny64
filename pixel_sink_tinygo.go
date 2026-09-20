@@ -53,3 +53,24 @@ func writePixels4ToBuffer(x, y uint16, c0, c1, c2, c3 byte) {
 	row[2] = c64PaletteRGB565BE[c2&0x0f]
 	row[3] = c64PaletteRGB565BE[c3&0x0f]
 }
+
+// writePixels2ToBuffer writes the two dots of the second Phi0 half-phase
+// group, on the same terms as writePixels4ToBuffer.
+func writePixels2ToBuffer(x, y uint16, c0, c1 byte) {
+	x -= rgb565CropX
+	y -= rgb565CropY
+	if x+1 >= rgb565Width || y >= rgb565Height {
+		return
+	}
+	i := int(y)*rgb565Width + int(x)
+	row := frameBufferRGB565BE[i : i+2]
+	row[0] = c64PaletteRGB565BE[c0&0x0f]
+	row[1] = c64PaletteRGB565BE[c1&0x0f]
+}
+
+// writePixelInWindow writes a dot the caller has already proved lies on a
+// drawable line inside the rendered window, so the crop's own bounds test
+// would be answering a question already settled.
+func writePixelInWindow(x, y uint16, colorIndex byte) {
+	frameBufferRGB565BE[int(y-rgb565CropY)*rgb565Width+int(x-rgb565CropX)] = c64PaletteRGB565BE[colorIndex&0x0f]
+}

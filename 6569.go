@@ -342,6 +342,25 @@ func (v *VICII) stepCycle() {
 // comparisons and line wrapping belong to phases 6 and 7, so this pair has
 // no phase-specific state transition that needs to remain between pixels.
 func (v *VICII) dotclockSecond2() {
+	// The same group fast path as dotclockFirst4, for the pair.
+	if v.lineDrawable && v.dot+1 >= renderFirstDot && v.dot+2 < renderDotAfter {
+		first := v.dot + 1
+		v.dot += 2
+		if v.verticalBorder {
+			c := v.borderColor & 0x0F
+			writePixels2ToBuffer(first, v.rasterLine, c, c)
+			return
+		}
+		c0 := v.gdColor[v.gdSequencer>>7]
+		c1 := v.gdColor[v.gdSequencer>>6&1]
+		v.gdSequencer <<= 2
+		if v.mainBorder {
+			c := v.borderColor
+			c0, c1 = c, c
+		}
+		writePixels2ToBuffer(first, v.rasterLine, c0&0x0F, c1&0x0F)
+		return
+	}
 	v.dot++
 	if v.dot < VisibleDotsPerLine && v.dot >= renderFirstDot && v.dot < renderDotAfter {
 		if v.verticalBorder {
@@ -691,7 +710,7 @@ func (v *VICII) dotclock6() {
 	}
 
 	if v.verticalBorder {
-		writePixelToBuffer(v.dot, v.rasterLine, v.borderColor&0x0F)
+		writePixelInWindow(v.dot, v.rasterLine, v.borderColor&0x0F)
 		return
 	}
 	graphicsColor := v.gdColor[v.gdSequencer>>7]
@@ -699,7 +718,7 @@ func (v *VICII) dotclock6() {
 	if v.mainBorder {
 		graphicsColor = v.borderColor
 	}
-	writePixelToBuffer(v.dot, v.rasterLine, graphicsColor&0x0F)
+	writePixelInWindow(v.dot, v.rasterLine, graphicsColor&0x0F)
 }
 
 // dotclock7 handles cycle phase 7. Its beam advance reaches phase 0, so it
@@ -754,7 +773,7 @@ func (v *VICII) dotclock7() {
 	}
 
 	if v.verticalBorder {
-		writePixelToBuffer(v.dot, v.rasterLine, v.borderColor&0x0F)
+		writePixelInWindow(v.dot, v.rasterLine, v.borderColor&0x0F)
 		return
 	}
 	graphicsColor := v.gdColor[v.gdSequencer>>7]
@@ -762,7 +781,7 @@ func (v *VICII) dotclock7() {
 	if v.mainBorder {
 		graphicsColor = v.borderColor
 	}
-	writePixelToBuffer(v.dot, v.rasterLine, graphicsColor&0x0F)
+	writePixelInWindow(v.dot, v.rasterLine, graphicsColor&0x0F)
 }
 
 // phi0low runs on the first dot of every 8-dot cycle: while the VIC-II is

@@ -1541,6 +1541,62 @@ misses, so there is real frame time in following upstream.
 That is a feature decision, not a performance backport, and it reverses an
 exception the user granted on purpose. Left for the user to call.
 
+## Painting the remaining four dots per cycle
+
+`4ce80ac` batched only the first Phi0 half-phase. Of the eight dots in a
+cycle the live paint paths are `dotclockFirst4` (four dots, batched),
+`dotclockSecond2` (two), and `dotclock6`/`dotclock7` (one each);
+`dotclock0`..`dotclock5` are no longer called and are carried only as the
+reference bodies the grouped versions were derived from. This change gives
+the other four dots the same treatment.
+
+`dotclockSecond2` gets the identical group fast path: when the line is
+drawable and both dots fall inside the render window, read `verticalBorder`,
+`mainBorder` and `borderColor` once, take the two graphics colours from bits
+7 and 6, apply a single `gdSequencer <<= 2`, and hand the pair to one
+`writePixels2ToBuffer`. A `uint8` shifted twice by one is a shift by two, so
+the sequencer state is unchanged.
+
+`dotclock6` and `dotclock7` cannot be grouped -- they are single dots -- but
+they already return early on `!v.lineDrawable || v.dot < renderFirstDot ||
+v.dot >= renderDotAfter`. Everything after that guard is provably inside the
+crop, so `writePixelToBuffer`'s own `x >= W || y >= H` test is re-deciding a
+question the caller already settled. They now call `writePixelInWindow`,
+which subtracts the crop origin and stores. This is the same redundancy
+noted for the grouped paths in the previous entry, applied to the two dots
+that stayed per-dot.
+
+The per-dot bodies remain the fallback for the window edges. Note the
+warning in `dotclock0`'s comment: funnelling these paths into one shared
+helper cost ~161 ms/frame when LLVM declined to inline it. `writePixelInWindow`
+does not reintroduce that -- it replaces one leaf call with a cheaper leaf
+call and does not merge any dotclock bodies.
+
+Equivalence was checked the same way as before, by hashing a rendered frame
+in both trees: `1a9f385df371085edd699e2a73c9b4e21bf94786b150e1bfd1816876b886bf02`
+in each, so output is pixel-identical. `go test ./...`, `go vet ./...`,
+`-tags headless`, `-tags pixelsink_func`, and both target builds pass.
+
+Hardware A/B/A, baseline `4ce80ac` (`8055a9e8a46abdaf769132b5e99f2f4820db161c34b10180ebabf5328d499ad3`),
+candidate `d2363c4a4c31b64bae5b26f098a24da3b0afcb4b5c87e6c86549f38128f1feb1`:
+
+| run | mean ms/frame |
+| --- | --- |
+| A-before | 56.141836 |
+| B-paint-rest | 55.647570 |
+| A-restored | 56.142258 |
+
+Baseline mean 56.142047, drift 0.000422 ms across the pair, so the
+**-0.4945 ms/frame (-0.8808%)** is well clear of the noise. Accepted.
+
+XIP over the pre-wrap windows (frames 500-750) moves the same way it did for
+`4ce80ac`: accesses fall from ~248.2M to ~246.8M per 50-frame window (-0.56%)
+while absolute misses rise from ~67k to ~85k, hit rate 99.97% -> 99.96%.
+That is now the third measurement on this branch where frame time improves
+while the miss count goes up, and the second where it does so with fewer
+total accesses. Fetching less code is what pays; where the remaining misses
+land is not the predictor. Frame time stays the gate.
+
 ## Contributing back to main
 
 This branch also contributes performance fixes upstream to `main` when

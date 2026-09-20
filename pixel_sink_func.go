@@ -25,3 +25,12 @@ func writePixels4ToBuffer(x, y uint16, c0, c1, c2, c3 byte) {
 	writePixelToBuffer(x+2, y, c2)
 	writePixelToBuffer(x+3, y, c3)
 }
+
+func writePixels2ToBuffer(x, y uint16, c0, c1 byte) {
+	writePixelToBuffer(x, y, c0)
+	writePixelToBuffer(x+1, y, c1)
+}
+
+func writePixelInWindow(x, y uint16, colorIndex byte) {
+	writePixelToBuffer(x, y, colorIndex)
+}
