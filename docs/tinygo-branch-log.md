@@ -1541,6 +1541,14 @@ misses, so there is real frame time in following upstream.
 That is a feature decision, not a performance backport, and it reverses an
 exception the user granted on purpose. Left for the user to call.
 
+## Upstream review addendum: through `7ac3e0a`
+
+`origin/main` advanced to `7ac3e0a` while the work above was on hardware.
+The single new commit, `7ac3e0a desktop: put SDL's parent include directory
+on the path too`, touches only the desktop SDL build, which this branch does
+not build. Nothing to take. The review boundary for the next pass is
+`7ac3e0a`.
+
 ## Painting the remaining four dots per cycle
 
 `4ce80ac` batched only the first Phi0 half-phase. Of the eight dots in a
