@@ -1250,12 +1250,17 @@ func (v *VICII) cycleDraw(slot, dot uint16, borderSlot, mayReload bool) {
 func (v *VICII) cycleDrawDisplay(dot uint16) {
 	reload := v.reloadDot(dot, true)
 
-	// Asked once for the half-phase, not once a dot: see
-	// graphicsPixelPlain4 for why four dots can share the answer. dotclock4
-	// asks the same question, but reaching it to be asked is a call, and
-	// this is the path that runs on every slot of the display window.
+	// Both questions are asked once for the half-phase, not once a dot:
+	// see graphicsPixelPlain4 for why four dots can share the answer.
+	// dotclock4 asks the same two, but reaching it to be asked is a call,
+	// and this is the path that runs on every slot of the display window -
+	// so between them these two branches leave it holding only the groups
+	// no answer fits, which is the rarest of the three.
 	if v.spriteFreeGroup(dot) {
 		c0, c1, c2, c3 := v.graphicsPixelPlain4(reload - dot)
+		writePixels4ToBuffer(dot, v.beamLine, c0, c1, c2, c3)
+	} else if i, ok := v.spriteSoloGroup(dot); ok {
+		c0, c1, c2, c3 := v.graphicsPixelSolo4(dot, reload-dot, i)
 		writePixels4ToBuffer(dot, v.beamLine, c0, c1, c2, c3)
 	} else {
 		v.dotclock4(dot, reload, false)
@@ -1269,6 +1274,9 @@ func (v *VICII) cycleDrawDisplay(dot uint16) {
 
 	if v.spriteFreeGroup(dot + 4) {
 		c0, c1, c2, c3 := v.graphicsPixelPlain4(reload - (dot + 4))
+		writePixels4ToBuffer(dot+4, v.beamLine, c0, c1, c2, c3)
+	} else if i, ok := v.spriteSoloGroup(dot + 4); ok {
+		c0, c1, c2, c3 := v.graphicsPixelSolo4(dot+4, reload-(dot+4), i)
 		writePixels4ToBuffer(dot+4, v.beamLine, c0, c1, c2, c3)
 	} else {
 		v.dotclock4(dot+4, reload, false)
