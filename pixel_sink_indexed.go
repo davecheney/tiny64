@@ -2,6 +2,8 @@
 
 package tiny64
 
+import "encoding/binary"
+
 const (
 	// FrameBufferStride is the indexed row size in bytes: one palette
 	// index per visible VIC-II dot, with no padding between rows.
@@ -59,12 +61,40 @@ func ClearFrameBuffer() {
 
 // writePixels4ToBuffer writes one Phi0 half-phase's four dots at once:
 // four consecutive pixels of one line, so one row offset and one bounds
-// check instead of four of each.
+// check instead of four of each - and one store, because four bytes side
+// by side in a row are a word.
+//
+// Packing them by hand is not the compiler second-guessed. It will not
+// merge the four byte stores on its own: the rules that widen adjacent
+// stores want the bytes to be shifts of one value, and these are four
+// independent registers. Written as four assignments it emits four byte
+// stores; written as a word it emits one, and the masking that has to
+// happen either way pays for the shifts.
+//
+// Both callers hand over a whole group, so x is a multiple of four, and
+// a row is a whole number of them - see below - which makes the word an
+// aligned one.
+//
+// copy of a four byte array is the same idea and is worse: it builds the
+// array on the stack, tests the two for overlap, and then copies it a
+// byte at a time anyway.
 func writePixels4ToBuffer(x, y uint16, c0, c1, c2, c3 byte) {
 	i := int(y)*FrameBufferStride + int(x)
-	row := frameBufferIndexed[i : i+4]
-	row[0] = c0 & 0x0f
-	row[1] = c1 & 0x0f
-	row[2] = c2 & 0x0f
-	row[3] = c3 & 0x0f
+	binary.LittleEndian.PutUint32(frameBufferIndexed[i:i+4],
+		uint32(c0&0x0f)|uint32(c1&0x0f)<<8|
+			uint32(c2&0x0f)<<16|uint32(c3&0x0f)<<24)
 }
+
+// The order is the sink's, not the machine's: PutUint32 puts c0 at the
+// lowest address whatever the host's own byte order is, so the frame
+// buffer holds the bytes four assignments would have left, and every
+// reader of it - the desktop's INDEX8 texture, FrameBufferRGBA, the
+// tests - is unchanged.
+//
+// A group starts on a multiple of four dots and a row is a whole number
+// of groups, so the four bytes never straddle a row or a word.
+// Converting a negative constant to uint is the error.
+const (
+	_ = uint(0 - FrameBufferStride%4)
+	_ = uint(0 - DotsPerCycle%4)
+)
