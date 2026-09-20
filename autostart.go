@@ -38,8 +38,7 @@ const (
 // notice with. To autostart something else, run the program again.
 //
 // This is not the cartridge autostart the KERNAL performs when it finds
-// a CBM80 signature at $8004; nothing is plugged into the expansion
-// port, no ROM is added, and the DOS wedge is unaffected either way.
+// a CBM80 signature at $8004: no ROM is added and nothing is mapped.
 //
 // "*" is CBM DOS's first-file wildcard, which is why no filename is
 // needed: MakeD64FromPRG writes the PRG as the only file on a fresh
@@ -49,8 +48,8 @@ func Autostart() {
 		vic.StepFrame()
 	}
 
-	// A cartridge in the expansion port pushes the prompt out by a frame,
-	// so confirm rather than assume.
+	// Confirm rather than assume: the count is an optimisation, not the
+	// trigger.
 	for range 30 {
 		if BASICReady() {
 			break
@@ -74,8 +73,7 @@ func Type(s string) {
 		}
 
 		// The count last. An interrupt landing between the two sees a
-		// buffer that is either empty or complete, never half written;
-		// the wedge cartridge's own 6502 queueRun orders it the same way.
+		// buffer that is either empty or complete, never half written.
 		ram[kernalKeyCount] = byte(n)
 
 		s = s[n:]

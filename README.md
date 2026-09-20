@@ -47,76 +47,6 @@ which attaches the virtual drive automatically.
 
     go run ./cmd/c64 -disk demo.d64
 
-The desktop and headless front ends also have an opt-in `-wedge` flag. It plugs
-an 8K autostart cartridge into the expansion port before reset, the way a
-fastload or utility cartridge of the period arrived: the KERNAL finds the
-`CBM80` signature at `$8004` during its reset sequence and hands the cartridge
-control before BASIC has started, and the cartridge initializes the machine
-itself and installs a small cassette-buffer dispatcher. Cartridge ROM is
-switched in at `$8000-$9FFF` only while servicing wedge commands; BASIC,
-the screen editor, KERNAL disk operations, and loaded programs see normal RAM:
-
-    go run ./cmd/c64 -disk demo.d64 -wedge
-    go run ./cmd/c64cli -disk demo.d64 -wedge
-
-The cartridge prints `DOS WEDGE ACTIVE` as it starts up, just above the first
-`READY.`, and accepts the historical direct-mode DOS Wedge / DOS Manager 5.1
-shorthands:
-
-- `$` or `@$` loads and lists the directory without replacing the current BASIC
-  program; directory patterns such as `$:DEMO*` are also passed to the drive
-- `@` or `>` prints the drive status
-- `@S:NAME`, `>S:NAME`, `@N:DISK,ID`, and other `@`/`>` strings are sent to the
-  drive's command channel, then the resulting status is printed
-- `@#9` selects the active IEC device number for later wedge commands
-- `/NAME` expands to `LOAD"NAME",dev`
-- `↑NAME` expands to `LOAD"NAME",dev` and runs the program after the load
-  returns to the BASIC prompt
-- `%NAME` expands to `LOAD"NAME",dev,1` for machine-code programs
-- `←NAME` expands to `SAVE"NAME",dev`
-- `@Q` removes the prompt hook and switches the cartridge off until hardware
-  reset. Neither RESTORE nor RUN/STOP+RESTORE reactivates it. Software
-  reactivation with `SYS 32777` is no longer supported: `$8009` is program RAM.
-
-All disk traffic still uses the emulated KERNAL and IEC bus, so the normal
-load, save, directory, and command-channel messages remain visible. The wedge
-is disabled by default, and when it is enabled it is the cartridge's own 6502
-startup code that installs it, as a direct-mode prompt hook. Stored BASIC
-program lines are deliberately left to BASIC rather than intercepted by a
-CHRGET hook, so wedge tokens in a numbered line retain normal BASIC syntax
-behaviour instead of becoming hidden disk operations.
-
-**BASIC reports the normal 38911 bytes free.** The cartridge banks ROM out
-while the real KERNAL memory test runs; it neither reserves BASIC memory nor
-changes the memory-size result. Its own emulated 6502 firmware installs the
-dispatcher, call gate, and workspace at `$033C-$03D1` in the cassette buffer.
-No code is injected by the host, and `$8000-$9FFF` and `$C000-$CFFF` remain
-available to programs.
-
-The wedge uses a small custom cartridge mapper. While active, `$DF00-$DFFF`
-exposes the final 256 bytes of cartridge ROM through IO2, independently of
-ROML. Writes to `$DFFF` control a latch: bit 0 asserts `/EXROM`, and bit 7
-releases `/EXROM` and locks out both ROM windows until hardware reset; other
-bits are ignored. Thus `$00` hides ROML, `$01` exposes it, and `$80` switches
-the cartridge off. Normal CPU-port I/O banking applies. These registers
-exist only for the wedge cartridge. Use `@Q`, not a direct latch POKE, to
-retire the hook safely.
-
-IRQ is masked during short ROM-only work, with the incoming interrupt state
-restored for external calls made with ROML hidden. The cartridge's NMI path
-preserves normal RESTORE behavior and hides ROM before a RUN/STOP+RESTORE
-warm start abandons the interrupted firmware. Hardware reset reinstalls the
-wedge and resets its selected device to 8. The host `EnableDOSWedge` and
-`DisableDOSWedge` APIs change the expansion port immediately; call `Reset`
-before continuing after either operation.
-
-The cassette buffer and IO2 are still cartridge resources. Software that
-overwrites that workspace, takes over cartridge I/O, or installs an NMI
-handler that assumes no cartridge is present may need `@Q` first. The
-up-arrow shortcut retains its historical queued-`RUN` behavior: it can run
-the previous program after a failed LOAD, so use `/NAME` and a separate
-`RUN` when you need to check load success first.
-
 ### Autostart
 
 `-autostart FILE` inserts a D64 or a PRG and runs it, the way VICE's
@@ -145,7 +75,7 @@ prompt to find.
 `"*"` is CBM DOS's first-file wildcard, so no filename is needed: a PRG
 is written as the only file on a fresh disk image, and on a real D64 the
 first directory entry is what a demo wants anyway. Two consequences
-worth knowing, both shared with the wedge's `↑NAME` shortcut:
+worth knowing:
 
 - It runs BASIC programs. A machine-code PRG that loads outside `$0801`
   ends up in memory, but `RUN` finds nothing at `$0801` and returns to
@@ -201,7 +131,6 @@ Raspberry Pi Pico.
 - `cmd/prg` inspects `.prg` files: header, BASIC listing, disassembly
 - `cmd/internal/prg` and `cmd/internal/disasm` are the PRG decoder and the
   6502 disassembler behind it
-- `cmd/deadtest` and `cmd/destestmax` run C64 diagnostic cartridges
 
 Both `cmd/tufty2040` and `cmd/gopher-badge64` print a per-50-frame line to
 their USB serial console with emulate/draw timing and the RP2040 XIP

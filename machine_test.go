@@ -7,8 +7,8 @@ import (
 )
 
 // The emulator is built out of package-level singletons: one CPU, one
-// VIC-II, two CIAs, one 64K RAM array, one colour RAM chip, one cartridge
-// slot. That is the right shape for a machine that only ever has one of
+// VIC-II, two CIAs, one 64K RAM array and one colour RAM chip. That is
+// the right shape for a machine that only ever has one of
 // each, but it means every test in this package shares them, so a test
 // that leaves dirty state behind surfaces as a failure in some unrelated
 // test that happens to run later. The helpers here keep that contained.
@@ -18,7 +18,7 @@ import (
 // to without having to know who runs next.
 func saveMachine(t *testing.T) {
 	savedCPU, savedCIA1, savedCIA2 := cpu, cia1, cia2
-	savedKeyboard, savedVIC, savedCartridge := keyboard, vic, cartridge
+	savedKeyboard, savedVIC := keyboard, vic
 	savedRAM, savedColorRAM := ram, colorRAM
 	savedDisk := diskImage
 	savedVirtualDriveAttached := virtualDriveAttached
@@ -29,7 +29,7 @@ func saveMachine(t *testing.T) {
 	savedBus := append([]iecPeripheral(nil), iecBus...)
 	t.Cleanup(func() {
 		cpu, cia1, cia2 = savedCPU, savedCIA1, savedCIA2
-		keyboard, vic, cartridge = savedKeyboard, savedVIC, savedCartridge
+		keyboard, vic = savedKeyboard, savedVIC
 		ram, colorRAM = savedRAM, savedColorRAM
 		InsertDisk(savedDisk)
 		virtualDriveAttached = savedVirtualDriveAttached
@@ -88,7 +88,6 @@ func newMachine(t *testing.T) *machine {
 	cia1 = CIA{}
 	cia2 = CIA{}
 	keyboard = Keyboard{}
-	bus.Remove() // no cartridge, so the KERNAL gets the reset vector
 	vic = VICII{}
 	for i := range ram {
 		ram[i] = 0
@@ -220,6 +219,27 @@ func (m *machine) reset(row int, want string) {
 	}
 	Reset()
 	m.waitForLine(row, want)
+}
+
+func (m *machine) waitForScreen(want string) {
+	m.t.Helper()
+	const budget = 80_000_000
+	for spent := 0; spent < budget; spent += 100_000 {
+		if screenHas(want) {
+			return
+		}
+
+		m.run(100_000)
+	}
+	var screen strings.Builder
+	for row := range 25 {
+		if line := screenLine(row); line != "" {
+			screen.WriteString("\n")
+			screen.WriteString(line)
+		}
+	}
+	m.t.Fatalf("after %d cycles, screen does not contain %q; PC=$%04X screen:%s",
+		budget, want, cpu.PC, screen.String())
 }
 
 func (m *machine) waitForLine(row int, want string) {

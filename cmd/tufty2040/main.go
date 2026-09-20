@@ -146,7 +146,7 @@ func main() {
 	tiny64.Reset()
 
 	// Autostart types the load itself through the KERNAL's type-ahead
-	// buffer, so the 8K wedge EPROM is no longer carried to do it.
+	// buffer, so no ROM is carried to do it.
 	tiny64.Autostart()
 
 	var buttons buttonState

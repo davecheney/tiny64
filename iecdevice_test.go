@@ -270,7 +270,6 @@ func TestDriveAttachedBeforeReset(t *testing.T) {
 
 	cpu, cia1, cia2 = CPU{}, CIA{}, CIA{}
 	keyboard = Keyboard{}
-	bus.Remove()
 	vic = VICII{}
 	for i := range ram {
 		ram[i] = 0

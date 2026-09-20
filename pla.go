@@ -21,10 +21,6 @@ func plaLoad(addr uint16) uint8 {
 	loram, hiram, charen := cpu.bankBits()
 
 	switch {
-	case addr >= 0x8000 && addr <= 0x9FFF && cartridge.eightK() && cartridge.ROML && loram && hiram:
-		// An 8K cartridge's /ROML image. The PLA only asserts /ROML when
-		// both LORAM and HIRAM are high and the cartridge asserts /EXROM.
-		return cartridge.ROM[addr-0x8000]
 	case addr >= 0xA000 && addr <= 0xBFFF && loram && hiram:
 		return rom.Basic[addr-0xA000]
 	case addr >= 0xD000 && addr <= 0xDFFF && (loram || hiram):
@@ -32,10 +28,6 @@ func plaLoad(addr uint16) uint8 {
 			return ioLoad(addr)
 		}
 		return rom.Character[addr-0xD000]
-	case addr >= 0xE000 && cartridge.ultimax() && cartridge.ROMH:
-		// A cartridge wired for MAX mode overrides the KERNAL entirely,
-		// regardless of hiram.
-		return cartridge.ROM[addr-0xE000]
 	case addr >= 0xE000 && hiram:
 		return rom.Kernal[addr-0xE000]
 	default:
@@ -46,11 +38,7 @@ func plaLoad(addr uint16) uint8 {
 // plaStore writes addr through the memory map currently selected by the
 // CPU's bank-switching lines. RAM is always writable underneath BASIC/
 // KERNAL ROM; character ROM is read-only (RAM is disabled behind it), and
-// I/O is dispatched to whichever chip is selected. Cartridge ROM is not a
-// case here for the same reason: a ROM chip cannot be written, and the PLA
-// leaves the RAM underneath it enabled for writes. That is what lets the
-// KERNAL's RAMTAS find a cartridge - it writes $55, reads the ROM byte
-// back instead, and stops its memory walk there.
+// I/O is dispatched to whichever chip is selected.
 func plaStore(addr uint16, val uint8) {
 	loram, hiram, charen := cpu.bankBits()
 
@@ -69,18 +57,8 @@ func plaStore(addr uint16, val uint8) {
 // its c-access/g-access fetches): it ignores the CPU's LORAM/HIRAM/CHAREN
 // banking entirely, but the character generator ROM is still hard-wired
 // into view at $1000-$1FFF (and $9000-$9FFF in banks not selected via
-// CIA2, which isn't implemented yet, so only bank 0 is modeled). A
-// cartridge wired for MAX mode also overrides the top 4K of every 16K
-// quadrant ($3000, $7000, $B000, $F000) with its ROMH image, via a
-// dedicated hardware path separate from the CPU's $E000-$FFFF ROMH window
-// - this is how MAX-mode carts supply the VIC with custom character/
-// bitmap data baked into the cartridge ROM itself. The ROMH chip only has
-// 13 address pins, so the offset it presents is always addr&0x1FFF,
-// regardless of which window asserted its chip-select.
+// CIA2, which isn't implemented yet, so only bank 0 is modeled).
 func plaVICLoad(addr uint16) uint8 {
-	if cartridge.ultimax() && cartridge.ROMH && addr&0x3000 == 0x3000 {
-		return cartridge.ROM[addr&0x1FFF]
-	}
 	if addr >= 0x1000 && addr <= 0x1FFF {
 		return rom.Character[addr-0x1000]
 	}
@@ -113,8 +91,6 @@ func ioLoad(addr uint16) uint8 {
 			return cia2ReadPRA()
 		}
 		return cia2.Load(addr)
-	case addr >= dosWedgeIO && cartridge.wedgeIO():
-		return cartridge.ROM[dosWedgeIOBank+int(addr-dosWedgeIO)]
 	default:
 		return ram[addr]
 	}
@@ -135,10 +111,6 @@ func ioStore(addr uint16, val uint8) {
 		// the serial bus, so it is where the bus is woken.
 		if r := addr & 0x0F; r == 0x00 || r == 0x02 {
 			iecActive = true
-		}
-	case addr >= dosWedgeIO && cartridge.wedgeIO():
-		if addr == dosWedgeLatch {
-			cartridge.writeWedgeLatch(val)
 		}
 	default:
 		ram[addr] = val
