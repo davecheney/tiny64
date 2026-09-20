@@ -10,6 +10,7 @@ func TestVICStepCycleStalledReadClocksCIAs(t *testing.T) {
 	cpu.PC = 0x0200
 	ram[0x0200] = 0xEA // NOP
 	vic.rasterLine = 0x33
+	vic.slot = 1
 	vic.dot = DotsPerCycle
 	vic.control1 = 0x13
 	vic.allowBadLine = true
@@ -43,6 +44,7 @@ func TestVICStepCycleCPUWriteFollowsPixels(t *testing.T) {
 	cpu.A = 5
 	copy(ram[0x0200:], []byte{0x8D, 0x20, 0xD0, 0xEA}) // STA $D020; NOP
 	vic.rasterLine = 100
+	vic.slot = 2
 	vic.dot = 16
 	vic.borderColor = 2
 	// This branch resets border flip-flops open; keep the test in the border.
@@ -62,14 +64,14 @@ func TestVICStepCycleCPUWriteFollowsPixels(t *testing.T) {
 	if vic.dot != 48 || bus.RW || bus.Address != 0xD020 || bus.Data != 5 {
 		t.Fatalf("store did not complete at dot 48: dot=%d bus=%+v", vic.dot, bus)
 	}
-	for dot := uint16(41); dot <= 48; dot++ {
+	for dot := uint16(40); dot <= 47; dot++ {
 		if !frameBufferPixelIs(dot, 100, 2) {
 			t.Fatalf("dot %d was painted with the new color before CPU Phi2", dot)
 		}
 	}
 
 	vic.StepCycle()
-	for dot := uint16(49); dot <= 56; dot++ {
+	for dot := uint16(48); dot <= 55; dot++ {
 		if !frameBufferPixelIs(dot, 100, 5) {
 			t.Fatalf("dot %d did not use the color written in the previous cycle", dot)
 		}
