@@ -721,9 +721,28 @@ func (v *VICII) refreshGraphicsPalette() {
 // issues the discarded ALU work in slots that were idle anyway. It is here
 // because per-dot work should be what is read per dot, not for a win.
 func (v *VICII) nextGraphicsColor() (byte, uint8) {
-	index := uint8(v.gdSequencer >> 14)
-	v.gdSequencer <<= 2
-	return v.gdColor[index], index
+	graphicsColor, index, seq := v.shiftGraphicsColor(v.gdSequencer)
+	v.gdSequencer = seq
+	return graphicsColor, index
+}
+
+// shiftGraphicsColor is nextGraphicsColor with the sequencer passed in
+// and handed back rather than read and written, so that a caller painting
+// a whole group can hold it in a local.
+//
+// The register is 16 bits of VICII state, and the compiler will not keep
+// it in one across four dots: it loads it once for the group, but stores
+// it back after every dot, and three of those four stores are dead. It
+// cannot drop them, because v is a pointer and anything it cannot see
+// through might read what they wrote. A local says what the group knows -
+// that nothing between its dots reads the sequencer.
+//
+// loadGraphicsData is the one thing that writes it, by replacing it
+// outright rather than shifting into it, and the callers below call that
+// themselves, so they resynchronise the local across it by hand.
+func (v *VICII) shiftGraphicsColor(seq uint16) (byte, uint8, uint16) {
+	index := uint8(seq >> 14)
+	return v.gdColor[index], index, seq << 2
 }
 
 // graphicsPixelPlain4 decides the colours of all four dots of a Phi0
@@ -774,38 +793,49 @@ func (v *VICII) graphicsPixelPlain4(reloadOffset uint16) (byte, byte, byte, byte
 		return border, border, border, border
 	}
 
+	// One load for the group and one store at the end of it, rather than
+	// one of each a dot: see shiftGraphicsColor. A reload replaces the
+	// register, so the local is taken again after it rather than written
+	// back before it - the shifts it discards were dead anyway, which is
+	// the same fact the closed-border shortcut above rests on.
 	var c0, c1, c2, c3 byte
+	seq := v.gdSequencer
 	switch reloadOffset {
 	case 0:
 		v.loadGraphicsData()
-		c0, _ = v.nextGraphicsColor()
-		c1, _ = v.nextGraphicsColor()
-		c2, _ = v.nextGraphicsColor()
-		c3, _ = v.nextGraphicsColor()
+		seq = v.gdSequencer
+		c0, _, seq = v.shiftGraphicsColor(seq)
+		c1, _, seq = v.shiftGraphicsColor(seq)
+		c2, _, seq = v.shiftGraphicsColor(seq)
+		c3, _, seq = v.shiftGraphicsColor(seq)
 	case 1:
-		c0, _ = v.nextGraphicsColor()
+		c0, _, seq = v.shiftGraphicsColor(seq)
 		v.loadGraphicsData()
-		c1, _ = v.nextGraphicsColor()
-		c2, _ = v.nextGraphicsColor()
-		c3, _ = v.nextGraphicsColor()
+		seq = v.gdSequencer
+		c1, _, seq = v.shiftGraphicsColor(seq)
+		c2, _, seq = v.shiftGraphicsColor(seq)
+		c3, _, seq = v.shiftGraphicsColor(seq)
 	case 2:
-		c0, _ = v.nextGraphicsColor()
-		c1, _ = v.nextGraphicsColor()
+		c0, _, seq = v.shiftGraphicsColor(seq)
+		c1, _, seq = v.shiftGraphicsColor(seq)
 		v.loadGraphicsData()
-		c2, _ = v.nextGraphicsColor()
-		c3, _ = v.nextGraphicsColor()
+		seq = v.gdSequencer
+		c2, _, seq = v.shiftGraphicsColor(seq)
+		c3, _, seq = v.shiftGraphicsColor(seq)
 	case 3:
-		c0, _ = v.nextGraphicsColor()
-		c1, _ = v.nextGraphicsColor()
-		c2, _ = v.nextGraphicsColor()
+		c0, _, seq = v.shiftGraphicsColor(seq)
+		c1, _, seq = v.shiftGraphicsColor(seq)
+		c2, _, seq = v.shiftGraphicsColor(seq)
 		v.loadGraphicsData()
-		c3, _ = v.nextGraphicsColor()
+		seq = v.gdSequencer
+		c3, _, seq = v.shiftGraphicsColor(seq)
 	default:
-		c0, _ = v.nextGraphicsColor()
-		c1, _ = v.nextGraphicsColor()
-		c2, _ = v.nextGraphicsColor()
-		c3, _ = v.nextGraphicsColor()
+		c0, _, seq = v.shiftGraphicsColor(seq)
+		c1, _, seq = v.shiftGraphicsColor(seq)
+		c2, _, seq = v.shiftGraphicsColor(seq)
+		c3, _, seq = v.shiftGraphicsColor(seq)
 	}
+	v.gdSequencer = seq
 	return c0, c1, c2, c3
 }
 
