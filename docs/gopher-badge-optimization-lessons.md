@@ -18,7 +18,9 @@ absorb that cost when it can't be removed. That reasoning does not carry
 over to the Gopher Badge's Cortex-M0+.
 
 We converted several `bool`-driven decisions in the VIC-II per-dot pixel
-path (`dotclock0`..`dotclock7` in `6569.go`) to `uint8` 0x00/0xFF masks
+path (`dotclock0`..`dotclock7` in `6569.go`, since replaced by the
+per-half-phase `dotclock4`; the finding is about branches against masks,
+not about that shape) to `uint8` 0x00/0xFF masks
 merged with `&`/`&^`/`|` instead of branching. Measured on-device,
 steady-state `StepFrame` emulate time per frame (baseline = `main` at the
 time, `tinygo build -target=gopher-badge -scheduler=cores`):

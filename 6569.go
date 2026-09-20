@@ -250,7 +250,7 @@ func (v *VICII) Reset() {
 // syncLineVisibility recomputes the cached line visibility flags from
 // rasterLine, and puts the beam on the line the counter names.
 // It must be called whenever rasterLine is changed by anything other than
-// dotclock7's line wrap, which updates the flags itself.
+// vinc, which updates the flags itself and leaves the beam where it is.
 func (v *VICII) syncLineVisibility() {
 	v.beamLine = v.rasterLine
 	v.lineVisible = v.rasterLine < firstVBlankLine && v.rasterLine > lastVBlankLine
@@ -852,8 +852,8 @@ func (v *VICII) cycleSetVicCounter() {
 // cycleGAccess reads one row of character data (standard text mode only
 // for now), and advances VC/VMLI (section 3.7.2/3.7.3.1). The fetched
 // byte isn't displayed immediately: it's latched in gdPending and
-// committed to gdSequencer/videoBuffer when dotclock7 advances the beam to
-// the next character-cell boundary, 4 dots after this cycle's own dot&7==4.
+// committed to gdSequencer/videoBuffer by commitGAccess, at the top of the
+// next bus cycle - the character-cell boundary four dots after this one.
 func (v *VICII) cycleGAccess() {
 	v.videoBufferPending = v.videoMatrixColor[v.VMLI]
 
