@@ -1220,7 +1220,28 @@ func (v *VICII) cycleDraw(slot, dot uint16, borderSlot, mayReload bool) {
 	// reloadDot gives.
 	reload := v.reloadDot(dot, mayReload)
 
-	v.dotclock4(dot, reload, borderSlot)
+	// The same two group questions cycleDrawDisplay asks, and for the same
+	// reason: reaching dotclock4 to be asked is a call. Outside the
+	// display window almost every group is one or the other - a border
+	// line carries no graphics and a sprite over it covers whole groups at
+	// a time - so this is the call that a drawn border cycle was paying
+	// to be told it had nothing to composite.
+	//
+	// A border slot skips both. The flip-flop moves between the dots of
+	// those three slots a line, which is what dotclockBorder4 exists for,
+	// and neither group answer survives that; it asks the sprite-free
+	// question itself, per group, on the other side of the call.
+	if borderSlot {
+		v.dotclock4(dot, reload, true)
+	} else if v.spriteFreeGroup(dot) {
+		c0, c1, c2, c3 := v.graphicsPixelPlain4(reload - dot)
+		writePixels4ToBuffer(dot, v.beamLine, c0, c1, c2, c3)
+	} else if i, ok := v.spriteSoloGroup(dot); ok {
+		c0, c1, c2, c3 := v.graphicsPixelSolo4(dot, reload-dot, i)
+		writePixels4ToBuffer(dot, v.beamLine, c0, c1, c2, c3)
+	} else {
+		v.dotclock4(dot, reload, false)
+	}
 	v.phi0low(slot)
 
 	// The CPU runs first, since the VIC has just handed it the bus.
@@ -1235,7 +1256,17 @@ func (v *VICII) cycleDraw(slot, dot uint16, borderSlot, mayReload bool) {
 	// whatever CIA2 has just driven onto it.
 	iecTick()
 
-	v.dotclock4(dot+4, reload, borderSlot)
+	if borderSlot {
+		v.dotclock4(dot+4, reload, true)
+	} else if v.spriteFreeGroup(dot + 4) {
+		c0, c1, c2, c3 := v.graphicsPixelPlain4(reload - (dot + 4))
+		writePixels4ToBuffer(dot+4, v.beamLine, c0, c1, c2, c3)
+	} else if i, ok := v.spriteSoloGroup(dot + 4); ok {
+		c0, c1, c2, c3 := v.graphicsPixelSolo4(dot+4, reload-(dot+4), i)
+		writePixels4ToBuffer(dot+4, v.beamLine, c0, c1, c2, c3)
+	} else {
+		v.dotclock4(dot+4, reload, false)
+	}
 	// The bus cycle is over. This is the machine's only beam counter, and
 	// it moves once here rather than eight times through the dot path.
 	v.slot = slot + 1
