@@ -284,7 +284,7 @@ The Badge's is synchronous, and gets the same overlap from a goroutine,
 so it needs one.
 
     tinygo flash -target=tufty2040    -opt=2 -scheduler=none  ./cmd/rp2040
-    tinygo flash -target=gopher-badge -opt=2 -scheduler=cores ./cmd/rp2040
+    tinygo flash -target=gopher-badge -opt=2 -scheduler=tasks ./cmd/rp2040
 
 Add `-tags vicmini` for the cut-down VIC-II: no sprite unit and standard
 character mode alone, which is what these panels show. It is worth about

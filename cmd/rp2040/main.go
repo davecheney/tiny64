@@ -14,12 +14,20 @@
 // it is on:
 //
 //	tinygo flash -target=tufty2040    -opt=2 -scheduler=none  ./cmd/rp2040
-//	tinygo flash -target=gopher-badge -opt=2 -scheduler=cores ./cmd/rp2040
+//	tinygo flash -target=gopher-badge -opt=2 -scheduler=tasks ./cmd/rp2040
 //
 // The scheduler settings are not interchangeable. The Tufty's panel is
 // asynchronous in hardware - DMA runs while the next frame is emulated -
-// and wants no scheduler at all. The Badge's is synchronous, so it gets
-// the same overlap from a goroutine, and needs one.
+// and wants no scheduler at all. The Badge's is synchronous, so it needs
+// one for the goroutine that draws.
+//
+// -scheduler=cores is what the Badge wants and does not currently work:
+// under TinyGo 0.43.0-dev the board comes up and draws but emits nothing
+// on USB serial, so none of the telemetry below arrives. tasks is what
+// was measured. The difference is real work, not just reporting - tasks
+// is cooperative on one core, so the draw does not overlap the next
+// frame and wait= carries the whole 58ms transfer - but a board that
+// cannot be measured is worse than a board that is slower.
 package main
 
 import (

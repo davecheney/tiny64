@@ -119,10 +119,10 @@ jobs:
         run: tinygo build -tags tufty2040,vicmini -target=tufty2040 -opt=2 -scheduler=none -o /dev/null ./cmd/rp2040
 
       - name: Build (gopher badge)
-        run: tinygo build -tags gopher_badge -target=gopher-badge -opt=2 -scheduler=cores -o /dev/null ./cmd/rp2040
+        run: tinygo build -tags gopher_badge -target=gopher-badge -opt=2 -scheduler=tasks -o /dev/null ./cmd/rp2040
 
       - name: Build (gopher badge, vicmini)
-        run: tinygo build -tags gopher_badge,vicmini -target=gopher-badge -opt=2 -scheduler=cores -o /dev/null ./cmd/rp2040
+        run: tinygo build -tags gopher_badge,vicmini -target=gopher-badge -opt=2 -scheduler=tasks -o /dev/null ./cmd/rp2040
 
       # There's no golangci-lint in the repo yet, so "lint" is what the
       # standard toolchain offers: vet, plus a formatting check, written

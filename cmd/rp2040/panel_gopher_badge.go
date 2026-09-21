@@ -22,15 +22,18 @@ const spiBaud = 32_000_000
 //
 // The Tufty's transfer is asynchronous in hardware - PIO feeds DMA and
 // the CPU walks away - and this one is not: DrawBitmap blocks until the
-// frame is out. A goroutine buys the same overlap, so the emulator runs
-// the next frame while this one is still going down the wire, which is
-// why this board is built with -scheduler=cores and the Tufty with
+// frame is out, which on this board measures 58ms against 49ms to
+// emulate the frame. A goroutine buys back that overlap, so the emulator
+// runs the next frame while this one is still going down the wire, which
+// is why this board is built with -scheduler=cores and the Tufty with
 // -scheduler=none.
 //
 // frames carries the request and done carries the acknowledgement, so
-// wait can block on the transfer actually being finished rather than on
-// the channel having room. Both have depth one: one frame in flight is
-// the whole point, and a second would be a frame of latency for nothing.
+// wait blocks on the transfer actually being finished rather than on the
+// channel having room. frames is buffered by one so that start hands the
+// frame over and returns even if the render goroutine has not been
+// scheduled yet; done is unbuffered because wait has nothing to do until
+// the frame is out.
 type spiST7789 struct {
 	frames  chan struct{}
 	done    chan struct{}
@@ -78,7 +81,7 @@ func configurePanel() (*spiST7789, error) {
 	display.FillScreen(color.RGBA{0, 0, 0, 255})
 
 	st := &spiST7789{
-		frames: make(chan struct{}),
+		frames: make(chan struct{}, 1),
 		done:   make(chan struct{}),
 	}
 	go func() {
@@ -105,20 +108,28 @@ type buttonState struct {
 }
 
 // configureButtons readies the board's buttons.
+//
+// They are active low here, which is the opposite of the Tufty's. The
+// board pulls them up and a press shorts to ground, so configured with a
+// pull-down - which is what the Tufty wants - every one of them reads as
+// held down for ever. That is not a cosmetic difference: BUTTON_A is a
+// cold reset, so the machine reset on every frame, never got far enough
+// to load the demo, and sat at a READY. prompt looking like a hang.
 func configureButtons() (*buttonState, error) {
 	for _, pin := range []machine.Pin{
 		machine.BUTTON_A,
 		machine.BUTTON_B,
-		machine.BUTTON_UP,
-		machine.BUTTON_DOWN,
 	} {
-		pin.Configure(machine.PinConfig{Mode: machine.PinInputPulldown})
+		pin.Configure(machine.PinConfig{Mode: machine.PinInputPullup})
 	}
 	return &buttonState{}, nil
 }
 
+// pressed reads one of this board's active-low buttons.
+func pressed(pin machine.Pin) bool { return !pin.Get() }
+
 func (s *buttonState) poll() {
-	a := machine.BUTTON_A.Get()
+	a := pressed(machine.BUTTON_A)
 	if a && !s.a {
 		// Button A edge: cold reset, and start the demo again.
 		randomiseMemory()
@@ -128,7 +139,7 @@ func (s *buttonState) poll() {
 	}
 	s.a = a
 
-	b := machine.BUTTON_B.Get()
+	b := pressed(machine.BUTTON_B)
 	if b && !s.b {
 		// Button B edge: RUN/STOP + RESTORE, the C64's warm reset.
 		tiny64.Keys().Press(tiny64.KeyRunStop)
