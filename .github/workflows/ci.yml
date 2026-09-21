@@ -78,14 +78,21 @@ jobs:
       # that carries tests, because the sink swap is what the root suite
       # reads the picture through. It found two bugs the day it was first
       # run, so it earns its seconds.
+      #
+      # The root package alone, not ./...: cmd/snapshot and
+      # cmd/internal/desktop reach for FrameBufferRGBA and
+      # FrameBufferIndexed, which only the desktop sink defines. Those two
+      # are desktop commands by construction - there is no board that runs
+      # them - so the embedded configuration has nothing to say about
+      # them.
       - name: Build (baremetal)
-        run: go build -tags baremetal ./...
+        run: go build -tags baremetal .
 
       - name: Test (baremetal)
-        run: go test -tags baremetal ./...
+        run: go test -tags baremetal .
 
       - name: Vet (baremetal)
-        run: go vet -tags baremetal ./...
+        run: go vet -tags baremetal .
 
       # The device builds proper. These only have to link: there is no
       # board here to run them on, and the thing worth catching in CI is
