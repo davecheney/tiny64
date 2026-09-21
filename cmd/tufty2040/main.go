@@ -74,7 +74,7 @@ type buttonState struct {
 	a, b, c bool
 }
 
-func (s *buttonState) poll(demo *demoLoader) {
+func (s *buttonState) poll() {
 	a := machine.BUTTON_A.Get()
 	if a && !s.a {
 		// Button A edge: Cold Reset / Restart entire demo
@@ -88,7 +88,7 @@ func (s *buttonState) poll(demo *demoLoader) {
 		}
 		tiny64.Keys().ReleaseAll()
 		tiny64.Reset()
-		demo.reset()
+		tiny64.Autostart()
 	}
 	s.a = a
 
@@ -129,14 +129,20 @@ func main() {
 	tiny64.AttachVirtualPRG(8, "MAZE", mazePRG)
 	tiny64.Reset()
 
-	var demo demoLoader
+	// Autostart types the load through the KERNAL's own type-ahead buffer,
+	// so nothing is patched and no wedge ROM is carried to do it. It
+	// replaces a state machine that watched screen RAM for the prompt and
+	// pressed the keys itself, which cost a tick on every frame of the run
+	// to do something that only happens once.
+	tiny64.Autostart()
+
 	var buttons buttonState
 	var emulateTime, waitTime, startDrawTime time.Duration
 	var heap runtime.MemStats
 	var lastGC uint32
 	var lastAlloc, lastMallocs uint64
 	for frame := 0; ; frame++ {
-		buttons.poll(&demo)
+		buttons.poll()
 		if frame%50 == 0 && frame > 0 {
 			// Asked here rather than beside StepFrame because it is not a
 			// counter read: on the block collector this walks the whole
@@ -151,10 +157,14 @@ func main() {
 			// frame, which on a board with this little heap left is frame
 			// time that appears from nowhere and moves every measurement
 			// taken afterwards.
-			fmt.Printf("frame %d: emulate=%v wait=%v start=%v gc=%d alloc=%dB mallocs=%d heap=%d/%d (avg over 50 frames)\n",
+			//
+			// maze= is what says the number above is a measurement of the
+			// demo rather than of an idle READY. prompt.
+			fmt.Printf("frame %d: emulate=%v wait=%v start=%v gc=%d alloc=%dB mallocs=%d heap=%d/%d maze=%v (avg over 50 frames)\n",
 				frame, emulateTime/50, waitTime/50, startDrawTime/50,
 				heap.NumGC-lastGC, (heap.TotalAlloc-lastAlloc)/50,
-				heap.Mallocs-lastMallocs, heap.HeapInuse, heap.HeapSys)
+				heap.Mallocs-lastMallocs, heap.HeapInuse, heap.HeapSys,
+				mazeRunning())
 
 			lastGC, lastAlloc, lastMallocs = heap.NumGC, heap.TotalAlloc, heap.Mallocs
 			emulateTime, waitTime, startDrawTime = 0, 0, 0
@@ -163,7 +173,6 @@ func main() {
 		start := time.Now()
 		tiny64.StepFrame()
 		emulateTime += time.Since(start)
-		demo.tick()
 
 		start = time.Now()
 		display.waitDisplay()
