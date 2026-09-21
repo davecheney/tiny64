@@ -91,9 +91,14 @@ jobs:
       # board here to run them on, and the thing worth catching in CI is
       # the API drift that stops them compiling. Frame time is measured on
       # hardware, by hand, and cannot be a CI gate.
-      - uses: tinygo-org/setup-tinygo@v3
+      #
+      # Pinned to the latest TinyGo release. The frame times in the commit
+      # messages were taken on a 0.43.0-dev build from source, which CI
+      # cannot install because it is not released; that is tolerable here
+      # precisely because these steps do not measure anything.
+      - uses: acifani/setup-tinygo@v3
         with:
-          tinygo-version: '0.43.0'
+          tinygo-version: '0.42.0'
 
       - name: Build (tufty2040)
         run: tinygo build -tags tufty2040 -target=tufty2040 -opt=2 -scheduler=none -o /dev/null ./cmd/tufty2040
