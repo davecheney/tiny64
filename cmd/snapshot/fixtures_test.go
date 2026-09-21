@@ -23,9 +23,28 @@ type snapshotManifest struct {
 		File   string `json:"file"`
 		SHA256 string `json:"sha256"`
 	} `json:"program"`
-	Start       string               `json:"start,omitempty"`
+	Start string `json:"start,omitempty"`
+	// Uses names the VIC-II features the fixture's picture depends on, so
+	// a build that leaves one out can say so rather than fail on every
+	// pixel. Empty means a character-mode screen, which every build can
+	// render. See vicDrawsEverything.
+	Uses        []string             `json:"uses,omitempty"`
 	Crop        *bool                `json:"crop"`
 	Checkpoints []snapshotCheckpoint `json:"checkpoints"`
+}
+
+// unsupportedFeature names the first feature a fixture needs that this
+// build does not have, or "" if it can render the fixture.
+//
+// The names in "uses" are not interpreted. There is one subset today and
+// it draws a character-mode screen and nothing else, so a build either
+// renders every fixture or only the ones asking for nothing at all. What
+// the names are for is saying which feature the skip was about.
+func unsupportedFeature(m snapshotManifest) string {
+	if vicDrawsEverything || len(m.Uses) == 0 {
+		return ""
+	}
+	return m.Uses[0]
 }
 
 type snapshotCheckpoint struct {

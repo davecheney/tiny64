@@ -231,9 +231,8 @@ func TestBenchmarkProgramsReachWhatTheyClaim(t *testing.T) {
 	if badLine, sprite := observe(loadDisplayProgram); badLine == 0 || sprite != 0 {
 		t.Errorf("loadDisplayProgram: %d Bad Line cycles and %d sprite cycles, want Bad Lines but no sprites", badLine, sprite)
 	}
-	if badLine, sprite := observe(loadSpriteProgram); badLine == 0 || sprite == 0 {
-		t.Errorf("loadSpriteProgram: %d Bad Line cycles and %d sprite cycles, want both", badLine, sprite)
-	}
+	badLine, sprite := observe(loadSpriteProgram)
+	wantSpriteBenchmarkCycles(t, badLine, sprite)
 }
 
 // TestBenchmarkProgramRunsALiveMachine guards the three properties that

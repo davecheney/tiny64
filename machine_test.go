@@ -55,11 +55,6 @@ func skipShort(t *testing.T) {
 	}
 }
 
-func frameBufferPixelRGBA(x, y uint16) [4]byte {
-	idx := int(y-FirstVisibleLine)*FrameBufferStride + int(x)
-	return C64Palette[FrameBufferIndexed()[idx]&0x0f]
-}
-
 // setVICBank drives CIA2's port A to select one of the VIC-II's four 16K
 // fetch windows, and moves the window with it.
 //

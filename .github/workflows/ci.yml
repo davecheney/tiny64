@@ -51,6 +51,79 @@ jobs:
       - name: Vet (1541)
         run: go vet -tags drive1541 ./...
 
+      # The cut-down VIC-II the board targets use. It is a separate tag
+      # from baremetal on purpose: keyed that way it compiles and its
+      # tests run under the host toolchain, so this pass is real coverage
+      # rather than a build check. vic_sprites_full.go and
+      # vic_sprites_stub.go are the two halves, and the tests that assert
+      # the absence of sprite DMA only run here.
+      - name: Build (vicmini)
+        run: go build -tags vicmini ./...
+
+      - name: Test (vicmini)
+        run: go test -tags vicmini ./...
+
+      - name: Vet (vicmini)
+        run: go vet -tags vicmini ./...
+
+      # The boards are the other configuration nothing here used to
+      # compile. cmd/tufty2040 and cmd/gopher-badge64 are behind their own
+      # tags and the embedded frame buffer is behind baremetal, so every
+      # step above skips all three: they were gofmt-checked and never
+      # built, and any change to the core package's API could break them
+      # with CI still green.
+      #
+      # The baremetal pass needs no TinyGo at all - it is the host
+      # toolchain compiling the other frame buffer - and it is the one
+      # that carries tests, because the sink swap is what the root suite
+      # reads the picture through. It found two bugs the day it was first
+      # run, so it earns its seconds.
+      #
+      # The root package alone, not ./...: cmd/snapshot and
+      # cmd/internal/desktop reach for FrameBufferRGBA and
+      # FrameBufferIndexed, which only the desktop sink defines. Those two
+      # are desktop commands by construction - there is no board that runs
+      # them - so the embedded configuration has nothing to say about
+      # them.
+      - name: Build (baremetal)
+        run: go build -tags baremetal .
+
+      - name: Test (baremetal)
+        run: go test -tags baremetal .
+
+      - name: Vet (baremetal)
+        run: go vet -tags baremetal .
+
+      # The device builds proper. These only have to link: there is no
+      # board here to run them on, and the thing worth catching in CI is
+      # the API drift that stops them compiling. Frame time is measured on
+      # hardware, by hand, and cannot be a CI gate.
+      #
+      # Pinned to the latest TinyGo release. The frame times in the commit
+      # messages were taken on a 0.43.0-dev build from source, which CI
+      # cannot install because it is not released; that is tolerable here
+      # precisely because these steps do not measure anything.
+      - uses: acifani/setup-tinygo@v3
+        with:
+          tinygo-version: '0.42.0'
+
+      # Both boards are one command now - same chip, different panel - so
+      # what these four cover is the two tags crossed with the two
+      # subsets. The scheduler settings are not interchangeable: the
+      # Tufty's panel is asynchronous in hardware and wants none, the
+      # Badge's is synchronous and gets its overlap from a goroutine.
+      - name: Build (tufty2040)
+        run: tinygo build -tags tufty2040 -target=tufty2040 -opt=2 -scheduler=none -o /dev/null ./cmd/rp2040
+
+      - name: Build (tufty2040, vicmini)
+        run: tinygo build -tags tufty2040,vicmini -target=tufty2040 -opt=2 -scheduler=none -o /dev/null ./cmd/rp2040
+
+      - name: Build (gopher badge)
+        run: tinygo build -tags gopher_badge -target=gopher-badge -opt=2 -scheduler=tasks -o /dev/null ./cmd/rp2040
+
+      - name: Build (gopher badge, vicmini)
+        run: tinygo build -tags gopher_badge,vicmini -target=gopher-badge -opt=2 -scheduler=tasks -o /dev/null ./cmd/rp2040
+
       # There's no golangci-lint in the repo yet, so "lint" is what the
       # standard toolchain offers: vet, plus a formatting check, written
       # out longhand because gofmt -l only lists offending files and

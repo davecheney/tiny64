@@ -102,25 +102,6 @@ func TestCPUWriteCyclesNeverIncludesTState0(t *testing.T) {
 	}
 }
 
-// TestSpriteBASlotMask checks the transcription of the sprite BA windows
-// from VICE x64sc's 6569 cycle table. Sprite N holds BA low from slot 44+2N
-// through 48+2N: two cycles of pointer and data fetch, preceded by three
-// cycles of lead time for the CPU to retire in-flight writes.
-func TestSpriteBASlotMask(t *testing.T) {
-	var want [CyclesPerLine]uint8
-	for n := uint16(0); n < 8; n++ {
-		for slot := 44 + 2*n; slot <= 48+2*n; slot++ {
-			if slot >= CyclesPerLine {
-				t.Fatalf("sprite %d BA window runs past end of line at slot %d", n, slot)
-			}
-			want[slot] |= 1 << n
-		}
-	}
-	if want != spriteBASlotMask {
-		t.Errorf("spriteBASlotMask mismatch\n got %v\nwant %v", spriteBASlotMask, want)
-	}
-}
-
 // TestCPUReadHoldsPreserveMicrocodeState is the general form of the test
 // below: for every implemented opcode, hold each of its read cycles with BA
 // and check that three held cycles leave the CPU byte for byte as they found

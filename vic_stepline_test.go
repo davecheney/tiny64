@@ -12,8 +12,13 @@ import "testing"
 // particular frame - if the render window ever grew past VINC, a line could
 // change its mind about painting with painting still to do, and stepLine
 // would be using a stale answer for the rest of it.
+//
+// The run is bounded by blankFirstSlot rather than renderSlotAfter. On a
+// window that crops, those are not the same slot: renderSlotAfter is where
+// the picture stops being shown, blankFirstSlot is where the line stops
+// taking the draw path, and the border comparator lives in the gap.
 func TestLineDrawabilityIsSettledBeforeAnythingPaints(t *testing.T) {
-	lastPainting := renderSlotAfter - 1
+	lastPainting := blankFirstSlot - 1
 	if lastPainting >= vincSlot {
 		t.Fatalf("slot %d paints but VINC is at %d: stepLine's single read of "+
 			"lineDrawable would go stale mid-line", lastPainting, vincSlot)
@@ -22,9 +27,9 @@ func TestLineDrawabilityIsSettledBeforeAnythingPaints(t *testing.T) {
 	// And the three slots the border comparator can match must be inside
 	// the painted run too, or stepLine's runs would skip one of them.
 	for _, slot := range []uint16{borderSlotLeft, borderSlotRight38, borderSlotRight40} {
-		if slot < renderFirstSlot || slot >= renderSlotAfter {
+		if slot < renderFirstSlot || slot >= blankFirstSlot {
 			t.Fatalf("border comparison slot %d is outside the painted run "+
-				"[%d,%d)", slot, renderFirstSlot, renderSlotAfter)
+				"[%d,%d)", slot, renderFirstSlot, blankFirstSlot)
 		}
 	}
 }

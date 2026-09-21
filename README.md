@@ -264,10 +264,12 @@ keeps its proportions and letterboxes the remainder.
   commands
 - `cmd/c64` is the desktop C64 emulator
 - `cmd/c64cli` runs the emulator headless, for testing and debugging
-- `cmd/gopher-badge64` is the Gopher Badge build target, behind
-  `-tags gopher_badge`, which TinyGo sets for that board
-- `cmd/tufty2040` is the Pimoroni Tufty 2040 build target, using its
-  parallel ST7789 display through PIO/DMA, behind `-tags tufty2040`
+- `cmd/rp2040` is the board build, for both RP2040 targets: the Pimoroni
+  Tufty 2040 and the Gopher Badge. They are the same machine with
+  different panels, so the emulator bring-up, the frame loop and the
+  telemetry are shared, and only the panel and the board's buttons are
+  behind `-tags tufty2040` or `-tags gopher_badge`, which TinyGo sets
+  from `-target`
 - `cmd/drivec` is a standalone 1541 drive/IEC bus test harness, and so is
   built only under `-tags drive1541`
 - `cmd/prg` inspects `.prg` files: header, BASIC listing, disassembly
@@ -275,15 +277,22 @@ keeps its proportions and letterboxes the remainder.
 - `cmd/internal/prg` and `cmd/internal/disasm` are the PRG decoder and the
   6502 disassembler behind it
 
-Tufty 2040 builds should leave TinyGo's default scheduler and optimization
-level in place unless re-measuring on hardware; scheduler or `-opt` overrides
-can break or regress the build.
+The two boards want different schedulers and the settings are not
+interchangeable. The Tufty's panel transfer is asynchronous in hardware -
+PIO feeds DMA and the CPU walks away - so it wants no scheduler at all.
+The Badge's is synchronous, and gets the same overlap from a goroutine,
+so it needs one.
 
-    tinygo build -target=tufty2040 -o out.uf2 ./cmd/tufty2040
+    tinygo flash -target=tufty2040    -opt=2 -scheduler=none  ./cmd/rp2040
+    tinygo flash -target=gopher-badge -opt=2 -scheduler=tasks ./cmd/rp2040
 
-The Tufty target starts the PIO/DMA panel transfer asynchronously and waits for
-it immediately before queuing the next transfer, so most of the display write
-overlaps the following emulated frame on the same core.
+Add `-tags vicmini` for the cut-down VIC-II: no sprite unit and standard
+character mode alone, which is what these panels show. It is worth about
+a fifth of the frame time on hardware.
+
+Either board starts its panel transfer and waits for it immediately
+before queuing the next, so most of the display write overlaps the
+following emulated frame.
 
 It also attaches a compact, read-only generic IEC device at address 8. After
 the KERNAL reaches the BASIC prompt, the target loads and runs the classic

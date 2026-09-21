@@ -54,6 +54,9 @@ func TestSnapshotFixtures(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
+			if missing := unsupportedFeature(manifest); missing != "" {
+				t.Skipf("fixture needs %s, which this build does not draw", missing)
+			}
 			for _, checkpoint := range manifest.Checkpoints {
 				t.Run(fmt.Sprintf("frame-%06d", checkpoint.Frame), func(t *testing.T) {
 					actualPath := filepath.Join(t.TempDir(), "actual.png")

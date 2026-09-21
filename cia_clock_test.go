@@ -65,9 +65,7 @@ func TestCIATicksEveryBusCycle(t *testing.T) {
 	if badLineHeld == 0 {
 		t.Error("no CPU cycles were held for a Bad Line; the probe is not covering them")
 	}
-	if held-badLineHeld == 0 {
-		t.Error("no CPU cycles were held for sprite DMA; the probe is not covering it")
-	}
+	wantSpriteDMAHolds(t, held-badLineHeld)
 	if got := before - read(); got != cycles {
 		t.Errorf("CIA1 Timer A advanced %d times over %d bus cycles (%d of them with the CPU held off the bus); want %d",
 			got, cycles, held, cycles)

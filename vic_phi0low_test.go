@@ -64,19 +64,6 @@ func TestPhi0LowDisplayMatchesPhi0Low(t *testing.T) {
 	}
 }
 
-// TestDisplayRunHasNoSpriteBA is what lets phi0lowDisplay drop the sprite
-// DMA test and with it the slot it needed. The sprite fetch block runs from
-// slot 44 to the end of the line and feeds the next line's display, so no
-// slot below that can have a sprite pulling BA low.
-func TestDisplayRunHasNoSpriteBA(t *testing.T) {
-	for slot := uint16(displayFirstSlot); slot < displaySlotAfter; slot++ {
-		if spriteBASlotMask[slot] != 0 {
-			t.Errorf("slot %d has sprite BA mask %#02x; phi0lowDisplay assumes none",
-				slot, spriteBASlotMask[slot])
-		}
-	}
-}
-
 // TestPhi0HighDisplayMatchesPhi0High holds the Phi0 high half to the same
 // standard: across the run, the c-access range covers every slot, so only
 // the Bad Line question should be left.

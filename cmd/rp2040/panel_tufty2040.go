@@ -5,15 +5,13 @@ package main
 import (
 	"errors"
 	"time"
+	_ "unsafe"
 
 	"machine"
 
+	"github.com/davecheney/tiny64"
+	pio "github.com/tinygo-org/pio/rp2-pio"
 	"github.com/tinygo-org/pio/rp2-pio/piolib"
-)
-
-const (
-	displayWidth  = 320
-	displayHeight = 240
 )
 
 var errAsyncFramePending = errors.New("async frame transfer already pending")
@@ -111,7 +109,8 @@ func (st *parallelST7789) configureDisplay() error {
 	return st.command(madctlCommand, []byte{madctl})
 }
 
-func (st *parallelST7789) startDisplay(frame []byte) error {
+//go:section .ramfuncs
+func (st *parallelST7789) start(frame []byte) error {
 	if st.asyncFramePending {
 		return errAsyncFramePending
 	}
@@ -135,7 +134,8 @@ func (st *parallelST7789) startDisplay(frame []byte) error {
 	return nil
 }
 
-func (st *parallelST7789) waitDisplay() {
+//go:section .ramfuncs
+func (st *parallelST7789) wait() {
 	if !st.asyncFramePending {
 		return
 	}
@@ -145,6 +145,7 @@ func (st *parallelST7789) waitDisplay() {
 	st.asyncFramePending = false
 }
 
+//go:section .ramfuncs
 func (st *parallelST7789) setWindow(x, y, w, h int16) error {
 	st.buf[0] = byte(x >> 8)
 	st.buf[1] = byte(x)
@@ -160,6 +161,7 @@ func (st *parallelST7789) setWindow(x, y, w, h int16) error {
 	return st.command(raset, st.buf[:])
 }
 
+//go:section .ramfuncs
 func (st *parallelST7789) command(command byte, data []byte) error {
 	st.dc.Low()
 	st.cs.Low()
@@ -178,4 +180,102 @@ func (st *parallelST7789) command(command byte, data []byte) error {
 	time.Sleep(10 * time.Microsecond)
 	st.cs.High()
 	return nil
+}
+
+// busBaud is the parallel bus clock. The panel is rated higher, but the
+// frame has to be out before the next one is emulated and this already
+// clears that with room.
+const busBaud = 15_000_000
+
+// configurePanel brings up the Tufty's eight bit parallel bus through PIO
+// and DMA, which is what makes start asynchronous: the transfer runs in
+// hardware while the next frame is emulated.
+func configurePanel() (*parallelST7789, error) {
+	machine.LCD_CS.Configure(machine.PinConfig{Mode: machine.PinOutput})
+	machine.LCD_CS.High()
+	machine.LCD_DC.Configure(machine.PinConfig{Mode: machine.PinOutput})
+	machine.LCD_DC.High()
+	machine.LCD_RD.Configure(machine.PinConfig{Mode: machine.PinOutput})
+	machine.LCD_RD.High()
+
+	sm, err := pio.PIO0.ClaimStateMachine()
+	if err != nil {
+		return nil, err
+	}
+	bus, err := piolib.NewParallel(sm, piolib.ParallelConfig{
+		Baud:        busBaud,
+		Clock:       machine.LCD_WR,
+		DataBase:    machine.LCD_DB0,
+		BusWidth:    8,
+		BitsPerPull: 8,
+	})
+	if err != nil {
+		return nil, err
+	}
+	if err := bus.EnableDMA(true); err != nil {
+		return nil, err
+	}
+
+	display := &parallelST7789{
+		cs: machine.LCD_CS,
+		dc: machine.LCD_DC,
+		rd: machine.LCD_RD,
+		bl: machine.LCD_BACKLIGHT,
+		pl: bus,
+	}
+	if err := display.init(); err != nil {
+		return nil, err
+	}
+	return display, nil
+}
+
+// buttonState tracks the three buttons this board gives the machine, so
+// each one acts on its press edge rather than for as long as it is held.
+type buttonState struct {
+	a, b, c bool
+}
+
+// configureButtons readies the board's buttons. The Tufty has A, B and C
+// along the bottom edge; the Gopher Badge has no C, which is why this
+// lives beside the panel rather than in main.go.
+func configureButtons() (*buttonState, error) {
+	for _, pin := range []machine.Pin{
+		machine.BUTTON_A,
+		machine.BUTTON_B,
+		machine.BUTTON_C,
+		machine.BUTTON_UP,
+		machine.BUTTON_DOWN,
+	} {
+		pin.Configure(machine.PinConfig{Mode: machine.PinInputPulldown})
+	}
+	return &buttonState{}, nil
+}
+
+func (s *buttonState) poll() {
+	a := machine.BUTTON_A.Get()
+	if a && !s.a {
+		// Button A edge: cold reset, and start the demo again.
+		randomiseMemory()
+		tiny64.Keys().ReleaseAll()
+		tiny64.Reset()
+		tiny64.Autostart()
+	}
+	s.a = a
+
+	b := machine.BUTTON_B.Get()
+	if b && !s.b {
+		// Button B edge: RUN/STOP + RESTORE, the C64's warm reset.
+		tiny64.Keys().Press(tiny64.KeyRunStop)
+		tiny64.Keys().Restore()
+	} else if !b && s.b {
+		tiny64.Keys().Release(tiny64.KeyRunStop)
+	}
+	s.b = b
+
+	c := machine.BUTTON_C.Get()
+	if c && !s.c {
+		// Button C edge: RESTORE alone, which is an NMI pulse.
+		tiny64.Keys().Restore()
+	}
+	s.c = c
 }

@@ -46,6 +46,9 @@ func TestVICStepCycleStalledReadClocksCIAs(t *testing.T) {
 // CPU runs and the last four after it, which is what lets a $D016 write
 // made in one slot be read by a border comparison in the next.
 func TestVICStepCycleCPUWriteLandsMidSlot(t *testing.T) {
+	if frameIsCropped {
+		t.Skip("asserts on dot 40, which is left of the cropped sink's first stored dot")
+	}
 	savedBus := bus
 	t.Cleanup(func() { bus = savedBus })
 	newMachine(t)
