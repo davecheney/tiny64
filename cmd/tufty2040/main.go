@@ -1,7 +1,6 @@
 //go:build tufty2040
 
-// Command tufty2040 runs the emulator on the Pimoroni Tufty 2040. It is
-// behind the tufty2040 build tag that TinyGo sets for that target.
+// Command tufty2040 runs the emulator on the Pimoroni Tufty 2040.
 package main
 
 import (
@@ -10,6 +9,7 @@ import (
 	"runtime"
 	"time"
 
+	"device/rp"
 	"machine"
 
 	"github.com/davecheney/tiny64"
@@ -18,6 +18,23 @@ import (
 )
 
 const busBaud = 15_000_000
+
+// xipCacheDelta reads the RP2040's XIP cache hit/access counters
+// (XIP_CTRL.CTR_HIT/CTR_ACC), two free-running 32-bit counters that
+// increment on every flash (XIP) access the cache serves and every access
+// it sees at all, respectively. They are never reset by hardware, so the
+// caller keeps the previous reading and this returns hit/access deltas
+// since then - a window's cache hit rate, which tracks pressure from one
+// frame-batch to the next rather than a lifetime average that would just
+// flatten towards "mostly hits" over a long run. uint32 subtraction
+// handles the counters wrapping between reads; nothing here runs
+// anywhere near the ~4 billion accesses that would need to happen within
+// one window to wrap twice.
+func xipCacheDelta(prevHit, prevAcc uint32) (hit, acc, curHit, curAcc uint32) {
+	curHit = rp.XIP_CTRL.CTR_HIT.Get()
+	curAcc = rp.XIP_CTRL.CTR_ACC.Get()
+	return curHit - prevHit, curAcc - prevAcc, curHit, curAcc
+}
 
 func configureDisplay() (*parallelST7789, error) {
 	machine.LCD_CS.Configure(machine.PinConfig{Mode: machine.PinOutput})
@@ -129,39 +146,43 @@ func main() {
 	tiny64.AttachVirtualPRG(8, "MAZE", mazePRG)
 	tiny64.Reset()
 
-	// Autostart types the load through the KERNAL's own type-ahead buffer,
-	// so nothing is patched and no wedge ROM is carried to do it. It
-	// replaces a state machine that watched screen RAM for the prompt and
-	// pressed the keys itself, which cost a tick on every frame of the run
-	// to do something that only happens once.
+	// Autostart types the load itself through the KERNAL's type-ahead
+	// buffer, so no ROM is carried to do it.
 	tiny64.Autostart()
 
 	var buttons buttonState
 	var emulateTime, waitTime, startDrawTime time.Duration
+	var prevXIPHit, prevXIPAcc uint32
 	var heap runtime.MemStats
 	var lastGC uint32
 	var lastAlloc, lastMallocs uint64
 	for frame := 0; ; frame++ {
 		buttons.poll()
 		if frame%50 == 0 && frame > 0 {
+			hit, acc, curHit, curAcc := xipCacheDelta(prevXIPHit, prevXIPAcc)
+			prevXIPHit, prevXIPAcc = curHit, curAcc
+			var hitPct float64
+			if acc > 0 {
+				hitPct = 100 * float64(hit) / float64(acc)
+			}
+
 			// Asked here rather than beside StepFrame because it is not a
 			// counter read: on the block collector this walks the whole
 			// metadata bitmap under the GC's own lock, so sampling it per
 			// frame would show up in the frame time it is reporting on.
 			runtime.ReadMemStats(&heap)
 
-			// What this is here to answer is whether the frame loop
-			// allocates at all. It should not: the emulator writes into
-			// storage it already has, so gc= should stay at 0 and alloc=
-			// at 0B. Anything else means a collection can land inside a
-			// frame, which on a board with this little heap left is frame
-			// time that appears from nowhere and moves every measurement
-			// taken afterwards.
-			//
-			// maze= is what says the number above is a measurement of the
-			// demo rather than of an idle READY. prompt.
-			fmt.Printf("frame %d: emulate=%v wait=%v start=%v gc=%d alloc=%dB mallocs=%d heap=%d/%d maze=%v (avg over 50 frames)\n",
+			// gc= and alloc= answer whether the frame loop allocates at
+			// all. It should not, so gc= staying 0 is the expected
+			// reading rather than an interesting one; a collection that
+			// did land inside a frame would be frame time appearing from
+			// nowhere. xip= is the other half of the same question: two
+			// builds doing identical work can differ by a couple of
+			// percent purely on where their code lands in flash, and the
+			// miss count is what tells that apart from real work.
+			fmt.Printf("frame %d: emulate=%v wait=%v start=%v (avg over 50 frames) xip=%.2f%% hits=%d accesses=%d misses=%d gc=%d alloc=%dB mallocs=%d heap=%d/%d maze=%v\n",
 				frame, emulateTime/50, waitTime/50, startDrawTime/50,
+				hitPct, hit, acc, acc-hit,
 				heap.NumGC-lastGC, (heap.TotalAlloc-lastAlloc)/50,
 				heap.Mallocs-lastMallocs, heap.HeapInuse, heap.HeapSys,
 				mazeRunning())
