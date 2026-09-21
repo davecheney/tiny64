@@ -1,3 +1,5 @@
+//go:build !vicmini
+
 package tiny64
 
 import (

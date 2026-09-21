@@ -51,6 +51,21 @@ jobs:
       - name: Vet (1541)
         run: go vet -tags drive1541 ./...
 
+      # The cut-down VIC-II the board targets use. It is a separate tag
+      # from baremetal on purpose: keyed that way it compiles and its
+      # tests run under the host toolchain, so this pass is real coverage
+      # rather than a build check. vic_sprites_full.go and
+      # vic_sprites_stub.go are the two halves, and the tests that assert
+      # the absence of sprite DMA only run here.
+      - name: Build (vicmini)
+        run: go build -tags vicmini ./...
+
+      - name: Test (vicmini)
+        run: go test -tags vicmini ./...
+
+      - name: Vet (vicmini)
+        run: go vet -tags vicmini ./...
+
       # The boards are the other configuration nothing here used to
       # compile. cmd/tufty2040 and cmd/gopher-badge64 are behind their own
       # tags and the embedded frame buffer is behind baremetal, so every
@@ -82,6 +97,9 @@ jobs:
 
       - name: Build (tufty2040)
         run: tinygo build -tags tufty2040 -target=tufty2040 -opt=2 -scheduler=none -o /dev/null ./cmd/tufty2040
+
+      - name: Build (tufty2040, vicmini)
+        run: tinygo build -tags tufty2040,vicmini -target=tufty2040 -opt=2 -scheduler=none -o /dev/null ./cmd/tufty2040
 
       - name: Build (gopher badge)
         run: tinygo build -tags gopher_badge -target=gopher-badge -opt=2 -scheduler=cores -o /dev/null ./cmd/gopher-badge64
