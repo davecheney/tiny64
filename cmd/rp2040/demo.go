@@ -1,4 +1,4 @@
-//go:build tufty2040
+//go:build tufty2040 || gopher_badge
 
 package main
 
