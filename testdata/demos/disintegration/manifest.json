@@ -4,8 +4,15 @@
     "file": "disintegration.prg",
     "sha256": "04f264f0f9819e079670fba8b259ef789e889c56c57ff7c507e3b6d88b460fbe"
   },
+  "uses": [
+    "sprites",
+    "graphics-modes"
+  ],
   "crop": false,
   "checkpoints": [
-    {"frame": 150, "png": "frame-000150.png"}
+    {
+      "frame": 150,
+      "png": "frame-000150.png"
+    }
   ]
 }

@@ -23,9 +23,25 @@ type snapshotManifest struct {
 		File   string `json:"file"`
 		SHA256 string `json:"sha256"`
 	} `json:"program"`
-	Start       string               `json:"start,omitempty"`
+	Start string `json:"start,omitempty"`
+	// Uses names the VIC-II features the fixture's picture depends on, so
+	// a build that leaves one out can say so rather than fail on every
+	// pixel. Empty means a character-mode screen, which every build can
+	// render. See vicFeatures.
+	Uses        []string             `json:"uses,omitempty"`
 	Crop        *bool                `json:"crop"`
 	Checkpoints []snapshotCheckpoint `json:"checkpoints"`
+}
+
+// unsupportedFeature names the first feature a fixture needs that this
+// build does not have, or "" if it can render the fixture.
+func unsupportedFeature(m snapshotManifest) string {
+	for _, use := range m.Uses {
+		if !vicFeatures[use] {
+			return use
+		}
+	}
+	return ""
 }
 
 type snapshotCheckpoint struct {

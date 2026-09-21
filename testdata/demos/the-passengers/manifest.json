@@ -4,8 +4,15 @@
     "file": "the-passengers.prg",
     "sha256": "a7768927b190451386c38046d7f274d3c608b2da9548d5a034b6550bafd18a1a"
   },
+  "uses": [
+    "sprites",
+    "graphics-modes"
+  ],
   "crop": false,
   "checkpoints": [
-    {"frame": 120, "png": "frame-000120.png"}
+    {
+      "frame": 120,
+      "png": "frame-000120.png"
+    }
   ]
 }

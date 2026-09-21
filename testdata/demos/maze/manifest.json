@@ -1,0 +1,14 @@
+{
+  "version": 1,
+  "program": {
+    "file": "maze.prg",
+    "sha256": "30a5d131cbb4a2fabbeed556ff5fd9340d0a7d26f459d358cf7ba8fa0c8be616"
+  },
+  "crop": false,
+  "checkpoints": [
+    {
+      "frame": 900,
+      "png": "frame-000900.png"
+    }
+  ]
+}

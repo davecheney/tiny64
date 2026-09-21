@@ -4,8 +4,15 @@
     "file": "high-on-c64.prg",
     "sha256": "feb7f4bd009db9d1394caea932c7ff31ae3a3db129edc465e4591dd6f171ae1a"
   },
+  "uses": [
+    "sprites",
+    "graphics-modes"
+  ],
   "crop": false,
   "checkpoints": [
-    {"frame": 150, "png": "frame-000150.png"}
+    {
+      "frame": 150,
+      "png": "frame-000150.png"
+    }
   ]
 }
