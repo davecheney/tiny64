@@ -12,9 +12,11 @@ import (
 	"tinygo.org/x/drivers/st7789"
 )
 
-// spiBaud keeps a queued frame's transfer below the time it takes to
-// emulate the next one, which is what stops wait= growing.
-const spiBaud = 32_000_000
+// spiBaud is the panel's clock, and on this board it is the frame rate.
+// The transfer is bus-bound - doubling the clock halved it to the last
+// digit - so this is set as high as the RP2040's SPI goes, which is half
+// the peripheral clock.
+const spiBaud = 62_500_000
 
 // spiST7789 is the Gopher Badge's panel: the same ST7789 the Tufty has,
 // wired over SPI instead of an eight bit parallel bus, driven through the
@@ -22,11 +24,16 @@ const spiBaud = 32_000_000
 //
 // The Tufty's transfer is asynchronous in hardware - PIO feeds DMA and
 // the CPU walks away - and this one is not: DrawBitmap blocks until the
-// frame is out, which on this board measures 58ms against 49ms to
-// emulate the frame. A goroutine buys back that overlap, so the emulator
-// runs the next frame while this one is still going down the wire, which
-// is why this board is built with -scheduler=cores and the Tufty with
-// -scheduler=none.
+// frame is out. The goroutine below is meant to buy that overlap back,
+// and under -scheduler=cores it would, on the second core. It does not
+// under -scheduler=tasks, which is what this board is built with and why:
+// tasks is cooperative on one core, so the draw runs between frames
+// rather than beside them and wait carries all of it. See main.go for
+// what cores does instead, which is nothing at all on USB serial.
+//
+// So the goroutine is currently machinery for a scheduler that does not
+// work. It stays because it is what makes the overlap available the day
+// it does, and because it costs 5us a frame to hand the frame over.
 //
 // frames carries the request and done carries the acknowledgement, so
 // wait blocks on the transfer actually being finished rather than on the
