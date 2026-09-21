@@ -51,6 +51,41 @@ jobs:
       - name: Vet (1541)
         run: go vet -tags drive1541 ./...
 
+      # The boards are the other configuration nothing here used to
+      # compile. cmd/tufty2040 and cmd/gopher-badge64 are behind their own
+      # tags and the embedded frame buffer is behind baremetal, so every
+      # step above skips all three: they were gofmt-checked and never
+      # built, and any change to the core package's API could break them
+      # with CI still green.
+      #
+      # The baremetal pass needs no TinyGo at all - it is the host
+      # toolchain compiling the other frame buffer - and it is the one
+      # that carries tests, because the sink swap is what the root suite
+      # reads the picture through. It found two bugs the day it was first
+      # run, so it earns its seconds.
+      - name: Build (baremetal)
+        run: go build -tags baremetal ./...
+
+      - name: Test (baremetal)
+        run: go test -tags baremetal ./...
+
+      - name: Vet (baremetal)
+        run: go vet -tags baremetal ./...
+
+      # The device builds proper. These only have to link: there is no
+      # board here to run them on, and the thing worth catching in CI is
+      # the API drift that stops them compiling. Frame time is measured on
+      # hardware, by hand, and cannot be a CI gate.
+      - uses: tinygo-org/setup-tinygo@v3
+        with:
+          tinygo-version: '0.43.0'
+
+      - name: Build (tufty2040)
+        run: tinygo build -tags tufty2040 -target=tufty2040 -opt=2 -scheduler=none -o /dev/null ./cmd/tufty2040
+
+      - name: Build (gopher badge)
+        run: tinygo build -tags gopher_badge -target=gopher-badge -opt=2 -scheduler=cores -o /dev/null ./cmd/gopher-badge64
+
       # There's no golangci-lint in the repo yet, so "lint" is what the
       # standard toolchain offers: vet, plus a formatting check, written
       # out longhand because gofmt -l only lists offending files and

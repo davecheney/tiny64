@@ -88,6 +88,17 @@ const (
 	renderSlotAfter = renderDotAfter / DotsPerCycle
 	visibleSlots    = VisibleDotsPerLine / DotsPerCycle
 
+	// blankFirstSlot is where the line stops painting and starts merely
+	// clocking the bus. It is not renderSlotAfter, because the last
+	// border comparison is made in borderSlotRight40 whether that slot is
+	// inside the render window or not: a window ending at or before it -
+	// which the 320 dot panel's does, both landing on 46 - would have the
+	// blank run start on a slot the draw path has already stepped, and
+	// step it twice. That is one extra bus cycle on every drawn line,
+	// 240 a frame on the cropped window, each one an extra CPU cycle, two
+	// CIA ticks and an iecTick that the real chip never runs.
+	blankFirstSlot = max(renderSlotAfter, borderSlotRight40+1)
+
 	// vincSlot is the bus cycle carrying VINC, the VIC-II's own
 	// increment-vertical-counter strobe, and so the bus cycle the raster
 	// counter moves in. The VIC-II manual's horizontal decode table puts
@@ -1395,8 +1406,8 @@ func (v *VICII) stepLine() {
 	v.cycleDraw(borderSlotRight38, borderSlotRight38*DotsPerCycle, true, true)
 	v.drawRun(borderSlotRight38+1, borderSlotRight40, true)
 	v.cycleDraw(borderSlotRight40, borderSlotRight40*DotsPerCycle, true, false)
-	v.drawRun(borderSlotRight40+1, renderSlotAfter, false)
-	v.blankRun(renderSlotAfter, CyclesPerLine)
+	v.drawRun(borderSlotRight40+1, blankFirstSlot, false)
+	v.blankRun(blankFirstSlot, CyclesPerLine)
 	v.endLine()
 }
 
@@ -1413,7 +1424,14 @@ func (v *VICII) stepCycle(slot uint16) {
 	// Whether this cycle's dots reach the screen. The window's edges are
 	// bus-cycle aligned - renderWindowIsCycleAligned enforces it - so all
 	// eight dots of a cycle are inside it or all eight are outside.
-	onScreen := slot >= renderFirstSlot && slot < renderSlotAfter &&
+	//
+	// The upper bound is blankFirstSlot, not renderSlotAfter: the last
+	// border comparison is made in a slot the cropped window can end
+	// before, and the flip-flop it moves is state the next line inherits,
+	// so that slot has to take the draw path whether its dots are shown
+	// or not. stepLine reaches the same slot through its runs; this is
+	// where stepCycle agrees with it.
+	onScreen := slot >= renderFirstSlot && slot < blankFirstSlot &&
 		slot < visibleSlots
 	dot := slot * DotsPerCycle
 	if v.lineDrawable && onScreen {

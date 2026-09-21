@@ -87,11 +87,9 @@ func TestVICSpriteSingleColorRendering(t *testing.T) {
 	v.StepCycle()
 
 	// Verify byte 0 drawn pixels (dots 48..55 on line 56) match Red palette color
-	buf := FrameBufferRGBA()
 	redColor := C64Palette[2]
 	for dot := uint16(48); dot < 56; dot++ {
-		idx := (int(56-FirstVisibleLine)*VisibleDotsPerLine + int(dot)) * 4
-		got := [4]byte{buf[idx], buf[idx+1], buf[idx+2], buf[idx+3]}
+		got := frameBufferPixelRGBA(dot, 56)
 		if got != redColor {
 			t.Errorf("dot %d on line 56 = %v, want %v (Red)", dot, got, redColor)
 		}
@@ -135,29 +133,25 @@ func TestVICSpriteMulticolorRendering(t *testing.T) {
 	// One bus cycle paints dots 48 to 55: four pairs of two dots each.
 	v.StepCycle()
 
-	buf := FrameBufferRGBA()
 	cyan := C64Palette[3]
 	purple := C64Palette[4]
 	green := C64Palette[5]
 
 	// Pair 01 (dots 48, 49) -> Cyan
 	for dot := uint16(48); dot <= 49; dot++ {
-		idx := (int(56-FirstVisibleLine)*VisibleDotsPerLine + int(dot)) * 4
-		if got := [4]byte{buf[idx], buf[idx+1], buf[idx+2], buf[idx+3]}; got != cyan {
+		if got := frameBufferPixelRGBA(dot, 56); got != cyan {
 			t.Errorf("pair 01 at dot %d = %v, want Cyan %v", dot, got, cyan)
 		}
 	}
 	// Pair 10 (dots 50, 51) -> Purple
 	for dot := uint16(50); dot <= 51; dot++ {
-		idx := (int(56-FirstVisibleLine)*VisibleDotsPerLine + int(dot)) * 4
-		if got := [4]byte{buf[idx], buf[idx+1], buf[idx+2], buf[idx+3]}; got != purple {
+		if got := frameBufferPixelRGBA(dot, 56); got != purple {
 			t.Errorf("pair 10 at dot %d = %v, want Purple %v", dot, got, purple)
 		}
 	}
 	// Pair 11 (dots 52, 53) -> Green
 	for dot := uint16(52); dot <= 53; dot++ {
-		idx := (int(56-FirstVisibleLine)*VisibleDotsPerLine + int(dot)) * 4
-		if got := [4]byte{buf[idx], buf[idx+1], buf[idx+2], buf[idx+3]}; got != green {
+		if got := frameBufferPixelRGBA(dot, 56); got != green {
 			t.Errorf("pair 11 at dot %d = %v, want Green %v", dot, got, green)
 		}
 	}
@@ -202,11 +196,9 @@ func TestVICSpriteExpansionXY(t *testing.T) {
 		v.StepCycle()
 	}
 
-	buf := FrameBufferRGBA()
 	red := C64Palette[2]
 	at := func(line, dot uint16) [4]byte {
-		idx := (int(line-FirstVisibleLine)*VisibleDotsPerLine + int(dot)) * 4
-		return [4]byte{buf[idx], buf[idx+1], buf[idx+2], buf[idx+3]}
+		return frameBufferPixelRGBA(dot, line)
 	}
 
 	// Row 0 on line 56, row 1 held across lines 57 and 58, row 2 blank on 59.
@@ -422,11 +414,9 @@ func TestVICSpriteXMSBForSprites1To7(t *testing.T) {
 	// naming them, which is what the dot path itself does now.
 	paintDots(t, v, v.Dot(), v.Dot()+DotsPerCycle)
 
-	buf := FrameBufferRGBA()
 	redColor := C64Palette[2]
 	for dot := uint16(280); dot < 288; dot++ {
-		idx := (int(56-FirstVisibleLine)*VisibleDotsPerLine + int(dot)) * 4
-		got := [4]byte{buf[idx], buf[idx+1], buf[idx+2], buf[idx+3]}
+		got := frameBufferPixelRGBA(dot, 56)
 		if got != redColor {
 			t.Errorf("sprite 1 at dot %d on line 56 = %v, want %v (Red)", dot, got, redColor)
 		}
@@ -434,6 +424,9 @@ func TestVICSpriteXMSBForSprites1To7(t *testing.T) {
 }
 
 func TestVICWrappedSpritesFillLeftBorderBlock(t *testing.T) {
+	if frameIsCropped {
+		t.Skip("asserts on dots 0-3, which are in the left border a cropped sink does not store")
+	}
 	ClearFrameBuffer()
 
 	// Line 56 is picked by hand, so the cached line state has to be derived
@@ -760,6 +753,9 @@ func TestSpriteCoverageStaysConsistentAcrossAFrame(t *testing.T) {
 // the dots either side of the write are two different colours, and a row
 // that failed to be worked out again would paint them the same.
 func TestVICSpriteMulticolorWriteMidLineRedecodesRow(t *testing.T) {
+	if frameIsCropped {
+		t.Skip("asserts on dots 24-31, which are left of a cropped sink's first stored dot")
+	}
 	ClearFrameBuffer()
 
 	// Hand-built for the same reason the wrapped sprite test above is,

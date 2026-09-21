@@ -7,6 +7,7 @@ package main
 import (
 	"fmt"
 	"math/rand/v2"
+	"runtime"
 	"time"
 
 	"machine"
@@ -131,11 +132,31 @@ func main() {
 	var demo demoLoader
 	var buttons buttonState
 	var emulateTime, waitTime, startDrawTime time.Duration
+	var heap runtime.MemStats
+	var lastGC uint32
+	var lastAlloc, lastMallocs uint64
 	for frame := 0; ; frame++ {
 		buttons.poll(&demo)
 		if frame%50 == 0 && frame > 0 {
-			fmt.Printf("frame %d: emulate=%v wait=%v start=%v (avg over 50 frames)\n",
-				frame, emulateTime/50, waitTime/50, startDrawTime/50)
+			// Asked here rather than beside StepFrame because it is not a
+			// counter read: on the block collector this walks the whole
+			// metadata bitmap under the GC's own lock, so sampling it per
+			// frame would show up in the frame time it is reporting on.
+			runtime.ReadMemStats(&heap)
+
+			// What this is here to answer is whether the frame loop
+			// allocates at all. It should not: the emulator writes into
+			// storage it already has, so gc= should stay at 0 and alloc=
+			// at 0B. Anything else means a collection can land inside a
+			// frame, which on a board with this little heap left is frame
+			// time that appears from nowhere and moves every measurement
+			// taken afterwards.
+			fmt.Printf("frame %d: emulate=%v wait=%v start=%v gc=%d alloc=%dB mallocs=%d heap=%d/%d (avg over 50 frames)\n",
+				frame, emulateTime/50, waitTime/50, startDrawTime/50,
+				heap.NumGC-lastGC, (heap.TotalAlloc-lastAlloc)/50,
+				heap.Mallocs-lastMallocs, heap.HeapInuse, heap.HeapSys)
+
+			lastGC, lastAlloc, lastMallocs = heap.NumGC, heap.TotalAlloc, heap.Mallocs
 			emulateTime, waitTime, startDrawTime = 0, 0, 0
 		}
 

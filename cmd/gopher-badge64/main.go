@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"image/color"
 	"math/rand/v2"
+	"runtime"
 	"time"
 
 	"machine"
@@ -71,11 +72,28 @@ func main() {
 	go renderFrames(&display, render)
 
 	var emulateTime, drawTime time.Duration
+	var heap runtime.MemStats
+	var lastGC uint32
+	var lastAlloc, lastMallocs uint64
 	for frame := 0; ; frame++ {
 		blink()
 		if frame%50 == 0 && frame > 0 {
-			fmt.Printf("frame %d: emulate=%v draw=%v (avg over 50 frames)\n",
-				frame, emulateTime/50, drawTime/50)
+			// Asked here rather than beside StepFrame because it is not a
+			// counter read: on the block collector this walks the whole
+			// metadata bitmap under the GC's own lock, so sampling it per
+			// frame would show up in the frame time it is reporting on.
+			runtime.ReadMemStats(&heap)
+
+			// This board renders from a goroutine, so unlike the Tufty it
+			// has a scheduler and a second stack in the heap. gc= is
+			// still expected to stay at 0: what the render goroutine is
+			// handed is the frame buffer the emulator already owns.
+			fmt.Printf("frame %d: emulate=%v draw=%v gc=%d alloc=%dB mallocs=%d heap=%d/%d (avg over 50 frames)\n",
+				frame, emulateTime/50, drawTime/50,
+				heap.NumGC-lastGC, (heap.TotalAlloc-lastAlloc)/50,
+				heap.Mallocs-lastMallocs, heap.HeapInuse, heap.HeapSys)
+
+			lastGC, lastAlloc, lastMallocs = heap.NumGC, heap.TotalAlloc, heap.Mallocs
 			emulateTime, drawTime = 0, 0
 		}
 		start := time.Now()

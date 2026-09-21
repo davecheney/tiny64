@@ -9,6 +9,9 @@ import "testing"
 // Article: for CSEL=1 (40 columns) the border/display transition happens
 // at real X coordinate $18 (24) on the left and $158 (344) on the right.
 func TestVICBorderPlacement(t *testing.T) {
+	if frameIsCropped {
+		t.Skip("walks the whole visible row looking for the border edges; a cropped sink stores only the display window, so there are no border dots to find")
+	}
 	parkMachine(t)
 	v := &VICII{}
 	ClearFrameBuffer()
