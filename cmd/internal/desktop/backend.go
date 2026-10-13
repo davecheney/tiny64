@@ -2,7 +2,7 @@
 //
 // It is a hand-rolled cgo shim over the dozen SDL calls this needs rather
 // than a binding module, because TinyGo's cgo is its own reimplementation
-// and the smaller the surface the less of it has to hold. Four of its
+// and the smaller the surface the less of it has to hold. Five of its
 // limits shaped what follows, all found by building the thing:
 //
 //   - "#cgo pkg-config:" is rejected outright, so the flags below are
@@ -30,6 +30,15 @@
 //   - SDL_DISABLE_ARM_NEON_H is SDL's own escape hatch for exactly this:
 //     SDL_cpuinfo.h pulls in <arm_neon.h> on ARM, and TinyGo's bundled
 //     clang headers do not include it. Nothing here uses NEON intrinsics.
+//   - On macOS TinyGo compiles against its own minimal SDK, not Xcode's,
+//     and that SDK's <wchar.h> defines mbstate_t from __darwin_mbstate_t,
+//     which it does not define. SDL_stdinc.h includes <wchar.h>, so the
+//     preamble defines mbstate_t first and sets _MBSTATE_T, the guard of
+//     the header that would. It leaves __darwin_mbstate_t alone, so a
+//     TinyGo whose SDK has been fixed still compiles this. Xcode's SDK
+//     sets the guards of arm/_types.h or i386/_types.h, and there the
+//     block is skipped, or "go build" fails on the redefinition. Linux
+//     does not see it.
 //
 // SDL3 rather than SDL2 for one reason: SDL_SetTexturePalette, added in
 // 3.4.0, lets a texture hold one palette index per pixel and have the GPU
@@ -56,6 +65,13 @@ import (
 // #cgo CFLAGS: -I/opt/homebrew/include/SDL3 -I/usr/local/include/SDL3 -I/usr/include/SDL3 -I/opt/homebrew/include -I/usr/local/include -D_THREAD_SAFE -DSDL_DISABLE_ARM_NEON_H
 // #cgo LDFLAGS: -L/opt/homebrew/lib -L/usr/local/lib -L/usr/lib -L/usr/lib/x86_64-linux-gnu -L/usr/lib/aarch64-linux-gnu -lSDL3
 // #define SDL_MAIN_HANDLED
+// #ifdef __APPLE__
+// #include <sys/_types.h>
+// #if !defined(_BSD_ARM__TYPES_H_) && !defined(_BSD_I386__TYPES_H_)
+// #define _MBSTATE_T
+// typedef union { char __mbstate8[128]; long long _mbstateL; } mbstate_t;
+// #endif
+// #endif
 // #include <SDL.h>
 // #include <SDL_main.h>
 //
