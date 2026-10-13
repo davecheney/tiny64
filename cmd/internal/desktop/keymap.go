@@ -10,8 +10,17 @@ import (
 // uses, but the #cgo flags are collected across the whole package, so they
 // are stated once in backend_sdl.go and not repeated here. Repeating them
 // works too, at the cost of a duplicate-library warning from the linker.
+// The mbstate_t typedef is not a flag, so it is repeated; see
+// backend.go for why it is there.
 
 // #define SDL_MAIN_HANDLED
+// #ifdef __APPLE__
+// #include <sys/_types.h>
+// #if !defined(_BSD_ARM__TYPES_H_) && !defined(_BSD_I386__TYPES_H_)
+// #define _MBSTATE_T
+// typedef union { char __mbstate8[128]; long long _mbstateL; } mbstate_t;
+// #endif
+// #endif
 // #include <SDL.h>
 import "C"
 
