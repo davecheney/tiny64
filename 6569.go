@@ -2035,35 +2035,52 @@ func spriteBit(i uint8) uint8 { return 1 << i }
 //
 // Tables rather than shifting per dot: a row is three bytes, so decoding
 // it is three copies of eight bytes instead of twenty-four bit
-// extractions.
+// extractions. Build one row per call to stay within TinyGo's interpreter
+// loop limit.
 var (
 	spriteHiresDots      = buildSpriteHiresDots()
 	spriteMulticolorDots = buildSpriteMulticolorDots()
 )
 
+//go:noruntime
 func buildSpriteHiresDots() [256][8]uint8 {
 	var table [256][8]uint8
 	for b := range table {
-		for i := range table[b] {
-			if b&(0x80>>i) != 0 {
-				table[b][i] = spriteDotOwn
-			}
-		}
+		table[b] = buildSpriteHiresRow(uint8(b))
 	}
 	return table
 }
 
+//go:noruntime
+func buildSpriteHiresRow(b uint8) [8]uint8 {
+	var row [8]uint8
+	for i := range row {
+		if b&(0x80>>i) != 0 {
+			row[i] = spriteDotOwn
+		}
+	}
+	return row
+}
+
+//go:noruntime
 func buildSpriteMulticolorDots() [256][8]uint8 {
 	var table [256][8]uint8
 	for b := range table {
-		for pair := range 4 {
-			// Pairs run high bits first, and each paints two dots.
-			val := uint8(b>>(6-2*pair)) & 0x03
-			table[b][pair*2] = val
-			table[b][pair*2+1] = val
-		}
+		table[b] = buildSpriteMulticolorRow(uint8(b))
 	}
 	return table
+}
+
+//go:noruntime
+func buildSpriteMulticolorRow(b uint8) [8]uint8 {
+	var row [8]uint8
+	for pair := range 4 {
+		// Pairs run high bits first, and each paints two dots.
+		val := b >> (6 - 2*pair) & 0x03
+		row[pair*2] = val
+		row[pair*2+1] = val
+	}
+	return row
 }
 
 // The dot values decodeSpriteRow emits. They are the multicolour bit pair
