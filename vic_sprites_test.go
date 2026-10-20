@@ -4,6 +4,24 @@ import (
 	"testing"
 )
 
+func TestVICSpriteDotTables(t *testing.T) {
+	for b := range 256 {
+		for dot := range 8 {
+			var hires uint8
+			if b&(0x80>>dot) != 0 {
+				hires = spriteDotOwn
+			}
+			if got := spriteHiresDots[b][dot]; got != hires {
+				t.Errorf("hires byte $%02X dot %d: got %d, want %d", b, dot, got, hires)
+			}
+			multicolor := uint8(b>>(6-2*(dot/2))) & 3
+			if got := spriteMulticolorDots[b][dot]; got != multicolor {
+				t.Errorf("multicolor byte $%02X dot %d: got %d, want %d", b, dot, got, multicolor)
+			}
+		}
+	}
+}
+
 // paintDots paints the dots [from, to) into the frame buffer without
 // moving the beam, which is what the tests below want to look at.
 //

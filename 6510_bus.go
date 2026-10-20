@@ -38,14 +38,25 @@ func cpuWritesThisCycle(opcode, tstate uint8) bool {
 // T-state, one bit per cycle. The decoder above stays the source of truth -
 // nothing in this table is written or maintained by hand - but the CPU asks
 // the question on every held cycle, and a load beats walking the decode.
-var cpuWriteCycles = func() [256]uint8 {
+// Build one row per call to stay within TinyGo's interpreter loop limit.
+var cpuWriteCycles = buildCPUWriteCycles()
+
+//go:noruntime
+func buildCPUWriteCycles() [256]uint8 {
 	var t [256]uint8
 	for opcode := range t {
-		for tstate := uint8(0); tstate < 8; tstate++ {
-			if cpuWritesThisCycle(uint8(opcode), tstate) {
-				t[opcode] |= 1 << tstate
-			}
-		}
+		t[opcode] = buildCPUWriteMask(uint8(opcode))
 	}
 	return t
-}()
+}
+
+//go:noruntime
+func buildCPUWriteMask(opcode uint8) uint8 {
+	var mask uint8
+	for tstate := uint8(0); tstate < 8; tstate++ {
+		if cpuWritesThisCycle(opcode, tstate) {
+			mask |= 1 << tstate
+		}
+	}
+	return mask
+}
