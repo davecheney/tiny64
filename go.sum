@@ -6,5 +6,5 @@ github.com/google/shlex v0.0.0-20191202100458-e7afc7fbc510 h1:El6M4kTTCOh6aBiKaU
 github.com/google/shlex v0.0.0-20191202100458-e7afc7fbc510/go.mod h1:pupxD2MaaD3pAXIBCelhxNneeOaAeabZDe5s4K6zSpQ=
 golang.org/x/perf v0.0.0-20260908200009-22c9c6c9d4da h1:TPnyATEEkYepRH6lv4RlUtMfeOSFw4B6fAee/M3OldI=
 golang.org/x/perf v0.0.0-20260908200009-22c9c6c9d4da/go.mod h1:Pth32a9JhKKavemj73LtFqHHyyMhqz+K7tUZcG5tTWM=
-tinygo.org/x/drivers v0.36.0 h1:F0x342A6GWqh6abtCa57uAxCyz/b9MbGzvIVvIf+gpE=
-tinygo.org/x/drivers v0.36.0/go.mod h1:DQgKyHkB4G6IEOKVTAjApbKnWGwESN91EVJO+nMOE9Y=
+tinygo.org/x/drivers v0.37.0 h1:t2YPSYV+lEXwKYGvszHWmkMLLBp1dhcpfzsrcEwwf9Q=
+tinygo.org/x/drivers v0.37.0/go.mod h1:hi/x7sI5+PeNoRg/QbS21oxdsT7mcI3amFr+WvZmrzA=

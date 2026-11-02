@@ -4,7 +4,7 @@ go 1.27.1
 
 require (
 	github.com/tinygo-org/pio v0.3.1-0.20260910075224-6982692d33a1
-	tinygo.org/x/drivers v0.36.0
+	tinygo.org/x/drivers v0.37.0
 )
 
 require (
